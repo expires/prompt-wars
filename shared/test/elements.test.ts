@@ -33,17 +33,17 @@ describe('carry weight (movement speed multiplier)', () => {
     expect(m('rifle')).toBe(1);
     expect(m('shotgun')).toBe(1);
     expect(m('crossbow')).toBe(1);
-    expect(m('sniper')).toBeCloseTo(0.92, 3);
-    expect(m('lmg')).toBeLessThanOrEqual(0.92);
-    expect(m('rocket_launcher')).toBeCloseTo(0.88, 3);
-    expect(m('grenade_launcher')).toBeCloseTo(0.88, 3);
-    expect(m('flamethrower')).toBeLessThanOrEqual(0.88);
+    expect(m('sniper')).toBeCloseTo(0.85, 3);
+    expect(m('lmg')).toBeLessThanOrEqual(0.82);
+    expect(m('rocket_launcher')).toBeCloseTo(0.76, 3);
+    expect(m('grenade_launcher')).toBeCloseTo(0.8, 3);
+    expect(m('flamethrower')).toBeLessThanOrEqual(0.8);
     expect(carryMultiplier({ class: 'melee', fireMode: 'melee', meleeWeight: 'light', magSize: 1, partCount: 3 })).toBeCloseTo(1.2, 3);
     expect(carryMultiplier({ class: 'melee', fireMode: 'melee', meleeWeight: 'medium', magSize: 1, partCount: 3 })).toBeCloseTo(1.15, 3);
     expect(carryMultiplier({ class: 'melee', fireMode: 'melee', meleeWeight: 'heavy', magSize: 1, partCount: 3 })).toBeCloseTo(1.06, 3);
   });
 
-  it('is always within 0.85 - 1.22 and set on every clamped weapon', () => {
+  it('is always within 0.72 - 1.22 and set on every clamped weapon', () => {
     for (const cls of WEAPON_CLASSES) {
       for (const given of [undefined, 0, 0.5, 1, 1.5, 9, 'fast', -1]) {
         const w = clampWeapon({ class: cls, moveSpeedMult: given, magSize: 300, parts: Array.from({ length: 40 }, () => ({ partId: 'x' })) });
@@ -87,7 +87,7 @@ describe('carry weight (movement speed multiplier)', () => {
     expect(moveSpeedLabel(1)).toBe('±0%');
     // a weapon row stored before moveSpeedMult existed: derived on the fly
     const { moveSpeedMult: _m, ...legacy } = PRESET_WEAPONS.sniper;
-    expect(weaponMoveMultiplier(legacy)).toBeCloseTo(0.92, 3);
+    expect(weaponMoveMultiplier(legacy)).toBeCloseTo(0.85, 3);
   });
 
   it('big forge designs get an extra penalty (designToWeapon keeps it)', () => {

@@ -112,7 +112,7 @@ export function inferElement(name: string, cls: WeaponClass, hasDot: boolean): E
 // Carry weight (movement speed multiplier)
 // ---------------------------------------------------------------------------
 
-export const MOVE_MULT_MIN = 0.85;
+export const MOVE_MULT_MIN = 0.72;
 export const MOVE_MULT_MAX = 1.22;
 /** a given moveSpeedMult may differ from the derived one by at most this much */
 export const MOVE_MULT_BELOW = 0.05;
@@ -130,11 +130,11 @@ const CLASS_CARRY: Record<WeaponClass, number> = {
   crossbow: 1.0,
   weird: 1.0,
   throwable: 1.04,
-  sniper: 0.92,
-  lmg: 0.92,
-  rocket_launcher: 0.88,
-  grenade_launcher: 0.88,
-  flamethrower: 0.88,
+  sniper: 0.85,
+  lmg: 0.82,
+  rocket_launcher: 0.76,
+  grenade_launcher: 0.8,
+  flamethrower: 0.8,
   melee: 1.15,
 };
 
@@ -159,7 +159,7 @@ export interface CarryInput {
  */
 export function carryMultiplier(w: CarryInput): number {
   let m = w.fireMode === 'melee' || w.class === 'melee' ? MELEE_CARRY[w.meleeWeight ?? 'medium'] : CLASS_CARRY[w.class];
-  if (w.fireMode !== 'melee' && w.magSize > 60) m -= Math.min(0.03, (w.magSize - 60) * 0.0003);
+  if (w.fireMode !== 'melee' && w.magSize > 60) m -= Math.min(0.05, (w.magSize - 60) * 0.0005);
   if (w.partCount > 12) m -= Math.min(0.03, (w.partCount - 12) * 0.004);
   return r3(clamp(m, MOVE_MULT_MIN, MOVE_MULT_MAX));
 }
