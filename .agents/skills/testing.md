@@ -2,8 +2,12 @@
 
 Binding for every card.
 
-- Pure logic (balance, schema parsing, recipes, assembly math) is tested with vitest next to the
-  existing tests in `shared/` and `parts/`. Every bug fix there adds a regression test.
+- Pure logic in `shared/` and `parts/` (balance, schema parsing, recipes, assembly math) is tested
+  with vitest next to the existing tests there. Every bug fix there adds a regression test.
+- `client/src/` has NO unit-test runner (no vitest in the client package). Never add `*.test.ts`
+  files under `client/src/`, and reviewers must not require unit tests for client code. The
+  client build (strict tsc) is the gate there. Note: `this.rc.scene` in Game.ts is a
+  THREE.Scene (RenderContext), not a renderer.
 - Verify runs: `pnpm install --no-frozen-lockfile`, then typecheck + `vitest run` for shared and
   parts, server `typecheck`, and client `build`. All must pass. Never skip, delete or weaken an
   existing test to make verify pass.
