@@ -61,7 +61,7 @@ export function describeForgeError(e: unknown): string {
       const m = Math.floor(e.retryAfter / 60);
       const s = e.retryAfter % 60;
       const wait = e.retryAfter > 0 ? ` Try again in ${m ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`}.` : '';
-      return `Forge limit reached (40 per 10 min).${wait}`;
+      return `Forge limit reached (100 per 10 min).${wait}`;
     }
     if (e.kind === 'timeout') return 'Forge timed out. Try again.';
     if (e.kind === 'network') return 'Can’t reach the forge. Check your connection.';
