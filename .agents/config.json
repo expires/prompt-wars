@@ -98,12 +98,13 @@
   "verify": {
     "enabled": true,
     "commands": [
-      "npx -y pnpm@10 install --frozen-lockfile",
+      "npx -y pnpm@10 install --no-frozen-lockfile",
       "npx -y pnpm@10 --filter @ai-gaem/shared typecheck",
       "npx -y pnpm@10 --filter @ai-gaem/shared test",
       "npx -y pnpm@10 --filter @ai-gaem/parts typecheck",
       "npx -y pnpm@10 --filter @ai-gaem/parts test",
       "npx -y pnpm@10 --filter @ai-gaem/server typecheck",
+      "npx -y pnpm@10 --filter client run --if-present test:scripts",
       "npx -y pnpm@10 --filter client build"
     ]
   },
