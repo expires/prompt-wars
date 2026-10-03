@@ -8,6 +8,11 @@ export interface Settings {
   /** extra sensitivity multiplier while aiming down sights (on top of the FOV ratio) */
   adsSensitivity: number;
   invertY: boolean;
+  /**
+   * Raw mouse input: request pointer lock with `unadjustedMovement` (Chromium; no OS pointer
+   * acceleration, 1:1 sensor counts). Ignored by Firefox / Safari.
+   */
+  rawMouseInput: boolean;
   /** horizontal-ish vertical FOV in degrees (camera.fov) */
   fov: number;
   /** keyboard turning (arrow keys / Q-E) speed, degrees per second */
@@ -104,6 +109,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sensitivity: 1,
   adsSensitivity: 1,
   invertY: false,
+  rawMouseInput: true,
   fov: 75,
   keyTurnSpeed: 150,
   crouchToggle: false,

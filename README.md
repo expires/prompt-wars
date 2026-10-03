@@ -335,7 +335,7 @@ URL params:
 | K | debug (offline only): kill yourself (death screen) |
 | M | debug (offline only): open the weapon slot machine (also on the death screen: "Slot machine") |
 | F2 | spawn editor: **P** save current position as spawn, **Backspace** undo, **Delete** clear |
-| F3 | debug overlay (fps, position, grounded; net: RTT, interp delay, jitter, send Hz, buffered snapshots, reducer calls) |
+| F3 | debug overlay (fps, worst frame time, mouse events/s + `(raw)` when raw input is active, position, grounded; net: RTT, interp delay, jitter, send Hz, buffered snapshots, reducer calls) |
 | Esc | release mouse; the pause screen has a **Settings** panel (sensitivity, ADS sensitivity, FOV, key-turn speed, volume, toggle crouch / sprint / aim, invert Y, head bob, gamepad look speed / deadzone / aim slowdown, **Trackpad mode**; saved in `localStorage` `ai-gaem.settings`) |
 
 Feel: spread per weapon class (`src/weapons/handling.ts`): base spread x ADS / crouch / movement /
@@ -348,6 +348,22 @@ Trackpad / ThinkPad support (the OS disables the touchpad while keys are held): 
 **Trackpad mode** preset (toggle crouch / sprint / aim, +25% sensitivity, autorun hint, arrow / Q E
 turning; turning it off restores the previous values). If movement keys are held > 400 ms with no
 mouse movement and the mouse moves right after release, three times, a one-time toast offers it.
+
+Mouse / frame rate: the `mousemove` listener (`src/engine/input.ts`) only sums movementX/Y
+(passive, no allocation, no filtering or rounding), and the sum is applied once per rendered frame
+(`PlayerController.frameInput`), so 1-8 kHz gaming mice lose nothing; physics runs at a fixed 60 Hz
+with render interpolation and rendering follows `requestAnimationFrame`, so the game itself never
+caps the frame rate. **Raw input** (settings, default on) asks for pointer lock with
+`unadjustedMovement` (Chromium: no OS acceleration), falling back to a plain lock where it isn't
+supported. Firefox stuck at 60 FPS on a high-refresh monitor is Firefox's vsync: check
+`about:support` -> Refresh Rate, set `layout.frame_rate` to the monitor rate in `about:config`,
+and `privacy.resistFingerprinting` (LibreWolf / hardened profiles) pins animation to 60 FPS. On
+Linux X11, Firefox emulates pointer lock by warping the cursor, which can drop or lag fast mouse
+motion before it reaches the page; a Wayland session (or a Chromium-based browser) gets real
+relative-pointer deltas. `client/e2e/mouse-input.spec.ts` (offline, no server) streams 1 kHz and
+8 kHz synthetic mouse movement through the real listener in Chromium and Firefox and checks the
+total yaw equals sum(dx) x sensitivity; `node client/e2e/measure-mouse.mjs <url> <browser>` prints
+the same numbers for any build.
 
 Spawn points saved with the editor go to `localStorage` (`ai-gaem.spawns.<mapId>`) and are logged
 as JSON in the console so they can be pasted into code / the server.

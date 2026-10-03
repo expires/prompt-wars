@@ -105,6 +105,8 @@
 .st-row__t { font: 600 calc(15px * var(--text-scale)) / 1.25 var(--font-label); letter-spacing: 0.02em; color: var(--fg); }
 .st-row__d { font: 400 calc(13px * var(--text-scale)) / 1.35 var(--font-body); color: var(--fg-mute); }
 .st-row__ctl { display: flex; justify-content: flex-end; min-width: 0; }
+.st-note { margin: 4px 16px 0; font: 400 calc(12px * var(--text-scale)) / 1.45 var(--font-body); color: var(--fg-mute); max-width: 72ch; }
+.st-note b { color: var(--fg); font-weight: 600; }
 @container (max-width: 620px) {
   .st-row { grid-template-columns: 1fr; gap: 8px; padding: 10px 12px; }
   .st-row__ctl { justify-content: stretch; }

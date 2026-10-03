@@ -3,7 +3,7 @@ import { clampWeapon, sanitizeDesign } from '@ai-gaem/shared';
 import type { Game } from './engine/Game';
 import { Humanoid } from './player/humanoid';
 import { playerStatus } from './weapons/elementFx';
-import { settings } from './settings';
+import { BASE_MOUSE_SENS, settings } from './settings';
 import { getDefaultWeapons } from './weapons/defaultWeapons';
 
 /**
@@ -57,6 +57,13 @@ export interface GameTestHook {
   showTrackpadHint(): void;
   /** play with the gamepad / keyboard without pointer lock (as after pressing Start) */
   setPadPlaying(on: boolean): void;
+  /**
+   * Treat the pointer as locked without a real lock (headless browsers can't grant one), so
+   * synthetic `mousemove` events with movementX/Y drive mouse look through the real listener.
+   */
+  emulatePointerLock(on: boolean): void;
+  /** F3 perf window (fps / mouse events per second / worst frame ms over the last second) + raw counters */
+  perfStats(): { fps: number; mouseHz: number; maxFrameMs: number; mouseEvents: number; sens: number };
   /** trackpad mode preset on / off */
   setTrackpadMode(on: boolean): void;
   /** reducer call counters / network stats */
@@ -308,6 +315,14 @@ export function installTestHook(game: Game) {
     },
     setPadPlaying(on) {
       game.input.padPlaying = on;
+    },
+    emulatePointerLock(on) {
+      game.input.locked = on;
+    },
+    perfStats() {
+      const p = game.perf;
+      const s = settings.current;
+      return { fps: p.fps, mouseHz: p.mouseHz, maxFrameMs: p.maxFrameMs, mouseEvents: game.input.mouseEvents, sens: BASE_MOUSE_SENS * s.sensitivity };
     },
     setTrackpadMode(on) {
       settings.setTrackpadMode(on);

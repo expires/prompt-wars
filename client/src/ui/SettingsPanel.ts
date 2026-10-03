@@ -185,6 +185,17 @@ export class SettingsPanel {
     this.slider(p, { key: 'sensitivity', label: 'Sensitivity', desc: 'Hip fire', min: 0.1, max: 4, step: 0.05, decimals: 2 });
     this.slider(p, { key: 'adsSensitivity', label: 'ADS sensitivity', desc: 'While aiming', min: 0.3, max: 2, step: 0.05, decimals: 2, unit: '×' });
     this.row(p, 'Invert Y', 'Mouse up looks down', this.toggle('invertY', 'Invert mouse Y'));
+    this.row(p, 'Raw input', 'No OS acceleration (Chrome / Edge, next lock)', this.toggle('rawMouseInput', 'Raw mouse input'));
+    p.append(
+      el(
+        'p',
+        'st-note',
+        'High-polling mice (1000–8000 Hz) are supported: every movement is summed and applied once per frame. ' +
+          'Stuck at 60 FPS in Firefox on a high-refresh monitor? That cap is Firefox’s: check <b>about:support</b> → Refresh Rate, ' +
+          'set <b>layout.frame_rate</b> to your monitor’s rate in about:config, and turn off <b>privacy.resistFingerprinting</b> ' +
+          '(LibreWolf / hardened profiles), which pins animation to 60 FPS. F3 shows FPS and mouse events/s.',
+      ),
+    );
 
     this.section(p, 'Crosshair');
     p.append(this.crosshairPreview());

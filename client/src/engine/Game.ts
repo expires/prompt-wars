@@ -131,6 +131,11 @@ export class Game {
   private scoreAcc = 0;
   private showDebug = false;
   fps = 0;
+  /**
+   * Per-second perf window (F3 overlay, bug reports, e2e): frames rendered, mouse events received
+   * and the worst frame time over the last full second.
+   */
+  readonly perf = { fps: 0, mouseHz: 0, maxFrameMs: 0, windowStart: 0, frames: 0, mouseAtStart: 0, worstMs: 0 };
   /** headshot kills per killer id (scoreboard HS%) */
   private readonly hsKills = new Map<string, { k: number; hs: number }>();
   /** last damage the server applied to us (death screen detail) */
@@ -743,6 +748,7 @@ export class Game {
     this.last = now;
     this.fps = this.fps * 0.95 + (dt > 0 ? 1 / dt : 0) * 0.05;
     const { input, player } = this;
+    this.updatePerfWindow(now, dt);
     const online = this.net.authoritative;
 
     // gamepad: Start toggles pad play (no pointer lock needed) / the pause menu
@@ -887,7 +893,7 @@ export class Game {
     if (this.showDebug) {
       const f = player.feet;
       this.hud.setDebug(
-        `fps ${this.fps.toFixed(0)}\npos ${f.x.toFixed(2)} ${f.y.toFixed(2)} ${f.z.toFixed(2)}\n` +
+        `fps ${this.perf.fps}  worst frame ${this.perf.maxFrameMs.toFixed(1)} ms  mouse ${this.perf.mouseHz} ev/s${input.rawMouse ? ' (raw)' : ''}\npos ${f.x.toFixed(2)} ${f.y.toFixed(2)} ${f.z.toFixed(2)}\n` +
           `vel ${player.horizontalSpeed().toFixed(2)} vy ${player.velocity.y.toFixed(2)}\ngrounded ${player.grounded}` +
           `  crouch ${player.crouched}  sprint ${player.sprinting}\n` +
           `spread ${this.weapons.currentSpread().toFixed(2)}°  bloom ${this.weapons.bloom.toFixed(2)}  ads ${this.ads.toFixed(2)}  fov ${cam.fov.toFixed(1)}\n` +
@@ -899,6 +905,24 @@ export class Game {
     if (!this.flow.opaque) this.rc.render();
     input.endFrame();
   };
+
+  /** roll the one-second perf window (frames, mouse events/s, worst frame time) */
+  private updatePerfWindow(now: number, dt: number) {
+    const p = this.perf;
+    p.frames++;
+    p.worstMs = Math.max(p.worstMs, dt * 1000);
+    const span = now - p.windowStart;
+    if (span < 1000) return;
+    if (p.windowStart > 0) {
+      p.fps = Math.round((p.frames * 1000) / span);
+      p.mouseHz = Math.round(((this.input.mouseEvents - p.mouseAtStart) * 1000) / span);
+      p.maxFrameMs = p.worstMs;
+    }
+    p.windowStart = now;
+    p.frames = 0;
+    p.worstMs = 0;
+    p.mouseAtStart = this.input.mouseEvents;
+  }
 
   /** Tab scoreboard rows + ping / FPS micro (twice a second) */
   private updateScoreboard() {

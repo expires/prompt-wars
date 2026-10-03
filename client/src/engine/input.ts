@@ -1,4 +1,5 @@
 import { GamepadPoller, emptyPad, type PadState } from './gamepad';
+import { settings } from '../settings';
 
 /** Keyboard + mouse state with pointer lock, plus a polled gamepad. */
 export class Input {
@@ -7,8 +8,12 @@ export class Input {
   pad: PadState = emptyPad();
   /** playing with the gamepad without pointer lock (Start / A on the pause screen) */
   padPlaying = false;
-  /** performance.now() of the last mouse movement while locked (trackpad hint heuristic) */
+  /** event timestamp (performance.now() clock) of the last mouse movement while locked (trackpad hint heuristic) */
   lastMouseMoveAt = 0;
+  /** total mousemove events received while locked (F3 overlay derives events/s from it) */
+  mouseEvents = 0;
+  /** true when the current pointer lock delivers raw, unaccelerated deltas (Chromium unadjustedMovement) */
+  rawMouse = false;
   private keys = new Set<string>();
   private pressed = new Set<string>();
   mouseDX = 0;
@@ -39,12 +44,23 @@ export class Input {
       this.mouseDown = false;
       this.rightDown = false;
     });
-    document.addEventListener('mousemove', (e) => {
-      if (!this.locked) return;
-      this.mouseDX += e.movementX;
-      this.mouseDY += e.movementY;
-      if (e.movementX || e.movementY) this.lastMouseMoveAt = performance.now();
-    });
+    // Mouse look: the handler only accumulates. Gaming mice poll at 1-8 kHz, so this runs thousands
+    // of times a second; it must stay O(1) with no allocation, no DOM access and no filtering /
+    // rounding (every delta counts). The deltas are applied once per rendered frame in
+    // PlayerController.frameInput(). Passive: never calls preventDefault.
+    document.addEventListener(
+      'mousemove',
+      (e) => {
+        if (!this.locked) return;
+        const dx = e.movementX;
+        const dy = e.movementY;
+        this.mouseDX += dx;
+        this.mouseDY += dy;
+        this.mouseEvents++;
+        if (dx || dy) this.lastMouseMoveAt = e.timeStamp;
+      },
+      { passive: true },
+    );
     document.addEventListener('mousedown', (e) => {
       if (!this.locked) return;
       if (e.button === 0) {
@@ -65,6 +81,7 @@ export class Input {
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.element;
       if (!this.locked) {
+        this.rawMouse = false;
         this.mouseDown = false;
         this.rightDown = false;
         this.keys.clear();
@@ -90,26 +107,53 @@ export class Input {
     return false;
   }
 
-  /** resolves true once the pointer is locked, false if the browser refused */
-  requestLock(): Promise<boolean> {
+  /**
+   * Resolves true once the pointer is locked, false if the browser refused. With the raw mouse
+   * input setting on, asks for `unadjustedMovement` first (Chromium: raw sensor counts, no OS
+   * pointer acceleration); a browser / OS that doesn't support it (NotSupportedError) gets a plain
+   * lock instead. Firefox and Safari ignore the option.
+   */
+  async requestLock(): Promise<boolean> {
+    if (settings.current.rawMouseInput) {
+      const r = await this.lockOnce(true);
+      if (r !== 'unsupported') return r === 'ok';
+    }
+    return (await this.lockOnce(false)) === 'ok';
+  }
+
+  private lockOnce(unadjusted: boolean): Promise<'ok' | 'fail' | 'unsupported'> {
     return new Promise((resolve) => {
       let done = false;
-      const finish = (ok: boolean) => {
+      let promised = false;
+      const finish = (r: 'ok' | 'fail' | 'unsupported') => {
         if (done) return;
         done = true;
         document.removeEventListener('pointerlockerror', onErr);
-        resolve(ok);
+        if (r === 'ok') this.rawMouse = unadjusted && promised;
+        resolve(r);
       };
-      const onErr = () => finish(false);
+      const onErr = () => {
+        // promise-returning browsers report through the promise (the error event can arrive late)
+        if (!promised) finish('fail');
+      };
       document.addEventListener('pointerlockerror', onErr);
+      const kind = (err: unknown) => ((err as { name?: string } | null)?.name === 'NotSupportedError' ? 'unsupported' : 'fail');
       try {
-        const p = this.element.requestPointerLock() as unknown as Promise<void> | undefined;
-        if (p?.then) p.then(() => finish(true), () => finish(false));
-      } catch {
-        finish(false);
+        const req = this.element.requestPointerLock as (opts?: { unadjustedMovement?: boolean }) => Promise<void> | undefined;
+        const p = unadjusted ? req.call(this.element, { unadjustedMovement: true }) : req.call(this.element);
+        if (p && typeof p.then === 'function') {
+          promised = true;
+          p.then(
+            () => finish('ok'),
+            (err: unknown) => finish(kind(err)),
+          );
+        }
+      } catch (err) {
+        finish(kind(err));
       }
-      // older browsers: no promise — judge by pointerLockElement shortly after
-      setTimeout(() => finish(document.pointerLockElement === this.element), 400);
+      // older browsers (no promise): judge by pointerLockElement shortly after; a promise that
+      // never settles gets the same check a little later
+      setTimeout(() => finish(document.pointerLockElement === this.element ? 'ok' : 'fail'), promised ? 1500 : 400);
     });
   }
 
