@@ -97,6 +97,8 @@ export interface Recipe {
   name: string;
   class: string;
   parts: RecipePart[];
+  /** hand-made, curated recipe */
+  curated?: boolean;
 }
 
 export interface CatalogEntry {

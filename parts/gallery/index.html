@@ -12,7 +12,17 @@
       <nav>
         <button data-tab="parts" class="tab active">Parts</button>
         <button data-tab="recipes" class="tab">Recipes</button>
+        <button data-tab="templates" class="tab">Templates</button>
       </nav>
+      <div id="tfilters" hidden>
+        <input id="tq" type="search" placeholder="search templates: e.g. frying pan that shoots baguettes" size="40" />
+        <select id="tcls"><option value="">all classes</option></select>
+        <select id="ttheme"><option value="">all themes</option></select>
+        <select id="tkind"><option value="">all</option><option value="melee">melee only</option><option value="ranged">ranged only</option><option value="everyday">everyday objects</option><option value="curated">curated</option></select>
+        <button id="tprev" class="tab">&lt;</button><span id="tpage"></span><button id="tnext" class="tab">&gt;</button>
+        <button id="trandom" class="tab">Random</button>
+        <span id="tcount"></span>
+      </div>
       <div id="filters">
         <select id="cat"><option value="">all categories</option></select>
         <select id="cls"><option value="">all classes</option></select>
@@ -24,6 +34,7 @@
     <main>
       <section id="parts" class="grid"></section>
       <section id="recipes" class="grid big" hidden></section>
+      <section id="templates" class="grid big" hidden></section>
     </main>
     <div id="viewer" hidden>
       <div class="viewer-head"><span id="viewer-title"></span><button id="viewer-close">close</button></div>

@@ -1,6 +1,8 @@
 // Weapon schema shared by the client, the SpacetimeDB module and weapon generation.
 // Keep this file free of runtime dependencies: it is bundled into the server module.
 
+import type { MeleeMeta } from './melee';
+
 export const WEAPON_CLASSES = [
   'pistol',
   'smg',
@@ -90,8 +92,18 @@ export interface Weapon {
   slowPercent: number;
   /** Seconds the trigger must be held before each shot fires. */
   chargeTime: number;
+  /**
+   * Damage multiplier for a direct hit on the head hitbox (1-3). Applied server-side; head
+   * damage per shot is capped at MAX_HEADSHOT_DAMAGE. Always 1 for streams and splash weapons.
+   */
+  headshotMultiplier: number;
   parts: WeaponPart[];
   colors: WeaponColors;
+  /**
+   * Melee only (always set on clamped melee weapons): swing animation type, hand -> tip reach and
+   * weight class (swing timing). See shared/src/melee.ts.
+   */
+  melee?: MeleeMeta;
 }
 
 /** Loose input shape: anything an LLM or client might send. */
@@ -103,6 +115,33 @@ export const MAX_HP = 100;
 export const SPLASH_EDGE_FRACTION = 0.25;
 export const SLOW_DURATION = 1.5;
 export const RESPAWN_DELAY_SECONDS = 3;
+
+/** Hit zones reported by clients (`report_hit.zone`). */
+export const HIT_ZONE_BODY = 0;
+export const HIT_ZONE_HEAD = 1;
+/** Max damage a single headshot can deal (body shots stay capped at 95 by clampWeapon). */
+export const MAX_HEADSHOT_DAMAGE = 150;
+
+/**
+ * Player hitbox geometry (feet-relative, metres), shared by the client hitboxes and the
+ * server's headshot plausibility check. Crouching shrinks the player from 1.8 m to 1.2 m.
+ */
+export const PLAYER_HEIGHT = 1.8;
+export const PLAYER_CROUCH_HEIGHT = 1.2;
+export const HEAD_RADIUS = 0.16;
+/** head sphere centre above the feet */
+export const HEAD_CENTER_STANDING = 1.66;
+export const HEAD_CENTER_CROUCHED = HEAD_CENTER_STANDING - (PLAYER_HEIGHT - PLAYER_CROUCH_HEIGHT);
+/** eye height above the feet (client camera; server melee origin check) */
+export const STAND_EYE_OFFSET = 1.62;
+export const CROUCH_EYE_OFFSET = STAND_EYE_OFFSET - (PLAYER_HEIGHT - PLAYER_CROUCH_HEIGHT);
+
+/** Damage of a direct hit: body = `bodyDamage`, head = bodyDamage * multiplier, capped at 150. */
+export function zoneDamage(weapon: Pick<Weapon, 'headshotMultiplier'>, bodyDamage: number, zone: number): number {
+  if (zone !== HIT_ZONE_HEAD) return bodyDamage;
+  const mult = Math.min(3, Math.max(1, weapon.headshotMultiplier || 1));
+  return Math.min(bodyDamage * mult, Math.max(bodyDamage, MAX_HEADSHOT_DAMAGE));
+}
 
 /** Splash damage at `distance` from the impact point, linear falloff to 25% at the edge. */
 export function splashDamageAt(weapon: Pick<Weapon, 'damage' | 'pellets' | 'splashRadius'>, distance: number): number {

@@ -35,4 +35,6 @@ export default __t.row({
   dotUntil: __t.timestamp().name("dot_until"),
   dotSource: __t.identity().name("dot_source"),
   dotWeaponId: __t.u64().name("dot_weapon_id"),
+  crouching: __t.bool(),
+  slot: __t.u32(),
 });

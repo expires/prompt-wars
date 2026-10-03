@@ -144,3 +144,40 @@ describe('helpers', () => {
     expect(filterCatalogForClass(cat, 'flamethrower', 'dragon').map(e => e.id).sort()).toEqual(['grip_any', 'tank_fuel']);
   });
 });
+
+describe('headshots', () => {
+  it('headshotMultiplier is bounded per class and forced to 1 for streams / splash', async () => {
+    const { zoneDamage, isPlausibleHeadHit, HIT_ZONE_HEAD, HIT_ZONE_BODY, MAX_HEADSHOT_DAMAGE, HEAD_CENTER_STANDING, HEAD_CENTER_CROUCHED } = await import('../src');
+    expect(PRESET_WEAPONS.pistol.headshotMultiplier).toBe(2);
+    expect(PRESET_WEAPONS.sniper.headshotMultiplier).toBe(2.5);
+    expect(PRESET_WEAPONS.shotgun.headshotMultiplier).toBe(1);
+    expect(PRESET_WEAPONS.flamethrower.headshotMultiplier).toBe(1);
+    expect(PRESET_WEAPONS.rocket_launcher.headshotMultiplier).toBe(1);
+    for (const cls of WEAPON_CLASSES) {
+      const w = PRESET_WEAPONS[cls];
+      expect(w.headshotMultiplier).toBeGreaterThanOrEqual(1);
+      expect(w.headshotMultiplier).toBeLessThanOrEqual(3);
+    }
+    expect(clampWeapon({ class: 'sniper', headshotMultiplier: 99 }).headshotMultiplier).toBe(3);
+    expect(clampWeapon({ class: 'weird', headshotMultiplier: -5 }).headshotMultiplier).toBe(1);
+    expect(clampWeapon({ class: 'weird', fireMode: 'hitscan', splashRadius: 1, headshotMultiplier: 2.5 }).headshotMultiplier).toBe(1);
+    expect(clampWeapon({ class: 'weird', fireMode: 'stream', headshotMultiplier: 2.5 }).headshotMultiplier).toBe(1);
+    // old rows without the field get the class default
+    const { headshotMultiplier: _h, ...old } = PRESET_WEAPONS.rifle;
+    expect(clampWeapon(old).headshotMultiplier).toBe(2);
+
+    // damage: body unchanged, head multiplied and capped at 150
+    expect(zoneDamage(PRESET_WEAPONS.pistol, 20, HIT_ZONE_BODY)).toBe(20);
+    expect(zoneDamage(PRESET_WEAPONS.pistol, 20, HIT_ZONE_HEAD)).toBe(40);
+    expect(zoneDamage({ headshotMultiplier: 3 }, 95, HIT_ZONE_HEAD)).toBe(MAX_HEADSHOT_DAMAGE);
+    expect(zoneDamage(PRESET_WEAPONS.sniper, PRESET_WEAPONS.sniper.damage, HIT_ZONE_HEAD)).toBeGreaterThanOrEqual(100); // one-tap
+    expect(zoneDamage({ headshotMultiplier: 2 }, 20, 7)).toBe(20); // unknown zone = body
+
+    // plausibility: head height standing / crouched, not feet
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: false }, speed: 0 }, [0.1, HEAD_CENTER_STANDING, 0])).toBe(true);
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: false }, speed: 0 }, [0, 0.3, 0])).toBe(false);
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: true }, speed: 0 }, [0, HEAD_CENTER_CROUCHED, 0])).toBe(true);
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: true }, speed: 0 }, [0, HEAD_CENTER_STANDING + 0.2, 0])).toBe(false);
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: false }, speed: 0 }, [5, HEAD_CENTER_STANDING, 0])).toBe(false);
+  });
+});

@@ -16,4 +16,9 @@ export default {
   z: __t.f32(),
   yaw: __t.f32(),
   pitch: __t.f32(),
+  vx: __t.f32(),
+  vy: __t.f32(),
+  vz: __t.f32(),
+  flags: __t.u8(),
+  sendT: __t.u32(),
 };

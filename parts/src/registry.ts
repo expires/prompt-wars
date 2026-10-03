@@ -16,6 +16,7 @@ import { headParts } from './gen/head';
 import { guardParts } from './gen/guard';
 import { pommelParts } from './gen/pommel';
 import { decoParts } from './gen/deco';
+import { objectParts } from './gen/obj';
 
 export const PARTS: PartDef[] = [
   ...coreParts(),
@@ -34,6 +35,7 @@ export const PARTS: PartDef[] = [
   ...guardParts(),
   ...pommelParts(),
   ...decoParts(),
+  ...objectParts(),
 ];
 
 const byId = new Map<string, PartDef>();

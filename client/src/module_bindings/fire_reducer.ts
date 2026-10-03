@@ -10,6 +10,10 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+import {
+  HitReport,
+} from "./types";
+
 export default {
   seq: __t.u32(),
   ox: __t.f32(),
@@ -18,4 +22,9 @@ export default {
   dx: __t.f32(),
   dy: __t.f32(),
   dz: __t.f32(),
+  get hits() {
+    return __t.array(HitReport);
+  },
+  charge: __t.f32(),
+  combo: __t.u8(),
 };

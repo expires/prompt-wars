@@ -18,6 +18,13 @@ export const Config = __t.object("Config", {
 });
 export type Config = __Infer<typeof Config>;
 
+export const DotTimer = __t.object("DotTimer", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+  target: __t.identity(),
+});
+export type DotTimer = __Infer<typeof DotTimer>;
+
 export const GenerateResult = __t.object("GenerateResult", {
   ok: __t.bool(),
   weaponId: __t.u64(),
@@ -39,8 +46,20 @@ export const HitEvent = __t.object("HitEvent", {
   knockY: __t.f32(),
   knockZ: __t.f32(),
   slowPercent: __t.f32(),
+  headshot: __t.bool(),
+  blocked: __t.bool(),
 });
 export type HitEvent = __Infer<typeof HitEvent>;
+
+export const HitReport = __t.object("HitReport", {
+  slot: __t.u32(),
+  zone: __t.u8(),
+  ix: __t.f32(),
+  iy: __t.f32(),
+  iz: __t.f32(),
+  pellets: __t.u8(),
+});
+export type HitReport = __Infer<typeof HitReport>;
 
 export const Player = __t.object("Player", {
   identity: __t.identity(),
@@ -67,8 +86,47 @@ export const Player = __t.object("Player", {
   dotUntil: __t.timestamp(),
   dotSource: __t.identity(),
   dotWeaponId: __t.u64(),
+  crouching: __t.bool(),
+  slot: __t.u32(),
 });
 export type Player = __Infer<typeof Player>;
+
+export const PlayerCombat = __t.object("PlayerCombat", {
+  identity: __t.identity(),
+  slot: __t.u32(),
+  ammo: __t.u32(),
+  reloading: __t.bool(),
+  reloadUntil: __t.timestamp(),
+  fireCredits: __t.f32(),
+  creditsAt: __t.timestamp(),
+  poseAt: __t.timestamp(),
+  px: __t.f32(),
+  py: __t.f32(),
+  pz: __t.f32(),
+  prevFlags: __t.u8(),
+  prevAt: __t.timestamp(),
+  dotDps: __t.f32(),
+  dotUntil: __t.timestamp(),
+  dotSource: __t.identity(),
+  dotWeaponId: __t.u64(),
+  lastSwingAt: __t.timestamp(),
+});
+export type PlayerCombat = __Infer<typeof PlayerCombat>;
+
+export const PlayerPose = __t.object("PlayerPose", {
+  slot: __t.u32(),
+  x: __t.f32(),
+  y: __t.f32(),
+  z: __t.f32(),
+  yaw: __t.f32(),
+  pitch: __t.f32(),
+  vx: __t.f32(),
+  vy: __t.f32(),
+  vz: __t.f32(),
+  flags: __t.u8(),
+  sendT: __t.u32(),
+});
+export type PlayerPose = __Infer<typeof PlayerPose>;
 
 export const Shot = __t.object("Shot", {
   id: __t.u64(),
@@ -93,6 +151,8 @@ export const ShotEvent = __t.object("ShotEvent", {
   dx: __t.f32(),
   dy: __t.f32(),
   dz: __t.f32(),
+  charge: __t.f32(),
+  combo: __t.u8(),
 });
 export type ShotEvent = __Infer<typeof ShotEvent>;
 

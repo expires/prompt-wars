@@ -1,8 +1,33 @@
 import * as THREE from 'three';
 import { buildWeaponModel, type WeaponModel } from './buildWeaponModel';
 import type { Weapon } from './types';
+import type { MeleeView } from './MeleeSystem';
+import { BLOCK_POSE, MELEE_SPRINT_POSE, SHIELD_BLOCK_POSE, blendPose, chargePose, swingPose, type VmPose } from './meleeAnim';
+
+/** equip (draw) animation length, seconds */
+export const EQUIP_TIME = 0.4;
 
 const ANCHOR = new THREE.Vector3(0.19, -0.19, -0.5);
+/** ADS: centred, closer; y is adjusted per weapon so the top of the gun sits on the crosshair */
+const ADS_ANCHOR = new THREE.Vector3(0, -0.02, -0.46);
+
+export interface ViewmodelState {
+  /** horizontal speed m/s */
+  speed: number;
+  grounded: boolean;
+  /** 0..1 ADS blend */
+  ads: number;
+  sprinting: boolean;
+  crouched: boolean;
+  /** sideways velocity in camera space (m/s, + = right) for inertia tilt */
+  strafe: number;
+  /** camera landing dip (m, negative = down) */
+  dip: number;
+  /** melee weapons: current swing / charge / block state */
+  melee?: MeleeView;
+  /** melee shield (block pose differs) */
+  shield?: boolean;
+}
 const MAX_LEN = 0.6;
 const MAX_LEN_MELEE = 0.75;
 const MAX_HEIGHT = 0.28;
@@ -19,8 +44,23 @@ export class Viewmodel {
   private bobT = 0;
   private sway = new THREE.Vector2();
   private flashLife = 0;
+  private sprintT = 0;
+  private strafeT = 0;
+  private crouchT = 0;
+  /** ADS anchor for the current model (centre x, top of the gun on the crosshair) */
+  private readonly adsAnchor = ADS_ANCHOR.clone();
+  /** hide the model at full ADS (scoped weapons draw a scope overlay instead) */
+  hideWhenAimed = false;
   /** 0..1 while reloading (drives the dip animation) */
   reloadProgress = -1;
+  /** seconds since the weapon was equipped (draw animation) */
+  private equipT = 0;
+  private time = 0;
+  private melee = false;
+  /** smoothed block blend 0..1 */
+  private blockT = 0;
+  /** last applied melee offset (tests / screenshots) */
+  readonly meleeOffset: VmPose = { p: [0, 0, 0], r: [0, 0, 0] };
 
   constructor(private readonly viewScene: THREE.Scene, private readonly viewCamera: THREE.PerspectiveCamera) {
     this.anchor.position.copy(ANCHOR);
@@ -50,6 +90,8 @@ export class Viewmodel {
     orient.add(m.root);
     holder.add(orient);
     const melee = weapon.fireMode === 'melee';
+    this.melee = melee;
+    this.equipT = 0;
     if (melee) {
       // melee convention: blade/head grows toward -Z from the origin, handle toward +Z.
       // Tilt it so the blade points up and forward, with the handle in the hand.
@@ -68,7 +110,11 @@ export class Viewmodel {
       holder.scale.setScalar(s);
       // keep the gun's rear at roughly the anchor so long guns extend forward
       holder.position.set(0, 0, -Math.max(0, bb.max.z * s - 0.12));
+      // ADS: centre the gun horizontally and put its top edge just under the screen centre
+      const cx = ((bb.min.x + bb.max.x) / 2) * s;
+      this.adsAnchor.set(-cx, -bb.max.y * s - 0.008, ADS_ANCHOR.z);
     }
+    if (melee) this.adsAnchor.copy(ANCHOR);
     m.muzzle.add(this.flash);
     this.flash.position.set(0, 0, -0.04);
     this.pivot.add(holder);
@@ -93,8 +139,14 @@ export class Viewmodel {
     this.flash.scale.setScalar(0.7 + Math.random() * 0.6);
   }
 
+  /** legacy one-shot swing (unused by MeleeSystem weapons) */
   meleeSwing() {
     this.swing = 1;
+  }
+
+  /** 0..1 progress of the equip animation */
+  get equipProgress() {
+    return Math.min(1, this.equipT / EQUIP_TIME);
   }
 
   addSway(dx: number, dy: number) {
@@ -102,25 +154,87 @@ export class Viewmodel {
     this.sway.y = THREE.MathUtils.clamp(this.sway.y + dy * 0.00025, -0.04, 0.04);
   }
 
-  update(dt: number, speed: number, grounded: boolean) {
+  update(dt: number, st: ViewmodelState) {
+    const ease = (cur: number, target: number, rate: number) => cur + (target - cur) * (1 - Math.exp(-dt * rate));
+    this.time += dt;
+    this.equipT += dt;
     this.recoil = Math.max(0, this.recoil - dt * 8);
     this.swing = Math.max(0, this.swing - dt * 3.5);
     this.sway.multiplyScalar(Math.exp(-dt * 10));
-    if (grounded) this.bobT += dt * speed * 1.6;
-    const bobAmt = Math.min(1, speed / 8) * 0.012;
+    this.sprintT = ease(this.sprintT, st.sprinting && st.speed > 3 ? 1 : 0, 10);
+    this.strafeT = ease(this.strafeT, THREE.MathUtils.clamp(st.strafe / 6.5, -1, 1), 8);
+    this.crouchT = ease(this.crouchT, st.crouched ? 1 : 0, 10);
+    const ads = st.ads * st.ads * (3 - 2 * st.ads); // smoothstep
+    if (st.grounded) this.bobT += dt * st.speed * 1.65;
+    const bobAmt = Math.min(1.3, st.speed / 6) * 0.014 * (1 - 0.85 * ads) * (1 + 0.6 * this.sprintT);
+
+    // anchor: hip -> ADS
+    this.anchor.position.lerpVectors(ANCHOR, this.adsAnchor, ads);
+    this.anchor.visible = !(this.hideWhenAimed && st.ads > 0.95);
 
     const p = this.pivot;
+    const swayK = 1 - 0.7 * ads;
     p.position.set(
-      this.sway.x + Math.sin(this.bobT) * bobAmt,
-      this.sway.y + Math.abs(Math.cos(this.bobT)) * bobAmt - this.recoil * 0.01,
-      this.recoil * 0.05,
+      this.sway.x * swayK + Math.sin(this.bobT) * bobAmt - this.strafeT * 0.012 * swayK,
+      this.sway.y * swayK + Math.abs(Math.cos(this.bobT)) * bobAmt - this.recoil * 0.01 * (1 - 0.5 * ads) + st.dip * 0.25,
+      this.recoil * (0.05 + 0.03 * ads),
     );
-    p.rotation.set(this.recoil * 0.12, 0, 0);
+    p.rotation.set(this.recoil * 0.12 * (1 - 0.6 * ads), 0, -this.strafeT * 0.06 * swayK + this.crouchT * 0.06 * (1 - ads));
+    // idle sway (breathing), mostly when standing still
+    const still = 1 - Math.min(1, st.speed / 2);
+    p.position.y += Math.sin(this.time * 1.7) * 0.0035 * still * (1 - 0.8 * ads);
+    p.position.x += Math.sin(this.time * 0.85) * 0.0025 * still * (1 - 0.8 * ads);
+    p.rotation.z += Math.sin(this.time * 0.85 + 0.6) * 0.012 * still * (1 - ads);
+    const mv = st.melee;
+    const swinging = !!mv && (mv.kind === 'swing' || mv.kind === 'charge');
+    // sprint pose: guns muzzle down and across the body; melee weapons shouldered
+    if (this.melee && this.sprintT > 0.001) {
+      const k = this.sprintT * (swinging ? 0 : 1);
+      this.addPose(MELEE_SPRINT_POSE, k);
+    } else if (this.sprintT > 0.001) {
+      const k = this.sprintT;
+      p.rotation.x -= 0.45 * k;
+      p.rotation.y += 0.7 * k;
+      p.rotation.z += 0.15 * k;
+      p.position.x -= 0.06 * k;
+      p.position.y -= 0.05 * k;
+    }
     if (this.reloadProgress >= 0) {
       const k = Math.sin(Math.PI * this.reloadProgress);
       p.rotation.x -= k * 0.8;
       p.rotation.z += k * 0.3;
       p.position.y -= k * 0.08;
+    }
+    // melee: swing / charge / block keyframes
+    this.blockT = ease(this.blockT, mv?.kind === 'block' ? 1 : 0, 14);
+    const off = this.meleeOffset;
+    off.p = [0, 0, 0];
+    off.r = [0, 0, 0];
+    if (mv?.kind === 'swing') {
+      const pose = swingPose(mv.meta.swing, mv.combo, mv.u, mv.meta.weight, mv.charge > 0);
+      off.p = [...pose.p];
+      off.r = [...pose.r];
+    } else if (mv?.kind === 'charge') {
+      const pose = chargePose(mv.meta.swing, mv.combo, mv.charge, mv.meta.weight, this.time);
+      off.p = [...pose.p];
+      off.r = [...pose.r];
+    }
+    if (this.blockT > 0.001) {
+      const b = blendPose(off, st.shield ? SHIELD_BLOCK_POSE : BLOCK_POSE, this.blockT);
+      off.p = b.p;
+      off.r = b.r;
+    }
+    if (this.melee) this.addPose(off, 1);
+    // equip (draw): rise from below the screen, rotating up into place
+    if (this.equipT < EQUIP_TIME) {
+      const t = this.equipT / EQUIP_TIME;
+      const c1 = 1.70158;
+      const e = 1 + (c1 + 1) * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); // easeOutBack
+      const k = 1 - e;
+      p.position.y -= 0.32 * k;
+      p.position.x += 0.04 * k;
+      p.rotation.x += (this.melee ? -0.9 : 0.9) * k;
+      p.rotation.z -= 0.35 * k;
     }
     if (this.swing > 0) {
       const t = 1 - this.swing; // 0..1
@@ -133,6 +247,16 @@ export class Viewmodel {
       this.flashLife -= dt;
       if (this.flashLife <= 0) this.flash.visible = false;
     }
+  }
+
+  private addPose(o: VmPose, k: number) {
+    const p = this.pivot;
+    p.position.x += o.p[0] * k;
+    p.position.y += o.p[1] * k;
+    p.position.z += o.p[2] * k;
+    p.rotation.x += o.r[0] * k;
+    p.rotation.y += o.r[1] * k;
+    p.rotation.z += o.r[2] * k;
   }
 
   /**

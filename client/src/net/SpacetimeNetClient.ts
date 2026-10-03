@@ -1,14 +1,19 @@
-import { clampWeapon } from '@ai-gaem/shared';
+import { POSE_FLAG_BLOCK, POSE_FLAG_CROUCH, POSE_FLAG_GROUNDED, POSE_FLAG_TELEPORT, clampWeapon } from '@ai-gaem/shared';
+import { templatesJsonFor } from '../weapons/templates';
 import type { Identity } from 'spacetimedb';
-import { DbConnection } from '../module_bindings';
+import { DbConnection, tables } from '../module_bindings';
 import type { Weapon } from '../weapons/types';
 import type {
   GenerateWeaponResult,
+  HitConfirmEvent,
   HitInfo,
   KillEvent,
   LocalHitEvent,
+  LocalPose,
   NetClient,
   NetPlayer,
+  NetStats,
+  PoseSnapshot,
   ShotEvent,
   Vec3,
 } from './NetClient';
@@ -24,7 +29,6 @@ interface PlayerRow {
   y: number;
   z: number;
   yaw: number;
-  pitch: number;
   hp: number;
   alive: boolean;
   kills: number;
@@ -33,12 +37,36 @@ interface PlayerRow {
   respawnAt: { toMillis(): bigint };
   slowPercent: number;
   slowUntil: { toMillis(): bigint };
+  slot: number;
+}
+
+interface PoseRow {
+  slot: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  flags: number;
+  sendT: number;
 }
 
 interface WeaponRow {
   id: bigint;
   name: string;
   json: string;
+}
+
+interface PendingShot {
+  seq: number;
+  origin: Vec3;
+  dir: Vec3;
+  charge: number;
+  combo: number;
+  hits: { slot: number; zone: number; ix: number; iy: number; iz: number; pellets: number }[];
 }
 
 export interface SpacetimeNetOptions {
@@ -61,11 +89,30 @@ export function colorForId(id: string) {
   return `hsl(${h % 360},70%,50%)`;
 }
 
+function toSnapshot(r: PoseRow, arrival: number): PoseSnapshot {
+  return {
+    pos: [r.x, r.y, r.z],
+    vel: [r.vx, r.vy, r.vz],
+    yaw: r.yaw,
+    pitch: r.pitch,
+    crouching: (r.flags & POSE_FLAG_CROUCH) !== 0,
+    grounded: (r.flags & POSE_FLAG_GROUNDED) !== 0,
+    teleport: (r.flags & POSE_FLAG_TELEPORT) !== 0,
+    blocking: (r.flags & POSE_FLAG_BLOCK) !== 0,
+    sendT: r.sendT,
+    arrival,
+  };
+}
+
 /**
- * SpacetimeDB implementation of NetClient. Movement is client-authoritative
- * (update_transform at ~15Hz); damage, death, respawn, weapons and spawn points are
- * server-authoritative. The auth token is kept in sessionStorage so every browser tab is its
- * own player (reloading a tab keeps the identity; `?fresh=1` forces a new one).
+ * SpacetimeDB implementation of NetClient. Movement is client-authoritative (update_transform
+ * into the small `player_pose` table, keyed by a per-connection slot); damage, death, respawn,
+ * weapons and spawn points are server-authoritative. The auth token is kept in sessionStorage so
+ * every browser tab is its own player (reloading a tab keeps the identity; `?fresh=1` forces a
+ * new one).
+ *
+ * Subscriptions: player, player_pose, spawn_point, the two event tables and preset weapons;
+ * other weapon rows are subscribed on demand when someone equips them.
  */
 export class SpacetimeNetClient implements NetClient {
   readonly authoritative = true;
@@ -75,14 +122,26 @@ export class SpacetimeNetClient implements NetClient {
   private identity?: Identity;
   private readonly identities = new Map<string, Identity>();
   private readonly weapons = new Map<string, Weapon>();
+  private readonly requestedWeapons = new Set<string>();
+  /** online players: slot -> identity hex */
+  private readonly slotToId = new Map<number, string>();
+  private readonly idToSlot = new Map<string, number>();
+  private readonly poses = new Map<string, PoseSnapshot>();
   private seq = (Date.now() & 0x3fffffff) >>> 0;
-  private lastSent?: { pos: Vec3; yaw: number; pitch: number; t: number };
+  private pendingShot?: PendingShot;
+
+  // stats
+  private readonly callCounts: Record<string, number> = {};
+  private rttMs = 0;
+  private readonly sendTimes: number[] = [];
 
   private playersCbs: Listener<NetPlayer[]>[] = [];
+  private poseCbs: ((id: string, s: PoseSnapshot) => void)[] = [];
   private localCbs: Listener<NetPlayer>[] = [];
   private killCbs: Listener<KillEvent>[] = [];
   private shotCbs: Listener<ShotEvent>[] = [];
   private localHitCbs: Listener<LocalHitEvent>[] = [];
+  private confirmCbs: Listener<HitConfirmEvent>[] = [];
   private weaponCbs: Listener<void>[] = [];
   private emitScheduled = false;
 
@@ -118,7 +177,7 @@ export class SpacetimeNetClient implements NetClient {
       const tryReady = () => {
         if (!this.connected || !this.identity) return;
         const me = this.conn!.db.player.identity.find(this.identity) as PlayerRow | undefined;
-        if (me) {
+        if (me && me.slot > 0) {
           this.emitLocal(me);
           this.scheduleEmit();
           done();
@@ -129,6 +188,8 @@ export class SpacetimeNetClient implements NetClient {
         .withUri(this.opts.uri)
         .withDatabaseName(this.opts.dbName)
         .withToken(token)
+        // don't wait for durability before sending updates / reducer results (lower latency)
+        .withConfirmedReads(false)
         .onConnect((conn, identity, newToken) => {
           this.identity = identity;
           this.localId = identity.toHexString();
@@ -143,13 +204,23 @@ export class SpacetimeNetClient implements NetClient {
             .onApplied(() => {
               this.connected = true;
               for (const w of conn.db.weapon.iter()) this.cacheWeapon(w as WeaponRow);
+              for (const r of conn.db.player.iter()) this.trackPlayer(r as PlayerRow);
+              for (const r of conn.db.playerPose.iter()) this.onPoseRow(r as PoseRow);
               if (this.opts.name) this.setName(this.opts.name);
               tryReady();
             })
-            .onError((_ctx) => done(new Error('subscription error')))
-            .subscribeToAllTables();
-          // the player row is inserted by the server's client_connected; wait for it
+            .onError(() => done(new Error('subscription error')))
+            .subscribe([
+              tables.player,
+              tables.playerPose,
+              tables.spawnPoint,
+              tables.shotEvent,
+              tables.hitEvent,
+              tables.weapon.where((w) => w.isPreset.eq(true)),
+            ]);
+          // the player row is inserted / updated (slot) by the server's client_connected; wait for it
           conn.db.player.onInsert(() => tryReady());
+          conn.db.player.onUpdate(() => tryReady());
         })
         .onConnectError((_ctx, err) => done(err))
         .onDisconnect(() => {
@@ -160,10 +231,58 @@ export class SpacetimeNetClient implements NetClient {
     });
   }
 
+  /** keep the slot <-> identity maps and weapon subscriptions in sync with a player row */
+  private trackPlayer(row: PlayerRow) {
+    const id = row.identity.toHexString();
+    this.identities.set(id, row.identity);
+    const oldSlot = this.idToSlot.get(id);
+    const slot = row.online && row.slot > 0 ? row.slot : 0;
+    if (oldSlot !== undefined && oldSlot !== slot) {
+      if (this.slotToId.get(oldSlot) === id) this.slotToId.delete(oldSlot);
+      this.idToSlot.delete(id);
+      this.poses.delete(id);
+    }
+    if (slot > 0) {
+      const had = this.slotToId.get(slot) === id;
+      this.slotToId.set(slot, id);
+      this.idToSlot.set(id, slot);
+      // the pose row may have arrived before the player row
+      if (!had) {
+        const pose = this.conn?.db.playerPose.slot.find(slot) as PoseRow | undefined;
+        if (pose) this.onPoseRow(pose);
+      }
+    }
+    this.ensureWeapon(String(row.weaponId));
+  }
+
+  /** subscribe to a weapon row that isn't a preset (equipped by someone) */
+  private ensureWeapon(id: string) {
+    if (!this.conn || id === '0' || this.weapons.has(id) || this.requestedWeapons.has(id)) return;
+    this.requestedWeapons.add(id);
+    const wid = BigInt(id);
+    this.conn
+      .subscriptionBuilder()
+      .onApplied(() => {
+        const row = this.conn?.db.weapon.id.find(wid) as WeaponRow | undefined;
+        if (row) this.cacheWeapon(row);
+      })
+      .onError(() => this.requestedWeapons.delete(id))
+      .subscribe(tables.weapon.where((w) => w.id.eq(wid)));
+  }
+
+  private onPoseRow(row: PoseRow) {
+    const id = this.slotToId.get(row.slot);
+    if (!id) return; // owner's player row not seen yet (trackPlayer replays it)
+    const snap = toSnapshot(row, performance.now());
+    this.poses.set(id, snap);
+    if (id === this.localId) return;
+    this.poseCbs.forEach((cb) => cb(id, snap));
+  }
+
   private registerCallbacks(conn: DbConnection) {
     const db = conn.db;
     const onPlayer = (row: PlayerRow) => {
-      this.identities.set(row.identity.toHexString(), row.identity);
+      this.trackPlayer(row);
       if (this.identity && row.identity.isEqual(this.identity)) this.emitLocal(row);
       this.scheduleEmit();
     };
@@ -171,13 +290,17 @@ export class SpacetimeNetClient implements NetClient {
     db.player.onUpdate((_ctx, _old, row) => onPlayer(row as PlayerRow));
     db.player.onDelete(() => this.scheduleEmit());
 
+    // poses: one snapshot per changed row (never re-emit unchanged players)
+    db.playerPose.onInsert((_ctx, row) => this.onPoseRow(row as PoseRow));
+    db.playerPose.onUpdate((_ctx, _old, row) => this.onPoseRow(row as PoseRow));
+
     db.weapon.onInsert((_ctx, row) => this.cacheWeapon(row as WeaponRow));
     db.weapon.onUpdate((_ctx, _old, row) => this.cacheWeapon(row as WeaponRow));
 
     db.shotEvent.onInsert((_ctx, e) => {
       const shooterId = e.shooter.toHexString();
       if (shooterId === this.localId) return;
-      const ev: ShotEvent = { shooterId, weaponId: String(e.weaponId), origin: [e.ox, e.oy, e.oz], dir: [e.dx, e.dy, e.dz] };
+      const ev: ShotEvent = { shooterId, weaponId: String(e.weaponId), origin: [e.ox, e.oy, e.oz], dir: [e.dx, e.dy, e.dz], charge: e.charge, combo: e.combo };
       this.shotCbs.forEach((cb) => cb(ev));
     });
 
@@ -194,8 +317,14 @@ export class SpacetimeNetClient implements NetClient {
           dot: e.dot,
           knock: [e.knockX, e.knockY, e.knockZ],
           slowPercent: e.slowPercent,
+          headshot: e.headshot,
+          blocked: e.blocked,
         };
         this.localHitCbs.forEach((cb) => cb(ev));
+      }
+      if (shooterId === this.localId && targetId !== this.localId) {
+        const ev: HitConfirmEvent = { targetId, damage: e.damage, killed: e.killed, headshot: e.headshot, dot: e.dot, point: [e.x, e.y, e.z], blocked: e.blocked };
+        this.confirmCbs.forEach((cb) => cb(ev));
       }
       if (e.killed) {
         const kill: KillEvent = {
@@ -205,6 +334,7 @@ export class SpacetimeNetClient implements NetClient {
           victimName: this.playerName(e.target),
           weaponName: this.weapons.get(weaponId)?.name ?? `#${weaponId}`,
           at: Date.now(),
+          headshot: e.headshot,
         };
         this.killCbs.forEach((cb) => cb(kill));
       }
@@ -229,12 +359,14 @@ export class SpacetimeNetClient implements NetClient {
 
   private toNetPlayer(r: PlayerRow): NetPlayer {
     const id = r.identity.toHexString();
+    const pose = id === this.localId ? undefined : this.poses.get(id);
     return {
       id,
       name: r.name,
-      pos: [r.x, r.y, r.z],
-      yaw: r.yaw,
-      pitch: r.pitch,
+      // remote: latest pose; local: the server's spawn / resume point
+      pos: pose ? [...pose.pos] : [r.x, r.y, r.z],
+      yaw: pose ? pose.yaw : r.yaw,
+      pitch: pose ? pose.pitch : 0,
       hp: r.hp,
       alive: r.alive,
       online: r.online,
@@ -245,6 +377,7 @@ export class SpacetimeNetClient implements NetClient {
       respawnAt: ms(r.respawnAt),
       slowPercent: r.slowPercent,
       slowUntil: ms(r.slowUntil),
+      crouching: pose?.crouching ?? false,
     };
   }
 
@@ -263,17 +396,27 @@ export class SpacetimeNetClient implements NetClient {
     });
   }
 
-  /** online remote players */
+  /** online remote players (with a pose slot) */
   remotePlayers(): NetPlayer[] {
     if (!this.conn) return [];
     const out: NetPlayer[] = [];
     for (const r of this.conn.db.player.iter() as Iterable<PlayerRow>) {
-      if (!r.online) continue;
+      if (!r.online || r.slot === 0) continue;
       const id = r.identity.toHexString();
       if (id === this.localId) continue;
       out.push(this.toNetPlayer(r));
     }
     return out;
+  }
+
+  othersOnline() {
+    let n = 0;
+    for (const id of this.slotToId.values()) if (id !== this.localId) n++;
+    return n;
+  }
+
+  getPose(id: string) {
+    return this.poses.get(id);
   }
 
   getLocal(): NetPlayer | undefined {
@@ -286,51 +429,82 @@ export class SpacetimeNetClient implements NetClient {
     this.conn?.disconnect();
   }
 
-  private call(name: string, p: Promise<unknown> | undefined) {
-    p?.catch((err) => console.warn(`[net] ${name} failed:`, err?.message ?? err));
-  }
-
-  sendTransform(pos: Vec3, yaw: number, pitch: number, force = false) {
-    if (!this.conn || !this.connected) return;
+  stats(): NetStats {
     const now = performance.now();
-    const l = this.lastSent;
-    if (
-      !force &&
-      l &&
-      now - l.t < 1000 &&
-      Math.abs(l.pos[0] - pos[0]) + Math.abs(l.pos[1] - pos[1]) + Math.abs(l.pos[2] - pos[2]) < 0.005 &&
-      Math.abs(l.yaw - yaw) + Math.abs(l.pitch - pitch) < 0.002
-    )
-      return;
-    this.lastSent = { pos: [...pos] as Vec3, yaw, pitch, t: now };
-    this.call('updateTransform', this.conn.reducers.updateTransform({ x: pos[0], y: pos[1], z: pos[2], yaw, pitch }));
+    while (this.sendTimes.length && now - this.sendTimes[0] > 1000) this.sendTimes.shift();
+    return { rtt: this.rttMs, sendHz: this.sendTimes.length, calls: { ...this.callCounts } };
   }
 
-  fire(origin: Vec3, dir: Vec3): number {
+  /** run a reducer call: count it, log failures, optionally sample the round trip */
+  private call(name: string, p: Promise<unknown> | undefined, measureRtt = false) {
+    if (!p) return;
+    this.callCounts[name] = (this.callCounts[name] ?? 0) + 1;
+    const t0 = performance.now();
+    p.then(
+      () => {
+        if (!measureRtt) return;
+        const rtt = performance.now() - t0;
+        this.rttMs = this.rttMs ? this.rttMs * 0.8 + rtt * 0.2 : rtt;
+      },
+      (err) => console.warn(`[net] ${name} failed:`, err?.message ?? err),
+    );
+  }
+
+  sendTransform(pose: LocalPose) {
+    if (!this.conn || !this.connected) return;
+    this.sendTimes.push(performance.now());
+    const flags = (pose.crouching ? POSE_FLAG_CROUCH : 0) | (pose.grounded ? POSE_FLAG_GROUNDED : 0) | (pose.teleport ? POSE_FLAG_TELEPORT : 0) | (pose.blocking ? POSE_FLAG_BLOCK : 0);
+    this.call(
+      'update_transform',
+      this.conn.reducers.updateTransform({
+        x: pose.pos[0],
+        y: pose.pos[1],
+        z: pose.pos[2],
+        yaw: pose.yaw,
+        pitch: pose.pitch,
+        vx: pose.vel[0],
+        vy: pose.vel[1],
+        vz: pose.vel[2],
+        flags,
+        sendT: Math.round(pose.sendT) >>> 0,
+      }),
+      true,
+    );
+  }
+
+  fire(origin: Vec3, dir: Vec3, melee?: { charge: number; combo: number }): number {
+    this.flushShot(); // a previous shot that was never flushed
     const seq = (this.seq = (this.seq + 1) >>> 0);
-    if (this.conn && this.connected) {
-      this.call(
-        'fire',
-        this.conn.reducers.fire({ seq, ox: origin[0], oy: origin[1], oz: origin[2], dx: dir[0], dy: dir[1], dz: dir[2] }),
-      );
-    }
+    this.pendingShot = { seq, origin, dir, charge: melee?.charge ?? 0, combo: melee?.combo ?? 0, hits: [] };
     return seq;
   }
 
-  reportHit(targetId: string, _weaponId: string, info?: HitInfo) {
-    const target = this.identities.get(targetId);
-    if (!this.conn || !target || !info) return;
+  flushShot() {
+    const s = this.pendingShot;
+    if (!s) return;
+    this.pendingShot = undefined;
+    if (!this.conn || !this.connected) return;
     this.call(
-      'reportHit',
-      this.conn.reducers.reportHit({
-        seq: info.seq,
-        target,
-        pellets: Math.max(1, Math.round(info.pellets)),
-        ix: info.point[0],
-        iy: info.point[1],
-        iz: info.point[2],
-      }),
+      'fire',
+      this.conn.reducers.fire({ seq: s.seq, ox: s.origin[0], oy: s.origin[1], oz: s.origin[2], dx: s.dir[0], dy: s.dir[1], dz: s.dir[2], hits: s.hits, charge: s.charge, combo: s.combo }),
+      true,
     );
+  }
+
+  reportHit(targetId: string, _weaponId: string, info?: HitInfo) {
+    const slot = this.idToSlot.get(targetId);
+    if (!this.conn || !slot || !info) return;
+    const pellets = Math.max(1, Math.min(255, Math.round(info.pellets)));
+    const zone = Math.max(0, Math.min(255, Math.round(info.zone ?? 0)));
+    const [ix, iy, iz] = info.point;
+    const s = this.pendingShot;
+    if (s && s.seq === info.seq) {
+      // same shot: batched into the fire call (hitscan / stream / melee)
+      if (!s.hits.some((h) => h.slot === slot)) s.hits.push({ slot, zone, ix, iy, iz, pellets });
+      return;
+    }
+    // projectile / arc impact, later than the shot
+    this.call('report_hit', this.conn.reducers.reportHit({ seq: info.seq, slot, pellets, ix, iy, iz, zone }));
   }
 
   reload() {
@@ -344,12 +518,26 @@ export class SpacetimeNetClient implements NetClient {
   /** respawn, resolving/rejecting with the reducer outcome */
   respawnAsync(keepLoadout: boolean): Promise<void> {
     if (!this.conn) return Promise.reject(new Error('not connected'));
+    this.callCounts.respawn = (this.callCounts.respawn ?? 0) + 1;
     return this.conn.reducers.respawn({ keepLoadout });
+  }
+
+  equipWeapon(weaponId: string): Promise<void> {
+    if (!this.conn) return Promise.reject(new Error('not connected'));
+    this.callCounts.equip_weapon = (this.callCounts.equip_weapon ?? 0) + 1;
+    return this.conn.reducers.equipWeapon({ weaponId: BigInt(weaponId) });
+  }
+
+  presetId(weaponClass: string) {
+    for (const w of (this.conn?.db.weapon.iter() ?? []) as Iterable<WeaponRow & { isPreset: boolean; weaponClass: string }>) {
+      if (w.isPreset && w.weaponClass === weaponClass) return String(w.id);
+    }
+    return undefined;
   }
 
   setName(name: string) {
     const clean = name.trim().slice(0, 24);
-    if (clean) this.call('setName', this.conn?.reducers.setName({ name: clean }));
+    if (clean) this.call('set_name', this.conn?.reducers.setName({ name: clean }));
   }
 
   async registerWeapon(json: Weapon): Promise<string> {
@@ -360,22 +548,33 @@ export class SpacetimeNetClient implements NetClient {
 
   async generateWeapon(prompt: string, weaponClass = ''): Promise<GenerateWeaponResult> {
     if (!this.conn) throw new Error('not connected');
-    const res = await this.conn.procedures.generateWeapon({ prompt, weaponClass });
+    this.callCounts.generate_weapon = (this.callCounts.generate_weapon ?? 0) + 1;
+    // the template library lives on the client (too big for the module): send the best matches
+    const templatesJson = await templatesJsonFor(prompt, weaponClass);
+    const res = await this.conn.procedures.generateWeapon({ prompt, weaponClass, templatesJson });
     const weaponId = String(res.weaponId);
-    // the weapon row arrives through the subscription; wait briefly for it
+    this.ensureWeapon(weaponId);
+    // the weapon row arrives through the (on-demand) subscription; wait briefly for it
     const t0 = performance.now();
     while (!this.weapons.has(weaponId) && performance.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 50));
     return { ok: res.ok, weaponId, message: res.message, weapon: this.weapons.get(weaponId) };
   }
 
   getWeapon(id: string) {
-    return this.weapons.get(id);
+    const w = this.weapons.get(id);
+    if (!w) this.ensureWeapon(id);
+    return w;
   }
 
   onPlayersChanged(cb: Listener<NetPlayer[]>) {
     this.playersCbs.push(cb);
     if (this.connected) cb(this.remotePlayers());
     return () => (this.playersCbs = this.playersCbs.filter((c) => c !== cb));
+  }
+
+  onPose(cb: (id: string, s: PoseSnapshot) => void) {
+    this.poseCbs.push(cb);
+    return () => (this.poseCbs = this.poseCbs.filter((c) => c !== cb));
   }
 
   onLocalChanged(cb: Listener<NetPlayer>) {
@@ -396,6 +595,11 @@ export class SpacetimeNetClient implements NetClient {
   onLocalHit(cb: Listener<LocalHitEvent>) {
     this.localHitCbs.push(cb);
     return () => (this.localHitCbs = this.localHitCbs.filter((c) => c !== cb));
+  }
+
+  onHitConfirmed(cb: Listener<HitConfirmEvent>) {
+    this.confirmCbs.push(cb);
+    return () => (this.confirmCbs = this.confirmCbs.filter((c) => c !== cb));
   }
 
   onWeaponsChanged(cb: Listener<void>) {

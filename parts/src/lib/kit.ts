@@ -217,6 +217,19 @@ export class Kit {
     return this;
   }
 
+  /** Axis-aligned bounds of everything added so far (all slots). */
+  bounds(): THREE.Box3 {
+    const box = new THREE.Box3();
+    const tmp = new THREE.Box3();
+    for (const list of this.slots.values())
+      for (const g of list) {
+        g.computeBoundingBox();
+        tmp.copy(g.boundingBox!);
+        box.union(tmp);
+      }
+    return box;
+  }
+
   triCount(): number {
     let n = 0;
     for (const list of this.slots.values()) for (const g of list) n += g.attributes.position.count / 3;

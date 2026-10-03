@@ -12,9 +12,10 @@ import {
 
 export default {
   seq: __t.u32(),
-  target: __t.identity(),
+  slot: __t.u32(),
   pellets: __t.u32(),
   ix: __t.f32(),
   iy: __t.f32(),
   iz: __t.f32(),
+  zone: __t.u8(),
 };

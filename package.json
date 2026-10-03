@@ -4,6 +4,7 @@
   "scripts": {
     "dev": "pnpm --filter client dev",
     "e2e": "pnpm --filter client e2e",
-    "e2e:maincloud": "pnpm --filter client e2e:maincloud"
+    "e2e:maincloud": "pnpm --filter client e2e:maincloud",
+    "deploy": "./scripts/deploy.sh"
   }
 }

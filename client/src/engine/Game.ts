@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MAPS, PRESET_WEAPONS, computeWeaponStats, type MapDef } from '@ai-gaem/shared';
+import { BLOCK_MOVE_MULT, MAPS, PRESET_WEAPONS, computeWeaponStats, meleeMetaOf, type MapDef } from '@ai-gaem/shared';
 import { createRenderer, type RenderContext } from './renderer';
 import { initPhysics, FIXED_DT, type PhysicsContext } from './physics';
 import { Input } from './input';
@@ -9,18 +9,22 @@ import { findGroundSpawns, loadMap } from '../map/loadMap';
 import { bakeSpawns } from '../map/bakeSpawns';
 import type { GameMap, Vec3 } from '../map/types';
 import { getSpawnPoints, pickRandomSpawn, type SpawnPoint } from '../map/spawns';
-import { PlayerController, EYE_HEIGHT } from '../player/PlayerController';
+import { PlayerController } from '../player/PlayerController';
+import { CameraRig } from '../player/CameraRig';
+import { Sfx } from '../audio/Sfx';
+import { settings } from '../settings';
 import { TargetDummies } from '../player/TargetDummies';
 import { TargetRegistry } from '../weapons/targets';
 import { WeaponSystem } from '../weapons/WeaponSystem';
-import { DEFAULT_WEAPONS, generateWeaponStub } from '../weapons/defaultWeapons';
+import { getDefaultWeapons, generateWeaponStub } from '../weapons/defaultWeapons';
+import { meleeMaterial } from '../weapons/MeleeSystem';
 import type { Weapon } from '../weapons/types';
 import { Hud, esc } from '../ui/Hud';
 import { SpawnEditor } from '../ui/SpawnEditor';
-import { OfflineNetClient, RemotePlayers, type NetClient, type NetPlayer } from '../net';
+import { OfflineNetClient, PoseSender, RemotePlayers, type NetClient, type NetPlayer } from '../net';
+import { DamageNumbers } from '../ui/DamageNumbers';
 
 export const MAX_HP = 100;
-const NET_SEND_HZ = 15;
 /** room between the scan's own bounds and the invisible wall net */
 const BOUNDS_MARGIN = 0.5;
 
@@ -72,6 +76,19 @@ export class Game {
   dummies?: TargetDummies;
   spawnEditor!: SpawnEditor;
   readonly targets = new TargetRegistry();
+  readonly rig = new CameraRig();
+  readonly sfx = new Sfx();
+  /** 0..1 ADS blend */
+  ads = 0;
+  /** test hook: force the melee block on / off (null = F / RB) */
+  forceBlock: boolean | null = null;
+  /** test hook / scripted override for ADS (null = right mouse) */
+  forceAds: boolean | null = null;
+  private adsToggled = false;
+  poseSender!: PoseSender;
+  damageNumbers!: DamageNumbers;
+  /** test hook: scripted circular movement (smoothness test) */
+  autoMove: { cx: number; cz: number; r: number; speed: number; y: number; a: number } | null = null;
 
   hp = MAX_HP;
   alive = true;
@@ -80,8 +97,9 @@ export class Game {
   me?: NetPlayer;
   readonly killLog: string[] = [];
   private acc = 0;
+  /** simulation clock (ms) for pose timestamps: advances exactly FIXED_DT per step */
+  private simT: number | null = null;
   private last = performance.now();
-  private netAcc = 0;
   private scoreAcc = 0;
   private showDebug = false;
   private fps = 0;
@@ -99,6 +117,8 @@ export class Game {
 
     this.net = opts.net ?? new OfflineNetClient({ bots: opts.bots ?? 0, botCenter: [0, 0, 0] });
     const online = this.net.authoritative;
+    this.poseSender = new PoseSender(this.net);
+    this.damageNumbers = new DamageNumbers(this.hud.numbersLayer);
 
     // ---- map ----
     const url = opts.mapUrl;
@@ -136,6 +156,13 @@ export class Game {
     const spawn = pickRandomSpawn(this.spawnPoints());
     this.player = new PlayerController(this.physics, this.input, new THREE.Vector3(...spawn.pos));
     this.player.yaw = spawn.yaw;
+    this.player.onJump = () => this.sfx.jump();
+    this.player.onLand = (v) => {
+      this.rig.land(v);
+      this.sfx.land(v);
+    };
+    this.rig.onStep = (speed) => this.sfx.footstep(speed, this.player.crouched);
+    this.sfx.setListener(this.rc.camera);
     this.lastSpawn.set(...spawn.pos);
 
     // ---- dummies (offline only: the server doesn't know about them) ----
@@ -145,7 +172,7 @@ export class Game {
           ? [[0, 0, -8], [4, 0, -10], [-6, 0, -12], [16, 3, -22], [-20, 2, 12], [10, 0, 18]]
           : this.map.spawns.slice(0, 3).map((s) => [s[0] + 2, s[1], s[2] + 2] as Vec3);
       this.dummies = new TargetDummies(this.physics, this.rc.scene, this.targets, dummyPos);
-      this.dummies.onKilled = (d) => this.hud.addKill('You', this.weapons.weapon.name, d.id);
+      this.dummies.onKilled = (d) => this.hud.addKill('You', this.weapons.weapon.name, d.id, this.lastHitHead);
     }
 
     // ---- weapons ----
@@ -158,24 +185,76 @@ export class Game {
       this.targets,
       this.player.collider,
       {
-        onHit: (_t, _dmg, killed) => this.hud.hitMarker(killed),
+        onHit: (_t, _dmg, killed, zone) => {
+          const head = zone === 1;
+          this.lastHitHead = head;
+          this.hud.hitMarker(killed, head);
+          if (head) this.sfx.headshotDing();
+          else this.sfx.hitTick();
+          if (killed) this.sfx.killChime();
+        },
         onAmmoChanged: (a, m, r) => this.hud.setAmmo(a, m, r),
-        onShot: (o, d) => this.net.fire([o.x, o.y, o.z], [d.x, d.y, d.z]),
-        onReload: () => this.net.reload?.(),
+        onShot: (o, d, melee) => this.net.fire([o.x, o.y, o.z], [d.x, d.y, d.z], melee),
+        onMeleeSwing: (meta, charge) => {
+          this.sfx.meleeSwing(meta.weight, charge > 0);
+          this.rig.shake((meta.weight === 'heavy' ? 0.7 : meta.weight === 'medium' ? 0.35 : 0.18) * (charge > 0 ? 1.6 : 1));
+        },
+        onMeleeContact: (meta, charge, dir, _point, head) => {
+          const w = this.weapons.weapon;
+          this.sfx.meleeImpact(meleeMaterial(w), meta.weight, head);
+          // camera punch along the swing
+          const k = (meta.weight === 'heavy' ? 1.6 : meta.weight === 'medium' ? 1.1 : 0.7) * (charge > 0 ? 1.4 : 1);
+          if (meta.swing === 'overhead') this.rig.kick(-k, 0);
+          else if (meta.swing === 'thrust' || meta.swing === 'bash') this.rig.kick(-0.5 * k, 0);
+          else {
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.rc.camera.quaternion);
+            this.rig.kick(-0.25 * k, (dir.dot(right) > 0 ? -1 : 1) * k);
+          }
+          this.rig.shake(0.5 * k);
+          // heavy hits carry you forward a little
+          if (meta.weight === 'heavy' || charge > 0) {
+            const f = new THREE.Vector3(-Math.sin(this.player.yaw), 0, -Math.cos(this.player.yaw));
+            this.player.applyImpulse(f.multiplyScalar(meta.weight === 'heavy' ? 2.5 : 1.6));
+          }
+        },
+        onMeleeWorld: (meta) => {
+          this.sfx.meleeImpact('blunt', meta.weight);
+          this.rig.shake(0.3);
+        },
+        onShotEnd: () => this.net.flushShot?.(),
+        onFire: (w) => this.sfx.gunshot(w.class),
+        onRecoil: (p, y) => this.rig.kick(p, y),
+        onExplosion: (pos) => this.sfx.explosion(pos),
+        onReload: () => {
+          this.sfx.reload();
+          this.net.reload?.();
+        },
       },
     );
 
     // ---- net ----
     this.hud.setScoreboard(online ? 'Connecting…' : null);
     await this.net.connect();
-    if (!online) for (const w of DEFAULT_WEAPONS) w.id = await this.net.registerWeapon(w);
+    if (!online) for (const w of getDefaultWeapons()) w.id = await this.net.registerWeapon(w);
     this.remotes = new RemotePlayers(this.net, this.physics, this.rc.scene, this.targets);
     this.net.onKill?.((e) => {
       const killer = e.killerId === this.net.localId ? 'You' : e.killerName;
       const victim = e.victimId === this.net.localId ? 'You' : e.victimName;
       this.killLog.push(`${killer} [${e.weaponName}] ${victim}`);
       if (e.victimId === this.net.localId) this.hud.setDeathMessage(`Killed by ${e.killerName} [${e.weaponName}]`);
-      this.hud.addKill(killer, e.weaponName, victim);
+      this.hud.addKill(killer, e.weaponName, victim, !!e.headshot);
+    });
+    // server-confirmed damage by us: aggregated damage numbers; kills get the kill X + chime
+    // (the optimistic hitmarker shows on the local raycast and never knows about kills online)
+    this.net.onHitConfirmed?.((e) => {
+      const at = e.point ? new THREE.Vector3(...e.point) : (this.remotes.headOf(e.targetId) ?? new THREE.Vector3());
+      this.damageNumbers.add(e.targetId, e.damage, at, { headshot: e.headshot, killed: e.killed });
+      if (e.blocked) this.sfx.blockClang(at);
+      if (e.killed) {
+        this.hud.hitMarker(true, e.headshot);
+        this.hud.killConfirm(e.headshot);
+        this.sfx.killChime();
+      }
     });
 
     if (online) {
@@ -183,16 +262,20 @@ export class Game {
       this.net.onWeaponsChanged?.(() => this.syncWeapon());
       this.net.onLocalHit?.((e) => {
         if (e.knock.some((k) => k !== 0)) this.player.applyImpulse(new THREE.Vector3(...e.knock));
+        if (e.blocked) this.sfx.blockClang();
         if (!e.dot) this.hud.damageFlash();
       });
       this.net.onShot?.((e) => {
         const w = this.net.getWeapon?.(e.weaponId) ?? PRESET_WEAPONS.pistol;
-        this.weapons.playRemoteShot(
-          w,
-          new THREE.Vector3(...e.origin),
-          new THREE.Vector3(...e.dir),
-          this.remotes.colliderOf(e.shooterId),
-        );
+        const origin = new THREE.Vector3(...e.origin);
+        // third person: swing animation (melee) / recoil pose (guns)
+        this.remotes.playShot(e.shooterId, w, e.charge ?? 0, e.combo ?? 0);
+        if (w.fireMode === 'melee') {
+          this.sfx.meleeSwing(meleeMetaOf(w).weight, (e.charge ?? 0) > 0, origin);
+          return;
+        }
+        this.weapons.playRemoteShot(w, origin, new THREE.Vector3(...e.dir), this.remotes.collidersOf(e.shooterId));
+        this.sfx.gunshot(w.class, origin);
       });
       const me = this.net.getLocal?.();
       if (me) {
@@ -207,7 +290,7 @@ export class Game {
         this.hud.setHealth(this.hp);
         if (!me.alive && this.alive) this.die('Killed');
       });
-      this.equip(DEFAULT_WEAPONS[0]);
+      this.equip(getDefaultWeapons()[0]);
     }
 
     // ---- UI wiring ----
@@ -218,7 +301,7 @@ export class Game {
     this.hud.setHealth(this.hp);
     this.hud.onClickToPlay(() => this.input.requestLock());
     this.input.onLockChange((locked) => {
-      if (this.alive && !this.opts.e2e) this.hud.showClickToPlay(!locked);
+      if (this.alive && !this.opts.e2e) this.hud.showClickToPlay(!locked && !this.input.padPlaying);
     });
     this.hud.deathHandlers = {
       onKeepLoadout: () => {
@@ -259,8 +342,8 @@ export class Game {
       this.die('Killed');
     } else if (me.alive && !this.alive) {
       // server respawned us: move to the server-chosen spawn point
-      this.teleportTo(me.pos, me.yaw);
       this.respawn(false);
+      this.teleportTo(me.pos, me.yaw);
     }
     if (!prev || prev.weaponId !== me.weaponId) this.syncWeapon(true);
   }
@@ -278,12 +361,29 @@ export class Game {
     const v = new THREE.Vector3(...pos);
     this.player.teleport(v, yaw);
     this.lastSpawn.copy(v);
+    this.poseSender.markTeleport();
     this.sendTransformNow();
   }
 
+  /** current pose for the network */
+  private poseInput() {
+    const p = this.player;
+    const f = p.feet;
+    const blocking = this.weapons.fireMode === 'melee' && this.weapons.melee.blocking;
+    return { pos: [f.x, f.y, f.z] as Vec3, yaw: p.yaw, pitch: p.pitch, crouching: p.crouched, grounded: p.grounded, blocking };
+  }
+
+  /** send the pose right away (teleports, test hooks); regular sends happen in the fixed step */
   sendTransformNow() {
-    const f = this.player.feet;
-    this.net.sendTransform([f.x, f.y, f.z], this.player.yaw, this.player.pitch, true);
+    if (!this.alive) return;
+    this.poseSender.forceNext();
+    this.poseSender.step(this.poseInput(), this.simT ?? performance.now(), FIXED_DT);
+  }
+
+  /** test hook teleport: a discontinuity remotes should snap to */
+  teleportLocal(pos: Vec3, yaw?: number) {
+    this.autoMove = null;
+    this.teleportTo(pos, yaw);
   }
 
   /** wait for the server's respawn timer, then call respawn (retrying on clock skew) */
@@ -397,6 +497,7 @@ export class Game {
   die(message = '') {
     if (!this.alive) return;
     this.alive = false;
+    this.poseSender.reset();
     this.hp = 0;
     this.hud.setHealth(0);
     this.player.inputEnabled = false;
@@ -431,17 +532,130 @@ export class Game {
     if (this.hp <= 0) this.die(reason);
   }
 
-  /** point the camera from the eye toward a world position */
+  /** point the camera from the eye toward a world position (clears recoil punch / head bob offsets) */
   lookAt(target: THREE.Vector3) {
-    const eye = this.player.feet.clone();
-    eye.y += EYE_HEIGHT;
+    const eye = this.player.eye();
     const d = target.clone().sub(eye);
     if (d.lengthSq() < 1e-6) return;
     d.normalize();
     this.player.yaw = Math.atan2(-d.x, -d.z);
     this.player.pitch = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1));
+    this.rig.resetPunch();
     this.player.updateCamera(this.rc.camera, 1);
     this.rc.camera.updateMatrixWorld();
+  }
+
+  private lastHitHead = false;
+
+  /** gamepad aim slowdown: look speed x0.55 while the crosshair is over a remote player */
+  private aimSlowdown(pad: { connected: boolean; look: [number, number] }): number {
+    if (!pad.connected || !settings.current.gamepadAimSlowdown || (pad.look[0] === 0 && pad.look[1] === 0) || !this.ready) return 1;
+    const cam = this.rc.camera;
+    const o = cam.getWorldPosition(new THREE.Vector3());
+    const d = cam.getWorldDirection(new THREE.Vector3());
+    const hit = this.weapons.raycast(o, d, 80);
+    const t = hit ? this.targets.fromCollider(hit.collider) : undefined;
+    return t && t.alive() ? 0.55 : 1;
+  }
+
+  // ---- trackpad detection: the OS disables the touchpad while keys are held ----
+  private tpHoldStart = 0;
+  private tpMouseAtStart = 0;
+  private tpRelease = 0;
+  private tpCount = 0;
+  private tpShown = false;
+
+  /**
+   * Heuristic: movement keys held > 400 ms with no mouse movement while locked, and the mouse
+   * moves again right after the keys are released. After 3 such occurrences, suggest trackpad
+   * mode once (remembered in localStorage).
+   */
+  private updateTrackpadHint(now: number) {
+    const input = this.input;
+    if (this.tpShown || settings.current.trackpadMode || !input.locked) return;
+    const held = input.movementKeysHeld();
+    if (held && !this.tpHoldStart) {
+      this.tpHoldStart = now;
+      this.tpMouseAtStart = input.lastMouseMoveAt;
+    } else if (!held && this.tpHoldStart) {
+      const noMouse = input.lastMouseMoveAt <= this.tpMouseAtStart;
+      if (now - this.tpHoldStart > 400 && noMouse) this.tpRelease = now;
+      this.tpHoldStart = 0;
+    }
+    if (this.tpRelease) {
+      if (input.lastMouseMoveAt > this.tpRelease) {
+        this.tpCount++;
+        this.tpRelease = 0;
+      } else if (now - this.tpRelease > 700) this.tpRelease = 0;
+    }
+    if (this.tpCount >= 3) this.showTrackpadHint();
+  }
+
+  /** one-time toast suggesting trackpad mode */
+  showTrackpadHint() {
+    this.tpShown = true;
+    try {
+      if (localStorage.getItem('ai-gaem.trackpadHint') === '1') return;
+      localStorage.setItem('ai-gaem.trackpadHint', '1');
+    } catch {
+      /* storage unavailable */
+    }
+    this.hud.toast('Looks like your touchpad stops while keys are held. <b>Trackpad mode</b>: T autorun, toggle crouch / sprint / aim, arrow / Q E turning.', {
+      ms: 12000,
+      action: { label: 'Enable trackpad mode', onClick: () => {
+        settings.setTrackpadMode(true);
+        this.hud.settingsPanel.sync();
+      } },
+    });
+  }
+
+  /** F3: network section (RTT, interpolation delay / jitter, send rate, buffered snapshots) */
+  private netDebugText(): string {
+    const st = this.net.stats?.();
+    if (!st) return '';
+    const ip = this.remotes.netStats();
+    const calls = Object.entries(st.calls)
+      .map(([k, v]) => `${k}:${v}`)
+      .join(' ');
+    return (
+      `\n— net —\nrtt ${st.rtt.toFixed(0)} ms   send ${st.sendHz} Hz` +
+      (ip
+        ? `\ninterp ${ip.delay.toFixed(0)} ms (target ${ip.targetDelay.toFixed(0)})  jitter ${ip.jitter.toFixed(0)} ms\n` +
+          `snapshots buffered ${ip.buffered.toFixed(1)}  remote send interval ${ip.interval.toFixed(0)} ms  (${ip.remotes} remote)`
+        : '\nno remote players') +
+      `\ncalls ${calls}`
+    );
+  }
+
+  /** crosshair gap from the current spread; ADS hides the lines (scoped weapons show the scope) */
+  private updateCrosshair() {
+    const cam = this.rc.camera;
+    const spread = this.weapons.currentSpread();
+    const half = (cam.fov * Math.PI) / 360;
+    const px = (Math.tan((spread * Math.PI) / 180) / Math.tan(half)) * (window.innerHeight / 2);
+    this.hud.setCrosshairGap(3 + px);
+    const mode = this.weapons.fireMode;
+    const scoped = this.weapons.viewmodel.hideWhenAimed && this.ads > 0.95;
+    this.hud.showScope(scoped && this.alive);
+    this.hud.setCrosshairVisible(this.ads < 0.5 && mode !== 'melee', !scoped);
+  }
+
+  /** ADS state for this frame: hold / toggle right mouse, cancelled by sprint, reload, melee, death */
+  private updateAds(dt: number, canAct: boolean) {
+    const input = this.input;
+    const h = this.weapons.handling;
+    if (settings.current.adsToggle) {
+      if (input.wasRightClicked()) this.adsToggled = !this.adsToggled;
+    } else this.adsToggled = false;
+    const wanted = this.forceAds ?? ((settings.current.adsToggle ? this.adsToggled : input.rightDown) || input.pad.ads);
+    const allowed = h.canAds && (canAct || this.forceAds !== null) && !this.weapons.reloading;
+    const target = wanted && allowed && !(this.player.sprinting && this.forceAds === null);
+    if (!allowed) this.adsToggled = false;
+    this.player.aiming = target;
+    // ADS in ~0.15 s (scoped weapons a little slower), out a bit faster
+    const inTime = this.weapons.weapon.class === 'sniper' ? 0.22 : 0.15;
+    const rate = target ? 1 / inTime : 1 / 0.12;
+    this.ads = target ? Math.min(1, this.ads + dt * rate) : Math.max(0, this.ads - dt * rate);
   }
 
   private frame = (now: number) => {
@@ -452,9 +666,23 @@ export class Game {
     const { input, player } = this;
     const online = this.net.authoritative;
 
+    // gamepad: Start toggles pad play (no pointer lock needed) / the pause menu
+    const pad = input.pollGamepad(settings.current.gamepadDeadzone);
+    if (pad.connected && this.alive) {
+      if (input.padPlaying && pad.startPressed) {
+        input.padPlaying = false;
+        if (!this.opts.e2e) this.hud.showClickToPlay(!input.locked);
+      } else if (!input.padPlaying && !input.locked && (pad.startPressed || pad.jumpPressed)) {
+        input.padPlaying = true;
+        this.hud.showClickToPlay(false);
+      }
+    }
+    this.updateTrackpadHint(now);
+
     // debug keys (offline only: the server owns weapons and hp online)
-    if (input.locked && !online) {
-      for (let i = 0; i < DEFAULT_WEAPONS.length; i++) if (input.wasPressed(`Digit${i + 1}`)) this.equip(DEFAULT_WEAPONS[i]);
+    if (input.active && !online) {
+      const dw = getDefaultWeapons();
+      for (let i = 0; i < dw.length && i < 10; i++) if (input.wasPressed(`Digit${(i + 1) % 10}`)) this.equip(dw[i]);
       if (input.wasPressed('KeyK')) this.damageLocal(MAX_HP, 'You pressed K');
     }
     if (input.wasPressed('F3')) this.showDebug = !this.showDebug;
@@ -465,37 +693,93 @@ export class Game {
     player.speedScale = me && (me.slowPercent ?? 0) > 0 && Date.now() < (me.slowUntil ?? 0) ? 1 - (me.slowPercent ?? 0) / 100 : 1;
 
     // look every frame, simulate at a fixed rate
-    const md = input.locked ? player.look() : (input.consumeMouse(), { dx: 0, dy: 0 });
-    player.inputEnabled = this.alive && input.locked;
+    const canAct = this.alive && input.active;
+    player.inputEnabled = canAct;
+    this.updateAds(dt, canAct);
+    const melee = this.weapons.fireMode === 'melee';
+    const actions = {
+      fire: input.mouseDown || pad.fire,
+      reload: input.wasPressed('KeyR') || pad.reloadPressed,
+      heavy: melee && (input.rightDown || pad.ads),
+      block: melee && (this.forceBlock ?? (input.isDown('KeyF') || pad.block)),
+      blockForced: this.forceBlock !== null,
+    };
+    // shooting cancels sprint (you can't fire mid-sprint; the shot goes out as the sprint ends)
+    if (canAct && actions.fire && player.sprinting) player.blockSprint();
+    // blocking slows you down
+    player.moveMult = melee && this.weapons.melee.blocking ? BLOCK_MOVE_MULT : 1;
+    player.aimSlow = this.aimSlowdown(pad);
+    const md = input.active ? player.frameInput(dt, this.rig.fovScale) : (input.consumeMouse(), { dx: 0, dy: 0 });
     this.acc += dt;
     while (this.acc >= FIXED_DT) {
-      player.fixedUpdate(FIXED_DT);
+      const am = this.autoMove;
+      if (am && this.alive) {
+        // scripted constant-speed circle (smoothness test), instead of input-driven movement
+        am.a += (am.speed / am.r) * FIXED_DT;
+        const w = am.speed;
+        player.scriptedStep(
+          new THREE.Vector3(am.cx + Math.cos(am.a) * am.r, am.y, am.cz + Math.sin(am.a) * am.r),
+          new THREE.Vector3(-Math.sin(am.a) * w, 0, Math.cos(am.a) * w),
+        );
+        player.yaw = Math.atan2(Math.sin(am.a), -Math.cos(am.a));
+      } else player.fixedUpdate(FIXED_DT);
       this.physics.world.step();
       this.acc -= FIXED_DT;
+      // network: decided per fixed step, stamped with simulation time (uniform spacing that matches
+      // the positions), re-anchored when it drifts from real time (frames > 100 ms are clamped, so
+      // the simulation then runs slower than real time; receivers estimate our clock offset)
+      const real = now - this.acc * 1000;
+      this.simT = this.simT === null ? real : this.simT + FIXED_DT * 1000;
+      if (Math.abs(this.simT - real) > 60) this.simT = real;
+      if (this.alive) this.poseSender.step(this.poseInput(), this.simT, FIXED_DT);
     }
-    player.updateCamera(this.rc.camera, this.acc / FIXED_DT);
-    this.rc.camera.updateMatrixWorld();
+    const cam = this.rc.camera;
+    player.updateCamera(cam, this.acc / FIXED_DT, dt);
+    const speed = player.horizontalSpeed();
+    const adsZoom = this.weapons.handling.adsZoom;
+    const feel = { speed, grounded: player.grounded, sprinting: player.sprinting, crouched: player.crouched, ads: this.ads, adsZoom };
+    this.rig.update(dt, feel);
+    this.rig.apply(cam, feel);
+    cam.updateMatrixWorld();
 
     if (this.alive && player.feet.y < this.map.killY) {
-      if (online) this.player.teleport(this.lastSpawn.clone());
-      else this.damageLocal(MAX_HP, 'Fell out of the world');
+      if (online) {
+        this.player.teleport(this.lastSpawn.clone());
+        this.poseSender.markTeleport();
+      } else this.damageLocal(MAX_HP, 'Fell out of the world');
     }
 
+    // camera-space strafe velocity (viewmodel inertia)
+    const strafe = player.velocity.x * Math.cos(player.yaw) - player.velocity.z * Math.sin(player.yaw);
     this.weapons.viewmodel.addSway(md.dx, md.dy);
-    this.weapons.viewmodel.update(dt, player.horizontalSpeed(), player.grounded);
-    this.weapons.update(dt, input, this.alive && input.locked);
+    this.weapons.viewmodel.update(dt, {
+      speed,
+      grounded: player.grounded,
+      ads: this.ads,
+      sprinting: player.sprinting,
+      crouched: player.crouched,
+      strafe,
+      dip: this.rig.dipOffset,
+      melee: this.weapons.meleeView(),
+      shield: this.weapons.melee.shield,
+    });
+    this.weapons.moveState = { speed, grounded: player.grounded, crouched: player.crouched, ads: this.ads };
+    this.weapons.update(dt, input, canAct, actions);
+    this.hud.setCharge(melee ? this.weapons.melee.chargeFraction : 0);
+    this.hud.setStatus(
+      melee && this.weapons.melee.blocking
+        ? 'BLOCKING'
+        : player.autoRun
+          ? 'AUTORUN · W / S to stop'
+          : settings.current.trackpadMode && this.alive
+            ? 'T = autorun'
+            : '',
+    );
+    this.updateCrosshair();
     this.dummies?.update(dt, this.rc.camera);
-    this.remotes.update(dt);
+    this.remotes.update(dt, now);
+    this.damageNumbers.update(dt, cam, (id) => this.remotes.headOf(id));
     this.hud.update(dt);
-
-    this.netAcc += dt;
-    if (this.netAcc >= 1 / NET_SEND_HZ) {
-      this.netAcc = 0;
-      if (this.alive) {
-        const f = player.feet;
-        this.net.sendTransform([f.x, f.y, f.z], player.yaw, player.pitch);
-      }
-    }
 
     if (online) {
       if (!this.alive && me?.respawnAt) this.hud.setRespawnCountdown((me.respawnAt - Date.now()) / 1000);
@@ -517,8 +801,11 @@ export class Game {
       const f = player.feet;
       this.hud.setDebug(
         `fps ${this.fps.toFixed(0)}\npos ${f.x.toFixed(2)} ${f.y.toFixed(2)} ${f.z.toFixed(2)}\n` +
-          `vel ${player.horizontalSpeed().toFixed(2)} vy ${player.velocity.y.toFixed(2)}\ngrounded ${player.grounded}\n` +
-          `map ${this.map.id}  weapon ${this.weapons.weapon.name} (${this.weapons.fireMode})`,
+          `vel ${player.horizontalSpeed().toFixed(2)} vy ${player.velocity.y.toFixed(2)}\ngrounded ${player.grounded}` +
+          `  crouch ${player.crouched}  sprint ${player.sprinting}\n` +
+          `spread ${this.weapons.currentSpread().toFixed(2)}°  bloom ${this.weapons.bloom.toFixed(2)}  ads ${this.ads.toFixed(2)}  fov ${cam.fov.toFixed(1)}\n` +
+          `map ${this.map.id}  weapon ${this.weapons.weapon.name} (${this.weapons.fireMode})` +
+          this.netDebugText(),
       );
     } else this.hud.setDebug(null);
 

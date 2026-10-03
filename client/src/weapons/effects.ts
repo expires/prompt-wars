@@ -82,6 +82,35 @@ export class Effects {
     }
   }
 
+  /**
+   * Stylized (blood-free) melee impact: a comic "pow" star that pops and fades, plus a burst of
+   * bright sparks. Bigger for heavier weapons.
+   */
+  meleeImpact(pos: THREE.Vector3, color: THREE.ColorRepresentation = 0xffffff, weight: 'light' | 'medium' | 'heavy' = 'medium') {
+    const size = weight === 'heavy' ? 0.75 : weight === 'light' ? 0.4 : 0.55;
+    const mat = new THREE.SpriteMaterial({ map: starTexture(), color, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending });
+    const sp = new THREE.Sprite(mat);
+    sp.position.copy(pos);
+    sp.renderOrder = 5;
+    mat.rotation = Math.random() * Math.PI;
+    this.add({
+      obj: sp,
+      life: 0.22,
+      maxLife: 0.22,
+      update: (t) => {
+        const k = 1 - t; // 0 -> 1
+        sp.scale.setScalar(size * (0.4 + 0.9 * Math.sqrt(k)));
+        mat.opacity = t;
+      },
+      dispose: () => mat.dispose(),
+    });
+    const n = weight === 'heavy' ? 18 : 12;
+    for (let i = 0; i < n; i++) {
+      const v = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8, Math.random() - 0.5).normalize().multiplyScalar(3 + Math.random() * 4);
+      this.emit(pos, v, 0.3 + Math.random() * 0.15, i % 3 === 0 ? 0xffe060 : color);
+    }
+  }
+
   explosion(pos: THREE.Vector3, radius: number) {
     const geo = new THREE.SphereGeometry(1, 12, 8);
     const mat = new THREE.MeshBasicMaterial({ color: 0xff8030, transparent: true, opacity: 0.8, depthWrite: false });
@@ -155,4 +184,30 @@ export class Effects {
     pos.needsUpdate = true;
     col.needsUpdate = true;
   }
+}
+
+let starTex: THREE.CanvasTexture | undefined;
+/** cartoon impact star (white, tinted by the sprite colour) */
+function starTexture(): THREE.CanvasTexture {
+  if (starTex) return starTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d')!;
+  g.translate(64, 64);
+  g.beginPath();
+  const spikes = 9;
+  for (let i = 0; i < spikes * 2; i++) {
+    const r = i % 2 ? 22 + (i % 4) * 4 : 60;
+    const a = (i / (spikes * 2)) * Math.PI * 2;
+    g.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  g.closePath();
+  g.fillStyle = 'rgba(255,255,255,0.95)';
+  g.fill();
+  g.lineWidth = 5;
+  g.strokeStyle = 'rgba(255,255,255,0.5)';
+  g.stroke();
+  starTex = new THREE.CanvasTexture(c);
+  starTex.colorSpace = THREE.SRGBColorSpace;
+  return starTex;
 }

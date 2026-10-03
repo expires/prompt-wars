@@ -27,6 +27,26 @@ export interface Player {
 export async function joinGame(browser: Browser, name: string): Promise<Player> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
+  // count WebSocket frames / bytes in both directions (works for any client version)
+  await page.addInitScript(() => {
+    const stats = { sent: 0, sentBytes: 0, recv: 0, recvBytes: 0 };
+    (window as unknown as { __ws: typeof stats }).__ws = stats;
+    const size = (d: unknown) =>
+      typeof d === 'string' ? d.length : d instanceof ArrayBuffer ? d.byteLength : ArrayBuffer.isView(d) ? d.byteLength : d instanceof Blob ? d.size : 0;
+    const send = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (this: WebSocket, data: Parameters<WebSocket['send']>[0]) {
+      stats.sent++;
+      stats.sentBytes += size(data);
+      if (!(this as unknown as { __counted?: boolean }).__counted) {
+        (this as unknown as { __counted?: boolean }).__counted = true;
+        this.addEventListener('message', (e) => {
+          stats.recv++;
+          stats.recvBytes += size(e.data);
+        });
+      }
+      return send.call(this, data);
+    };
+  });
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warning') console.log(`[${name}] ${m.type()}: ${m.text()}`);
   });
@@ -80,6 +100,23 @@ export async function aimAt(p: Player, targetId: string) {
   expect(ok, `${p.name} can aim at ${targetId}`).toBe(true);
 }
 
+export async function aimAtHead(p: Player, targetId: string) {
+  const ok = await p.page.evaluate((id) => (window as unknown as Win).__game.aimAtHead(id), targetId);
+  expect(ok, `${p.name} can aim at ${targetId}'s head`).toBe(true);
+}
+
+/** run `fn(window.__game, args)` in the page */
+export function hook<A = undefined, R = unknown>(p: Player, fn: (g: GameTestHook, args: A) => R, args?: A): Promise<R> {
+  return p.page.evaluate(
+    ([src, a]) => {
+      // eslint-disable-next-line no-new-func
+      const f = new Function(`return (${src})`)() as (g: GameTestHook, args: unknown) => R;
+      return f((window as unknown as Win).__game, a);
+    },
+    [fn.toString(), args ?? null] as const,
+  ) as Promise<R>;
+}
+
 export async function fireOnce(p: Player) {
   return p.page.evaluate(() => (window as unknown as Win).__game.fireOnce());
 }
@@ -99,4 +136,68 @@ export async function waitSeenAt(viewer: Player, targetId: string, pos: [number,
     timeout,
     `${viewer.name} to see ${targetId.slice(0, 8)} at ${pos}`,
   );
+}
+
+export interface WsStats {
+  sent: number;
+  sentBytes: number;
+  recv: number;
+  recvBytes: number;
+}
+
+export function wsStats(p: Player): Promise<WsStats> {
+  return p.page.evaluate(() => ({ ...(window as unknown as { __ws: WsStats }).__ws }));
+}
+
+/** reducer calls (by name) + WebSocket traffic of `p` over `ms`, per second */
+export async function measureRates(p: Player, ms: number) {
+  const calls = () => hook(p, (g) => g.netStats()?.calls ?? {}) as Promise<Record<string, number>>;
+  const [c0, w0] = await Promise.all([calls(), wsStats(p)]);
+  await p.page.waitForTimeout(ms);
+  const [c1, w1] = await Promise.all([calls(), wsStats(p)]);
+  const s = ms / 1000;
+  const byName: Record<string, number> = {};
+  let total = 0;
+  for (const k of Object.keys(c1)) {
+    const d = (c1[k] ?? 0) - (c0[k] ?? 0);
+    if (d) byName[k] = +(d / s).toFixed(2);
+    total += d;
+  }
+  return {
+    callsPerSec: +(total / s).toFixed(2),
+    byName,
+    wsSentPerSec: +((w1.sent - w0.sent) / s).toFixed(2),
+    wsSentBytesPerSec: Math.round((w1.sentBytes - w0.sentBytes) / s),
+    wsRecvPerSec: +((w1.recv - w0.recv) / s).toFixed(2),
+    wsRecvBytesPerSec: Math.round((w1.recvBytes - w0.recvBytes) / s),
+  };
+}
+
+/**
+ * Smoothness of a rendered trajectory sampled once per frame: per-frame speed (step / frame
+ * time). Hold-then-rush shows up as frames with ~0 movement followed by frames much faster than
+ * the mean.
+ */
+export function smoothness(samples: { t: number; x: number; z: number }[]) {
+  const speeds: number[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    const dt = (samples[i].t - samples[i - 1].t) / 1000;
+    if (dt < 0.004) continue;
+    speeds.push(Math.hypot(samples[i].x - samples[i - 1].x, samples[i].z - samples[i - 1].z) / dt);
+  }
+  const mean = speeds.reduce((a, b) => a + b, 0) / Math.max(1, speeds.length);
+  const sorted = [...speeds].sort((a, b) => a - b);
+  const pct = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
+  return {
+    frames: speeds.length,
+    meanSpeed: +mean.toFixed(3),
+    maxOverMean: +(Math.max(...speeds) / mean).toFixed(3),
+    minOverMean: +(Math.min(...speeds) / mean).toFixed(3),
+    p05OverMean: +(pct(0.05) / mean).toFixed(3),
+    p95OverMean: +(pct(0.95) / mean).toFixed(3),
+    /** frames with < 20% of the mean speed (holds) */
+    stalls: speeds.filter((v) => v < 0.2 * mean).length,
+    /** frames with > 2x the mean speed (rushes) */
+    rushes: speeds.filter((v) => v > 2 * mean).length,
+  };
 }
