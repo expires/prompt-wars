@@ -10,6 +10,7 @@ import { generateMock } from './mock';
 import { generateWithLlm } from './llm';
 import { RateLimiter } from './ratelimit';
 import { DesignCache, promptCacheKey } from './cache';
+import { TelemetryLog, parseTelemetry, telemetryConfigFromEnv, type TelemetryConfig } from './telemetry';
 import { catalog } from '@ai-gaem/parts';
 
 export interface ForgeConfig {
@@ -27,6 +28,8 @@ export interface ForgeConfig {
   trustProxy: boolean;
   /** prompt cache entries (0 = off) */
   cacheMax: number;
+  /** client crash telemetry log */
+  telemetry: TelemetryConfig;
 }
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ForgeConfig {
@@ -41,6 +44,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ForgeConfig
     mockDelayMs: Number(env.FORGE_MOCK_DELAY_MS ?? 90),
     trustProxy: env.FORGE_TRUST_PROXY !== '0',
     cacheMax: Number(env.FORGE_CACHE_MAX ?? 500),
+    telemetry: telemetryConfigFromEnv(env),
   };
 }
 
@@ -149,6 +153,9 @@ export function cacheKeyFor(r: ParsedRequest): string {
 export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & { limiter: RateLimiter; cache: DesignCache } {
   const limiter = new RateLimiter(cfg.rateLimit, cfg.rateWindowMs);
   const cache = new DesignCache(cfg.cacheMax);
+  const telemetry = new TelemetryLog(cfg.telemetry ?? telemetryConfigFromEnv({}));
+  // telemetry: 60 requests / 10 min per IP (the client batches and dedupes; this caps abuse)
+  const telemetryLimiter = new RateLimiter(60, 10 * 60_000);
   const mock = !cfg.apiKey;
 
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
@@ -172,6 +179,27 @@ export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & 
       if (path === '/api/forge/health' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, mock, model: mock ? 'mock' : cfg.model, cached: cache.size }));
+      }
+      if (path === '/api/forge/telemetry') {
+        if (req.method !== 'POST') throw new HttpError(405, 'use POST', { allow: 'POST' });
+        // sendBeacon posts text/plain; accept both
+        const text = await readBody(req, cfg.telemetry?.maxBody ?? 64 * 1024);
+        const rl = telemetryLimiter.take([`ip:${clientIp(req, cfg.trustProxy)}`]);
+        if (!rl.ok) throw new HttpError(429, 'telemetry rate limit', { 'retry-after': String(rl.retryAfter) });
+        let reports: Record<string, unknown>[];
+        try {
+          reports = parseTelemetry(JSON.parse(text));
+        } catch {
+          throw new HttpError(400, 'invalid telemetry');
+        }
+        let written = 0;
+        try {
+          written = telemetry.append(reports);
+        } catch (e) {
+          console.error('[forge] telemetry write failed', (e as Error).message);
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, written }));
       }
       if (path !== '/api/forge/generate') throw new HttpError(404, 'not found');
       if (req.method !== 'POST') throw new HttpError(405, 'use POST', { allow: 'POST' });

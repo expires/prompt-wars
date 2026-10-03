@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { buildWeaponModel, type WeaponModel } from './buildWeaponModel';
 import { onPartsLibrary } from './partsLibrary';
-import { isSharedDesignMesh, releaseDesignModels } from './designModelCache';
+import { disposeWeaponModel } from './designModelCache';
 import type { Weapon } from './types';
 import type { MeleeView } from './MeleeSystem';
 import { BLOCK_POSE, GLOVE_BASELINE, MELEE_SPRINT_POSE, SHIELD_BLOCK_POSE, blendPose, chargePose, swingPose, type VmPose } from './meleeAnim';
@@ -102,8 +102,7 @@ export class Viewmodel {
     this.flash.removeFromParent();
     if (this.holder) {
       this.pivot.remove(this.holder);
-      releaseDesignModels(this.holder);
-      disposeTree(this.holder);
+      disposeWeaponModel(this.holder);
     }
     const m = buildWeaponModel(weapon);
     const holder = new THREE.Group();
@@ -334,12 +333,4 @@ function flashTexture() {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
-}
-
-function disposeTree(o: THREE.Object3D) {
-  o.traverse((c) => {
-    const m = c as THREE.Mesh;
-    // materials are cached/shared in parts.ts; Forge design models belong to the design model cache
-    if (m.isMesh && !isSharedDesignMesh(m)) m.geometry.dispose();
-  });
 }

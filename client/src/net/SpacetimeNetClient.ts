@@ -4,7 +4,9 @@ import type { Identity } from 'spacetimedb';
 import { DbConnection, tables } from '../module_bindings';
 import type { Weapon } from '../weapons/types';
 import { setForgedLookup, setLocalIdentity } from '../ui/forgeCredit';
+import { onWebSocketClose, report } from '../telemetry';
 import type {
+  ConnectionStatus,
   ForgedInfo,
   GenerateWeaponResult,
   HitConfirmEvent,
@@ -168,7 +170,18 @@ export class SpacetimeNetClient implements NetClient {
   private weaponCbs: Listener<void>[] = [];
   private pickupCbs: Listener<NetPickup[]>[] = [];
   private pickupTakenCbs: Listener<PickupTakenEvent>[] = [];
+  private statusCbs: ((s: ConnectionStatus) => void)[] = [];
   private emitScheduled = false;
+
+  // reconnect state
+  private token?: string;
+  private everReady = false;
+  private intentionalDisconnect = false;
+  private reconnectAttempt = 0;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private reconnecting = false;
+  private lifecycleHooked = false;
+  private lastClose: { code: number; reason: string; clean: boolean; host: string; at: number } | null = null;
 
   constructor(private readonly opts: SpacetimeNetOptions) {}
 
@@ -177,92 +190,200 @@ export class SpacetimeNetClient implements NetClient {
   }
 
   connect(): Promise<void> {
-    let token: string | undefined;
-    if (!this.opts.fresh) {
+    if (!this.lifecycleHooked) {
+      this.lifecycleHooked = true;
+      // sockets torn down while the tab was frozen / the machine slept may never fire onclose
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') this.checkZombie();
+      });
+      window.addEventListener('online', () => {
+        if (this.reconnectTimer) this.reconnectNow();
+      });
+      onWebSocketClose((c) => {
+        if (c.host && this.opts.uri.includes(c.host)) this.lastClose = c;
+      });
+    }
+    return new Promise<void>((resolve, reject) =>
+      this.open((err) => {
+        if (err) return reject(err);
+        this.everReady = true;
+        resolve();
+      }),
+    );
+  }
+
+  /** open a connection (first connect or a reconnect); `cb` once ready (player row with a slot) or failed */
+  private open(cb: (err?: Error) => void) {
+    let token: string | undefined = this.token;
+    if (!token && !this.opts.fresh) {
       try {
         token = sessionStorage.getItem(this.tokenKey) ?? undefined;
       } catch {
         /* storage unavailable */
       }
     }
-    return new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const done = (err?: unknown) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (err) reject(err instanceof Error ? err : new Error(String(err)));
-        else resolve();
-      };
-      const timer = setTimeout(
-        () => done(new Error(`SpacetimeDB connect timeout (${this.opts.uri} / ${this.opts.dbName})`)),
-        this.opts.timeoutMs ?? 20000,
-      );
-
-      const tryReady = () => {
-        if (!this.connected || !this.identity) return;
-        const me = this.conn!.db.player.identity.find(this.identity) as PlayerRow | undefined;
-        if (me && me.slot > 0) {
-          this.emitLocal(me);
-          this.scheduleEmit();
-          done();
-        }
-      };
-
-      this.conn = DbConnection.builder()
-        .withUri(this.opts.uri)
-        .withDatabaseName(this.opts.dbName)
-        .withToken(token)
-        // don't wait for durability before sending updates / reducer results (lower latency)
-        .withConfirmedReads(false)
-        .onConnect((conn, identity, newToken) => {
-          this.identity = identity;
-          this.localId = identity.toHexString();
-          setLocalIdentity(this.localId);
-          setForgedLookup((norm) => this.forged.get(norm));
-          try {
-            sessionStorage.setItem(this.tokenKey, newToken);
-          } catch {
-            /* ignore */
-          }
-          this.registerCallbacks(conn);
-          conn
-            .subscriptionBuilder()
-            .onApplied(() => {
-              this.connected = true;
-              for (const w of conn.db.weapon.iter()) this.cacheWeapon(w as WeaponRow);
-              for (const r of conn.db.player.iter()) this.trackPlayer(r as PlayerRow);
-              for (const r of conn.db.pose.iter()) this.onPoseRow(r as PoseRow);
-              for (const r of conn.db.forgedPrompt.iter()) this.cacheForged(r as ForgedRow);
-              if (this.opts.name) this.setName(this.opts.name);
-              this.emitPickups();
-              tryReady();
-            })
-            .onError(() => done(new Error('subscription error')))
-            .subscribe([
-              tables.player,
-              tables.pose,
-              tables.spawnPoint,
-              tables.shotEvent,
-              tables.hitEvent,
-              tables.forgedPrompt,
-              tables.pickup,
-              tables.pickupEvent,
-              tables.weapon.where((w) => w.isPreset.eq(true)),
-              // our own weapons (register_design results show up here right away)
-              tables.weapon.where((w) => w.ownerIdentity.eq(identity)),
-            ]);
-          // the player row is inserted / updated (slot) by the server's client_connected; wait for it
-          conn.db.player.onInsert(() => tryReady());
-          conn.db.player.onUpdate(() => tryReady());
-        })
-        .onConnectError((_ctx, err) => done(err))
-        .onDisconnect(() => {
+    // a reconnect starts from a fresh client cache: forget per-connection state
+    this.slotToId.clear();
+    this.idToSlot.clear();
+    this.poses.clear();
+    this.requestedWeapons.clear();
+    let settled = false;
+    let built: DbConnection | undefined;
+    const done = (err?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) {
+        // a half-open attempt must not linger (or fire onDisconnect later)
+        if (built && this.conn === built) {
           this.connected = false;
-          console.warn('[net] disconnected from SpacetimeDB');
-        })
-        .build();
+          try {
+            built.disconnect();
+          } catch {
+            /* already closed */
+          }
+        }
+        cb(err instanceof Error ? err : new Error(String(err)));
+      } else cb();
+    };
+    const timer = setTimeout(
+      () => done(new Error(`SpacetimeDB connect timeout (${this.opts.uri} / ${this.opts.dbName})`)),
+      this.opts.timeoutMs ?? 20000,
+    );
+
+    const tryReady = () => {
+      if (!this.connected || !this.identity || settled) return;
+      const me = this.conn!.db.player.identity.find(this.identity) as PlayerRow | undefined;
+      if (me && me.slot > 0) {
+        this.emitLocal(me);
+        this.scheduleEmit();
+        done();
+      }
+    };
+
+    built = DbConnection.builder()
+      .withUri(this.opts.uri)
+      .withDatabaseName(this.opts.dbName)
+      .withToken(token)
+      // don't wait for durability before sending updates / reducer results (lower latency)
+      .withConfirmedReads(false)
+      .onConnect((conn, identity, newToken) => {
+        if (conn !== this.conn) return;
+        this.identity = identity;
+        this.localId = identity.toHexString();
+        this.token = newToken;
+        setLocalIdentity(this.localId);
+        setForgedLookup((norm) => this.forged.get(norm));
+        try {
+          sessionStorage.setItem(this.tokenKey, newToken);
+        } catch {
+          /* ignore */
+        }
+        this.registerCallbacks(conn);
+        conn
+          .subscriptionBuilder()
+          .onApplied(() => {
+            if (conn !== this.conn) return;
+            this.connected = true;
+            for (const w of conn.db.weapon.iter()) this.cacheWeapon(w as WeaponRow);
+            for (const r of conn.db.player.iter()) this.trackPlayer(r as PlayerRow);
+            for (const r of conn.db.pose.iter()) this.onPoseRow(r as PoseRow);
+            for (const r of conn.db.forgedPrompt.iter()) this.cacheForged(r as ForgedRow);
+            if (this.opts.name) this.setName(this.opts.name);
+            this.emitPickups();
+            tryReady();
+          })
+          .onError(() => done(new Error('subscription error')))
+          .subscribe([
+            tables.player,
+            tables.pose,
+            tables.spawnPoint,
+            tables.shotEvent,
+            tables.hitEvent,
+            tables.forgedPrompt,
+            tables.pickup,
+            tables.pickupEvent,
+            tables.weapon.where((w) => w.isPreset.eq(true)),
+            // our own weapons (register_design results show up here right away)
+            tables.weapon.where((w) => w.ownerIdentity.eq(identity)),
+          ]);
+        // the player row is inserted / updated (slot) by the server's client_connected; wait for it
+        conn.db.player.onInsert(() => tryReady());
+        conn.db.player.onUpdate(() => tryReady());
+      })
+      .onConnectError((_ctx, err) => done(err))
+      .onDisconnect((_ctx, err) => {
+        if (built !== this.conn) return; // a superseded connection
+        const wasReady = settled;
+        this.connected = false;
+        console.warn('[net] disconnected from SpacetimeDB', err ?? '');
+        if (!wasReady) done(err ?? new Error('disconnected while connecting'));
+        else this.handleDisconnect(err ? String(err.message ?? err) : 'socket closed');
+      })
+      .build();
+    this.conn = built;
+  }
+
+  /** the socket is gone (onclose may never fire after a sleep): treat as a disconnect */
+  private checkZombie() {
+    const c = this.conn as (DbConnection & { isSocketClosed?: boolean }) | undefined;
+    if (!c || !this.everReady || this.intentionalDisconnect || this.reconnectTimer || this.reconnecting) return;
+    if (c.isSocketClosed) {
+      this.connected = false;
+      this.handleDisconnect('zombie socket after resume');
+    }
+  }
+
+  private handleDisconnect(reason: string) {
+    if (!this.everReady || this.intentionalDisconnect || this.reconnecting || this.reconnectTimer) return;
+    const close = this.lastClose && Date.now() - this.lastClose.at < 10_000 ? this.lastClose : null;
+    report('ws', { msg: 'disconnected', reason: reason.slice(0, 200), close, hidden: document.visibilityState === 'hidden' }, { flush: true });
+    this.scheduleReconnect(reason);
+  }
+
+  private scheduleReconnect(reason: string) {
+    if (this.reconnectTimer || this.intentionalDisconnect) return;
+    const attempt = ++this.reconnectAttempt;
+    const base = Math.min(15_000, 1000 * 2 ** Math.min(attempt - 1, 4));
+    // first retry is quick (most drops are transient)
+    const inMs = attempt === 1 ? 500 : Math.round(base * (0.75 + Math.random() * 0.5));
+    this.emitStatus({ state: 'reconnecting', attempt, inMs, reason });
+    this.reconnectTimer = setTimeout(() => this.reconnectNow(), inMs);
+  }
+
+  /** retry right away (backoff timer, `online` event, a "Retry" button) */
+  reconnectNow() {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    if (this.reconnecting || this.intentionalDisconnect) return;
+    this.reconnecting = true;
+    this.open((err) => {
+      this.reconnecting = false;
+      if (err) {
+        console.warn('[net] reconnect failed:', err.message);
+        if (this.reconnectAttempt % 4 === 1) report('ws', { msg: 'reconnect failed', err: err.message.slice(0, 200), attempt: this.reconnectAttempt });
+        this.scheduleReconnect(err.message);
+        return;
+      }
+      report('ws', { msg: 'reconnected', attempts: this.reconnectAttempt }, { heavy: false });
+      this.reconnectAttempt = 0;
+      this.emitStatus({ state: 'connected', reconnected: true });
     });
+  }
+
+  private emitStatus(s: ConnectionStatus) {
+    for (const cb of this.statusCbs) {
+      try {
+        cb(s);
+      } catch (e) {
+        console.warn('[net] status listener failed', e);
+      }
+    }
+  }
+
+  onConnectionStatus(cb: (s: ConnectionStatus) => void) {
+    this.statusCbs.push(cb);
+    return () => (this.statusCbs = this.statusCbs.filter((c) => c !== cb));
   }
 
   /** keep the slot <-> identity maps and weapon subscriptions in sync with a player row */
@@ -551,6 +672,9 @@ export class SpacetimeNetClient implements NetClient {
   }
 
   disconnect() {
+    this.intentionalDisconnect = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
     this.conn?.disconnect();
   }
 

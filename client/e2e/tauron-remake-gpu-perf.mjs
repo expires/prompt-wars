@@ -22,7 +22,7 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: swift ? { width: 1280, height: 720 } : { width: 1920, height: 1080 } });
 const logs = [];
 page.on('console', (m) => logs.push(m.text()));
-await page.goto(`${base}/?offline=1&e2e=1&map=tauron-remake`);
+await page.goto(`${base}/?offline=1&e2e=1&map=tauron-remake&quality=high`);
 await page.waitForFunction(() => window.__game?.getState?.().ready, null, { timeout: 120_000 });
 await page.waitForTimeout(2000);
 const gl = await page.evaluate(() => {

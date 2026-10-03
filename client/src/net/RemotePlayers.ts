@@ -6,7 +6,7 @@ import { CENTER_OFFSET } from '../player/PlayerController';
 import { Hitboxes } from '../player/hitboxes';
 import { buildWeaponModel } from '../weapons/buildWeaponModel';
 import { onPartsLibrary } from '../weapons/partsLibrary';
-import { releaseDesignModels } from '../weapons/designModelCache';
+import { disposeWeaponModel } from '../weapons/designModelCache';
 import { THROW_TIME } from '../weapons/throwAnim';
 import { MELEE_PHASES, meleeMetaOf, meleeSwingDuration } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
@@ -257,8 +257,7 @@ export class RemotePlayers {
     r.weaponId = weaponId;
     const w = weaponId ? this.net.getWeapon?.(weaponId) : undefined;
     if (!w) return;
-    releaseDesignModels(r.model.hand);
-    r.model.hand.clear();
+    this.clearHand(r);
     r.modelWeaponId = weaponId ?? '';
     const m = buildWeaponModel(w).root;
     // third person: keep weapons hand-sized (huge LLM guns would hide the body)
@@ -271,6 +270,13 @@ export class RemotePlayers {
     r.model.hand.add(m);
   }
 
+  /** detach + free the held weapon model (releases cached design models, disposes parts-built geometry) */
+  private clearHand(r: Remote) {
+    const held = [...r.model.hand.children];
+    r.model.hand.clear();
+    for (const o of held) disposeWeaponModel(o);
+  }
+
   private removeRemote(id: string) {
     const r = this.remotes.get(id);
     if (!r) return;
@@ -279,9 +285,8 @@ export class RemotePlayers {
     this.scene.remove(r.model.root);
     (r.nameTag.material as THREE.SpriteMaterial).map?.dispose();
     r.nameTag.material.dispose();
-    // shared (cached) design models must not be disposed with the body
-    releaseDesignModels(r.model.hand);
-    r.model.hand.clear();
+    // weapon first: shared (cached) design models must not be disposed with the body
+    this.clearHand(r);
     r.model.dispose();
     this.remotes.delete(id);
   }

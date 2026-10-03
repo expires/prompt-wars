@@ -5,6 +5,7 @@ import { Humanoid } from './player/humanoid';
 import { playerStatus } from './weapons/elementFx';
 import { BASE_MOUSE_SENS, settings } from './settings';
 import { getDefaultWeapons } from './weapons/defaultWeapons';
+import { designModelCacheStats } from './weapons/designModelCache';
 
 /**
  * `window.__game`: a small deterministic control surface for e2e tests (and console
@@ -80,6 +81,42 @@ export interface GameTestHook {
   setAutoRun(on: boolean): void;
   /** median horizontal speed of the local player over `ms` (real input-driven movement, m/s) */
   measureSpeed(ms: number): Promise<number>;
+  /** soak / leak checks: GPU resource counters, scene sizes, caches and transient-object counts */
+  memStats(): MemStats;
+  /** offline: number of sample weapons equippable with equipSample() */
+  sampleCount(): number;
+  /** offline: kill the local player (as the K debug key) */
+  killSelf(): void;
+  /** respawn with the current loadout through the normal deploy path (offline: immediate) */
+  respawnNow(): Promise<boolean>;
+  /**
+   * offline bots: give every bot a different sample weapon (exercises remote weapon-model swaps);
+   * `churn` also drops one bot for ~0.2 s so it leaves and rejoins (remote player teardown / rebuild);
+   * `index`: give every bot that sample weapon instead (deterministic state for measurements)
+   */
+  botsCycle(churn?: boolean, index?: number): boolean;
+}
+
+export interface MemStats {
+  geometries: number;
+  textures: number;
+  programs: number;
+  /** objects in the world scene / first-person overlay scene (recursive) */
+  sceneObjects: number;
+  viewObjects: number;
+  /** meshes / lines / points / sprites in the world scene */
+  sceneMeshes: number;
+  designCache: ReturnType<typeof designModelCacheStats>;
+  projectiles: number;
+  effects: number;
+  particles: number;
+  remotes: number;
+  damageNumbers: number;
+  killLog: number;
+  domNodes: number;
+  rapierBodies: number;
+  rapierColliders: number;
+  jsHeap: number | null;
 }
 
 function getState(game: Game) {
@@ -206,6 +243,8 @@ function getState(game: Game) {
       : [],
   };
 }
+
+let botCycleN = 0;
 
 export function installTestHook(game: Game) {
   const hook: GameTestHook = {
@@ -367,6 +406,71 @@ export function installTestHook(game: Game) {
         };
         requestAnimationFrame(tick);
       });
+    },
+    memStats() {
+      const info = game.rc.renderer.info;
+      const count = (root: THREE.Object3D) => {
+        let n = 0;
+        let draw = 0;
+        root.traverse((o) => {
+          n++;
+          const d = o as THREE.Mesh & { isLine?: boolean; isPoints?: boolean; isSprite?: boolean };
+          if (d.isMesh || d.isLine || d.isPoints || d.isSprite) draw++;
+        });
+        return { n, draw };
+      };
+      const world = count(game.rc.scene);
+      const view = count(game.rc.viewScene);
+      // private internals, read-only (element access keeps it typed without widening visibility)
+      const ws = game.weapons;
+      const fx = ws.effects;
+      const layers = [fx['small'], fx['big']];
+      const phys = game.physics.world;
+      const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+      return {
+        geometries: info.memory.geometries,
+        textures: info.memory.textures,
+        programs: info.programs?.length ?? 0,
+        sceneObjects: world.n,
+        viewObjects: view.n,
+        sceneMeshes: world.draw,
+        designCache: designModelCacheStats(),
+        projectiles: ws['projectiles'].length,
+        effects: fx['items'].length,
+        particles: layers.reduce((a, l) => a + l.particles.length, 0),
+        remotes: game.remotes.ids().length,
+        damageNumbers: game.damageNumbers.snapshot().length,
+        killLog: game.killLog.length,
+        domNodes: document.getElementsByTagName('*').length,
+        rapierBodies: phys.bodies.len(),
+        rapierColliders: phys.colliders.len(),
+        jsHeap: mem ? mem.usedJSHeapSize : null,
+      };
+    },
+    sampleCount() {
+      return getDefaultWeapons().length;
+    },
+    killSelf() {
+      game.damageLocal(1e6, 'soak test');
+    },
+    botsCycle(churn = false, index) {
+      const bots = (game.net as unknown as { bots?: { id: string; weaponId?: string }[] }).bots;
+      if (!Array.isArray(bots) || !bots.length) return false;
+      const dw = getDefaultWeapons().filter((w) => w.id);
+      if (dw.length) {
+        botCycleN++;
+        bots.forEach((b, i) => (b.weaponId = dw[(index ?? botCycleN + i * 3) % dw.length].id));
+      }
+      if (churn) {
+        const b = bots.pop()!;
+        setTimeout(() => bots.push(b), 200);
+      }
+      return true;
+    },
+    async respawnNow() {
+      if (game.alive) return true;
+      await game.flow['deploy'](true);
+      return game.alive;
     },
     equipDesign(design, prompt = 'test design') {
       const { design: d } = sanitizeDesign(design);

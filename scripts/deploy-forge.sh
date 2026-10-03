@@ -7,6 +7,8 @@
 #     never overwritten, only missing keys are appended; secrets are never printed)
 #   - Caddy: adds a separate `:80/api/forge/*` site block (reverse_proxy, flush_interval -1) at the
 #     top of the Caddyfile, re-reading it right before editing and validating before reload.
+#   - client crash telemetry is appended to /var/log/ai-gaem/client-errors.jsonl (systemd
+#     LogsDirectory, size-capped + rotated to .1 by the service); read it with scripts/client-errors.sh
 set -euo pipefail
 HOST="${DEPLOY_HOST:-root@187.7.27.171}"
 cd "$(dirname "$0")/.."
@@ -54,6 +56,9 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 MemoryMax=512M
+# client crash telemetry (POST /api/forge/telemetry) -> /var/log/ai-gaem/client-errors.jsonl
+LogsDirectory=ai-gaem
+LogsDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target

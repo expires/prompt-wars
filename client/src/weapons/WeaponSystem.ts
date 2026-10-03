@@ -10,7 +10,7 @@ import type { HitInfo, HitTarget, TargetRegistry } from './targets';
 import { resolveFireMode, type FireMode, type Weapon } from './types';
 import { effectiveSpread, weaponHandling, type Handling, type MoveState } from './handling';
 import { buildWeaponModel } from './buildWeaponModel';
-import { releaseDesignModels } from './designModelCache';
+import { disposeWeaponModel } from './designModelCache';
 import { THROW_TIME } from './throwAnim';
 import { projectileLookOf, type ProjectileLook } from './projectileLook';
 import { WALK_SPEED } from '../player/PlayerController';
@@ -47,6 +47,8 @@ interface Projectile {
   visualOnly: boolean;
   /** element of the weapon (trail particles) */
   element: Element | null;
+  /** thrown copy of a held model: the throw source whose geometry the mesh shares */
+  src: THREE.Object3D | null;
 }
 
 export interface WeaponEvents {
@@ -89,6 +91,8 @@ export class WeaponSystem {
   private throwT = 0;
   private throwSrcId: string | null = null;
   private throwSrc: THREE.Object3D | null = null;
+  /** replaced throw sources, freed once no thrown copy in flight still shares their geometry */
+  private retiredThrowSrcs: THREE.Object3D[] = [];
   readonly effects: Effects;
   readonly viewmodel: Viewmodel;
   private readonly tmpA = new THREE.Vector3();
@@ -428,9 +432,11 @@ export class WeaponSystem {
     const look = projectileLookOf(w);
     let mesh: THREE.Object3D;
     let tumble = 0;
+    let src: THREE.Object3D | null = null;
     if (thrown && !look.generated) {
       // throwable without a generated projectile: a throw-sized copy of the held model
       mesh = this.thrownMesh(w);
+      src = this.throwSrc;
       tumble = 9;
     } else {
       mesh = look.make();
@@ -455,6 +461,7 @@ export class WeaponSystem {
       seq: this.curSeq,
       visualOnly,
       element: w.element ?? null,
+      src,
     });
   }
 
@@ -462,7 +469,8 @@ export class WeaponSystem {
   private thrownMesh(w: Weapon): THREE.Object3D {
     const id = w.id ?? null;
     if (this.throwSrcId !== id || !this.throwSrc) {
-      releaseDesignModels(this.throwSrc);
+      if (this.throwSrc) this.retiredThrowSrcs.push(this.throwSrc);
+      this.reapThrowSrcs();
       this.throwSrc = buildWeaponModel(w).root;
       this.throwSrcId = id;
     }
@@ -471,6 +479,16 @@ export class WeaponSystem {
     const s = Math.min(1.6, 0.55 / Math.max(size.x, size.y, size.z, 0.001));
     obj.scale.setScalar(s);
     return obj;
+  }
+
+  /** dispose replaced throw sources no projectile in flight still shares geometry with */
+  private reapThrowSrcs() {
+    if (!this.retiredThrowSrcs.length) return;
+    this.retiredThrowSrcs = this.retiredThrowSrcs.filter((o) => {
+      if (this.projectiles.some((p) => p.src === o)) return true;
+      disposeWeaponModel(o);
+      return false;
+    });
   }
 
   private updateProjectiles(dt: number) {
@@ -496,6 +514,7 @@ export class WeaponSystem {
         // generated / preset / legacy meshes share cached geometry + materials: never dispose those
         if (p.mesh instanceof THREE.Mesh && !p.mesh.userData.sharedProjectile) (p.mesh.material as THREE.Material).dispose();
         this.projectiles.splice(i, 1);
+        if (p.src) this.reapThrowSrcs();
         continue;
       }
       p.pos.addScaledVector(dir, step);

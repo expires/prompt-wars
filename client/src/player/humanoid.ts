@@ -46,6 +46,8 @@ export class Humanoid {
   /** attach a weapon model here (right hand, pointing -Z) */
   readonly hand = new THREE.Group();
   private readonly bodyMat: THREE.MeshStandardMaterial;
+  private readonly skinMat: THREE.MeshStandardMaterial;
+  private readonly visorMat: THREE.MeshStandardMaterial;
   private readonly limbMat: THREE.MeshStandardMaterial;
   private readonly legL: THREE.Object3D;
   private readonly legR: THREE.Object3D;
@@ -71,8 +73,8 @@ export class Humanoid {
     this.bodyMat = new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.7 });
     this.baseColor.set(color);
     this.limbMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(0.6), flatShading: true });
-    const skin = new THREE.MeshStandardMaterial({ color: 0xe0b89a, flatShading: true });
-    const visor = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8, roughness: 0.2 });
+    const skin = (this.skinMat = new THREE.MeshStandardMaterial({ color: 0xe0b89a, flatShading: true }));
+    const visor = (this.visorMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8, roughness: 0.2 }));
 
     const mk = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, parent: THREE.Object3D) => {
       const m = new THREE.Mesh(geo, mat);
@@ -274,12 +276,16 @@ export class Humanoid {
     this.armPose.u = u;
   }
 
+  /** frees the body's own geometry + materials (detach / free a held weapon model first) */
   dispose() {
     this.root.traverse((o) => {
       const m = o as THREE.Mesh;
-      if (m.isMesh) m.geometry.dispose();
+      // never touch cached design-model / projectile geometry if something is still attached
+      if (m.isMesh && !m.userData?.sharedDesignModel && !m.userData?.sharedProjectile) m.geometry.dispose();
     });
     this.bodyMat.dispose();
     this.limbMat.dispose();
+    this.skinMat.dispose();
+    this.visorMat.dispose();
   }
 }

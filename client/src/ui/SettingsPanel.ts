@@ -219,6 +219,17 @@ export class SettingsPanel {
 
   private buildVideo(p: HTMLElement) {
     this.section(p, 'Display');
+    this.row(
+      p,
+      'Graphics quality',
+      'Low: no shadows, less decor, lower resolution. Auto picks for your GPU',
+      this.radio('graphicsQuality', 'Graphics quality', [
+        { value: 'auto', label: 'Auto' },
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Med' },
+        { value: 'high', label: 'High' },
+      ]),
+    );
     this.slider(p, { key: 'fov', label: 'Field of view', desc: 'Vertical, degrees', min: 60, max: 100, step: 1, unit: '°' });
     this.row(p, 'Head bob', 'Camera sway', this.toggle('headBob', 'Head bob'));
     this.row(p, 'Show FPS', 'Top-left corner', this.toggle('showFps', 'Show FPS'));

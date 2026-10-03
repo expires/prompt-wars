@@ -116,6 +116,22 @@ export function isSharedDesignMesh(o: THREE.Object3D): boolean {
   return !!o.userData?.[SHARED_FLAG];
 }
 
+/**
+ * Free a discarded weapon model (viewmodel / third-person / thrown source): releases its cached
+ * design models and disposes the per-build geometry of everything else (parts-built models from
+ * the built-in kit or the part library get fresh merged geometry on every build). Materials are
+ * never disposed: kit / library part materials are cached and shared (parts.ts partMaterial,
+ * @ai-gaem/parts getMaterial), design materials belong to the cache. Detach the model first.
+ */
+export function disposeWeaponModel(obj: THREE.Object3D | null | undefined) {
+  if (!obj) return;
+  releaseDesignModels(obj);
+  obj.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh && !isSharedDesignMesh(m) && !m.userData?.sharedProjectile) m.geometry?.dispose();
+  });
+}
+
 /** cache stats (tests / debugging) */
 export function designModelCacheStats() {
   let refs = 0;

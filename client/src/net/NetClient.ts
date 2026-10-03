@@ -191,6 +191,10 @@ export interface GenerateWeaponResult {
  * Networking seam. The game only talks to this interface: OfflineNetClient (no server,
  * local simulation) and SpacetimeNetClient (SpacetimeDB, server-authoritative damage).
  */
+export type ConnectionStatus =
+  | { state: 'connected'; reconnected: boolean }
+  | { state: 'reconnecting'; attempt: number; inMs: number; reason: string };
+
 export interface NetClient {
   readonly localId: string;
   /** true when hp / death / weapon / spawn come from the server */
@@ -263,6 +267,8 @@ export interface NetClient {
   takePickup?(id: number): void;
   /** someone (incl. the local player) took a pickup */
   onPickupTaken?(cb: (e: PickupTakenEvent) => void): () => void;
+  /** connection lost / retrying / back (networked clients auto-reconnect with backoff) */
+  onConnectionStatus?(cb: (s: ConnectionStatus) => void): () => void;
   /** current local player state, if known */
   getLocal?(): NetPlayer | undefined;
   /** look up weapon definitions by id (for remote player models) */

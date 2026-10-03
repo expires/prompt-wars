@@ -48,6 +48,10 @@ import { DamageNumbers } from '../ui/DamageNumbers';
 import { TouchControls, touchDevice } from '../ui/TouchControls';
 import { setDesignEnvRenderer } from '../weapons/designModelCache';
 import { weaponPrompt } from '../ui/forgeCredit';
+import { isWasmPanic, report, reportError, setTelemetryContext, watchCanvas, currentGpu } from '../telemetry';
+import { QualityController } from './quality';
+import { hideBanner, showBanner } from '../ui/StatusBanner';
+import { checkVersion, startVersionCheck } from '../versionCheck';
 
 export const MAX_HP = 100;
 /** room between the scan's own bounds and the invisible wall net */
@@ -152,6 +156,15 @@ export class Game {
   private lastSpawn = new THREE.Vector3();
   private respawning = false;
   opts: GameOptions = {};
+  /** graphics quality (Settings → Video) */
+  quality?: QualityController;
+  /** per-frame exception bookkeeping (one bad frame must not kill the loop) */
+  private frameErrors: number[] = [];
+  private fatalShown = false;
+  private contextLosses = 0;
+  private contextLostTimer?: ReturnType<typeof setTimeout>;
+  /** true while the WebGL context is lost: nothing renders */
+  contextLost = false;
 
   get serverLabel() {
     return this.opts.serverLabel ?? 'server';
@@ -161,6 +174,21 @@ export class Game {
     this.opts = opts;
     this.rc = createRenderer(container);
     setDesignEnvRenderer(this.rc.renderer);
+    setTelemetryContext({
+      renderer: this.rc.renderer,
+      name: () => this.me?.name,
+      identity: () => this.net?.localId,
+      screen: () => (this.flow ? this.flow.screen : 'boot'),
+      extra: () => ({
+        map: this.map?.id,
+        q: this.quality?.level,
+        alive: this.alive,
+        online: this.net?.authoritative ?? false,
+        players: this.remotes ? this.remotes.ids().length + 1 : undefined,
+        fps: this.perf.fps,
+      }),
+    });
+    this.watchContext(this.rc.renderer.domElement);
     this.physics = await initPhysics();
     this.input = new Input(this.rc.renderer.domElement);
     this.hud = new Hud();
@@ -199,6 +227,20 @@ export class Game {
     } else if (mapFailed && online) {
       this.hud.showWarning('Venue map failed to load — playing test map; spawns may be wrong');
     }
+
+    // ---- graphics quality (needs the map for its decor hooks) ----
+    this.quality = new QualityController({
+      renderer: this.rc.renderer,
+      scene: this.rc.scene,
+      map: this.map,
+      gpu: () => currentGpu(),
+      measuring: () => this.ready && this.alive && !this.flow.blocking && document.visibilityState === 'visible' && !this.contextLost,
+      onChange: (level, reason) => {
+        console.info(`[quality] ${level} (${reason})`);
+        if (reason.startsWith('fps')) this.hud.toast(`Graphics quality lowered to <b>${level}</b> for a smoother frame rate`, { ms: 5000 });
+      },
+    });
+    this.quality.refresh('start', true);
 
     // ---- invisible bounds walls: safety net over the holes in a scan ----
     if (this.map.id !== 'testmap') {
@@ -372,6 +414,7 @@ export class Game {
       const killer = e.killerId === me ? 'You' : e.killerName;
       const victim = e.victimId === me ? 'You' : e.victimName;
       this.killLog.push(`${killer} [${e.weaponName}] ${victim}`);
+      if (this.killLog.length > 50) this.killLog.splice(0, this.killLog.length - 50);
       const w = e.weaponId ? this.net.getWeapon?.(e.weaponId) : undefined;
       const hs = this.hsKills.get(e.killerId) ?? { k: 0, hs: 0 };
       hs.k++;
@@ -467,6 +510,29 @@ export class Game {
       this.equip(getDefaultWeapons()[0]);
     }
 
+    // ---- connection loss: reconnect banner instead of dumping to the menu ----
+    this.net.onConnectionStatus?.((st) => {
+      if (st.state === 'reconnecting') {
+        const secs = Math.max(1, Math.round(st.inMs / 1000));
+        showBanner('net', st.attempt <= 1 ? 'Connection lost — reconnecting…' : `Reconnecting… (attempt ${st.attempt}, next in ${secs}s)`, {
+          tone: 'warn',
+          spinner: true,
+          action: st.attempt >= 4 ? { label: 'Reload', onClick: () => location.reload() } : undefined,
+        });
+      } else {
+        hideBanner('net');
+        if (st.reconnected) {
+          this.hud.toast('Reconnected', { ms: 2500 });
+          // the server resumes us from our last stored position: re-announce where we really are
+          this.poseSender.markTeleport();
+          this.sendTransformNow();
+          this.syncWeapon(true);
+          void checkVersion();
+        }
+      }
+    });
+    startVersionCheck((v) => this.onNewVersion(v));
+
     // ---- UI wiring ----
     this.spawnEditor = new SpawnEditor(this.map.id, this.rc.scene, this.input, this.hud, () => ({
       feet: this.player.feet,
@@ -553,7 +619,7 @@ export class Game {
       const net = this.net as NetClient & { respawnAsync?(k: boolean): Promise<void> };
       for (let i = 0; i < 40 && !this.alive; i++) {
         try {
-          if (net.respawnAsync) await net.respawnAsync(keepLoadout);
+          if (net.respawnAsync) await withTimeout(net.respawnAsync(keepLoadout), 6000, 'respawn timed out');
           else net.respawn(keepLoadout);
           break;
         } catch (err) {
@@ -817,13 +883,102 @@ export class Game {
     this.ads = target ? Math.min(1, this.ads + dt * rate) : Math.max(0, this.ads - dt * rate);
   }
 
+  /** rAF entry: always reschedules first, and one throwing frame is logged, never fatal */
   private frame = (now: number) => {
     requestAnimationFrame(this.frame);
+    try {
+      this.tick(now);
+    } catch (err) {
+      this.onFrameError(err);
+    }
+  };
+
+  private onFrameError(err: unknown) {
+    try {
+      this.input?.endFrame();
+    } catch {
+      /* ignore */
+    }
+    const now = performance.now();
+    this.frameErrors.push(now);
+    while (this.frameErrors.length && now - this.frameErrors[0] > 10_000) this.frameErrors.shift();
+    if (this.frameErrors.length <= 3) console.error('[game] frame error', err);
+    reportError('frame', err, { recent: this.frameErrors.length });
+    // a Rapier panic poisons the physics world (every later step throws); a frame that throws
+    // every time can't recover either: offer a reload (automatic when no match is in progress)
+    if (isWasmPanic(err) || this.frameErrors.length >= 120) this.showFatal(isWasmPanic(err) ? 'The physics engine crashed.' : 'Something went wrong.');
+  }
+
+  /** unrecoverable state: reload prompt (auto-reload from the landing / death screens) */
+  showFatal(text: string) {
+    if (this.fatalShown) return;
+    this.fatalShown = true;
+    report('fatal', { msg: text }, { flush: true });
+    const screen = this.flow?.screen;
+    if (screen === 'landing' || screen === 'death') {
+      showBanner('fatal', `${text} Reloading…`, { tone: 'error', spinner: true });
+      setTimeout(() => location.reload(), 1500);
+      return;
+    }
+    showBanner('fatal', `${text} Reload to keep playing.`, { tone: 'error', action: { label: 'Reload', onClick: () => location.reload() } });
+  }
+
+  /** a newer client is deployed (old client vs new schema = trouble) */
+  private onNewVersion(v: string) {
+    report('version', { msg: 'new version available', to: v }, { heavy: false });
+    const screen = this.flow?.screen;
+    const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement;
+    if ((screen === 'landing' || screen === 'death') && !typing) {
+      showBanner('version', 'New version — reloading…', { spinner: true });
+      setTimeout(() => location.reload(), 1200);
+      return;
+    }
+    showBanner('version', 'New version available', { action: { label: 'Reload', onClick: () => location.reload() }, dismissible: true });
+  }
+
+  /** WebGL context loss (GPU reset / out of memory): banner, wait for the restore, re-arm GPU state */
+  private watchContext(canvas: HTMLCanvasElement) {
+    watchCanvas(canvas);
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault(); // allow a restore (three.js does this too)
+      this.contextLost = true;
+      this.contextLosses++;
+      showBanner('gfx', 'Graphics reset — restoring…', { tone: 'warn', spinner: true });
+      clearTimeout(this.contextLostTimer);
+      // no restore within 8 s: the GPU process is gone for good, only a reload helps
+      this.contextLostTimer = setTimeout(() => {
+        if (!this.contextLost) return;
+        report('contextlost', { msg: 'no restore after 8 s' }, { flush: true });
+        const screen = this.flow?.screen;
+        if (screen === 'landing' || screen === 'death') location.reload();
+        else showBanner('gfx', 'Graphics stopped responding.', { tone: 'error', action: { label: 'Reload', onClick: () => location.reload() } });
+      }, 8000);
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false;
+      clearTimeout(this.contextLostTimer);
+      hideBanner('gfx');
+      // three.js re-uploads geometries / textures / programs lazily; regenerate what was rendered
+      // into render targets (the PMREM studio environment of forge designs) and recompile materials
+      setDesignEnvRenderer(this.rc.renderer);
+      this.rc.scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material;
+        if (m) for (const mat of Array.isArray(m) ? m : [m]) mat.needsUpdate = true;
+      });
+      // losing the context twice is usually GPU memory pressure: Auto drops to Low
+      if (this.contextLosses >= 2 && this.quality && this.quality.setting === 'auto' && this.quality.level !== 'low') this.quality.apply('low', 'context lost twice');
+      else this.quality?.refresh('context restored', true);
+      this.hud.toast('Graphics restored', { ms: 2500 });
+    });
+  }
+
+  private tick(now: number) {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.fps = this.fps * 0.95 + (dt > 0 ? 1 / dt : 0) * 0.05;
     const { input, player } = this;
     this.updatePerfWindow(now, dt);
+    this.quality?.update(now, this.perf.fps);
     const online = this.net.authoritative;
 
     // touch: the on-screen controls are live while alive with no menu up
@@ -988,9 +1143,9 @@ export class Game {
       );
     } else this.hud.setDebug(null);
 
-    if (!this.flow.opaque) this.rc.render();
+    if (!this.flow.opaque && !this.contextLost) this.rc.render();
     input.endFrame();
-  };
+  }
 
   /** roll the one-second perf window (frames, mouse events/s, worst frame time) */
   private updatePerfWindow(now: number, dt: number) {
@@ -1062,6 +1217,22 @@ function isVec3(v: unknown): v is [number, number, number] {
 
 function createTestMapOr(game: Game, loaded: GameMap | null): GameMap {
   return loaded ?? createTestMap(game.physics, game.rc.scene);
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(msg)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
 }
 
 /** run when the browser is idle (falls back to a timeout) */

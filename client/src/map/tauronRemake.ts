@@ -1624,14 +1624,32 @@ class NearInstances {
   private n: number;
   private last = new THREE.Vector3(1e9, 1e9, 1e9);
 
-  constructor(private mesh: THREE.InstancedMesh, private radius: number) {
+  constructor(readonly mesh: THREE.InstancedMesh, private radius: number) {
     this.n = mesh.count;
     this.full = (mesh.instanceMatrix.array as Float32Array).slice(0, this.n * 16);
     this.fullCol = mesh.instanceColor ? (mesh.instanceColor.array as Float32Array).slice(0, this.n * 3) : null;
     mesh.computeBoundingSphere(); // over all instances; kept for frustum culling
   }
 
+  /** change the keep radius (Infinity = every instance); applied on the next update */
+  setRadius(r: number) {
+    if (r === this.radius) return;
+    this.radius = r;
+    this.last.set(1e9, 1e9, 1e9);
+  }
+
   update(cx: number, cy: number, cz: number) {
+    if (!Number.isFinite(this.radius)) {
+      // everything: restore the full buffer once (the first update after a radius change)
+      if (this.last.x !== 1e9) return;
+      this.last.set(-1e9, -1e9, -1e9);
+      (this.mesh.instanceMatrix.array as Float32Array).set(this.full);
+      if (this.mesh.instanceColor && this.fullCol) (this.mesh.instanceColor.array as Float32Array).set(this.fullCol);
+      this.mesh.count = this.n;
+      this.mesh.instanceMatrix.needsUpdate = true;
+      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+      return;
+    }
     const l = this.last;
     if ((l.x - cx) ** 2 + (l.y - cy) ** 2 + (l.z - cz) ** 2 < 1.5 * 1.5) return;
     l.set(cx, cy, cz);
@@ -1643,10 +1661,9 @@ class NearInstances {
       const o = i * 16;
       const dx = this.full[o + 12]! - cx, dy = this.full[o + 13]! - cy, dz = this.full[o + 14]! - cz;
       if (dx * dx + dy * dy + dz * dz > r2) continue;
-      if (k !== i) {
-        m.set(this.full.subarray(o, o + 16), k * 16);
-        if (col && this.fullCol) col.set(this.fullCol.subarray(i * 3, i * 3 + 3), k * 3);
-      }
+      // always copy: slot k may hold another instance from an earlier compaction
+      m.set(this.full.subarray(o, o + 16), k * 16);
+      if (col && this.fullCol) col.set(this.fullCol.subarray(i * 3, i * 3 + 3), k * 3);
       k++;
     }
     this.mesh.count = k;
@@ -2284,7 +2301,8 @@ function buildDecor(root: THREE.Group, mats: Mats, props: Prop[], B: PropBuckets
   stagePts.name = 'stage-spots';
   root.add(stagePts);
 
-  return [new NearInstances(clutter, NEAR_R)];
+  // chairs / laptops: drawn everywhere (radius Infinity) unless the quality setting limits them
+  return [new NearInstances(clutter, NEAR_R), new NearInstances(chairs, Infinity), new NearInstances(laptops, Infinity)];
 }
 
 // ------------------------------------------------------------------ scene look
@@ -2457,6 +2475,21 @@ export function createTauronRemake(physics: PhysicsContext, scene: THREE.Scene):
     spawns: TAURON_REMAKE_SPAWNS.map((s) => [s.x, s.y, s.z] as Vec3),
     killY: -20,
     meta: { bbox: { min: TAURON_REMAKE_BOUNDS.min, max: TAURON_REMAKE_BOUNDS.max }, cWalkY: C_WALK_Y },
+    setQuality(q) {
+      const byName = (n: string) => root.getObjectByName(n);
+      const low = q === 'low';
+      // low: chairs / laptops only near the camera, no desk clutter / folded seats / haze beams /
+      // floor streaks, no stage point light (a per-fragment light on every lit material)
+      for (const nI of near) {
+        const n = nI.mesh.name;
+        if (n === 'chairs' || n === 'laptops') nI.setRadius(low ? 22 : q === 'medium' ? 45 : Infinity);
+      }
+      for (const n of ['desk-clutter', 'seats-folded', 'roof-beams', 'floor-reflections', 'stage-spots']) {
+        const o = byName(n);
+        if (o) o.visible = !low;
+      }
+      for (const o of added) if ((o as THREE.PointLight).isPointLight) o.visible = !low;
+    },
     dispose() {
       scene.remove(root);
       scene.onBeforeRender = prevBeforeRender;

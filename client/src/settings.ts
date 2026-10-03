@@ -75,6 +75,8 @@ export interface Settings {
   hudScale: number;
   /** ping / FPS readout in the HUD's top-left corner */
   showFps: boolean;
+  /** graphics quality; auto = by GPU / device memory, stepping down when the frame rate is low */
+  graphicsQuality: GraphicsQuality;
 }
 
 export type CrosshairPreset = 'classic' | 'dot' | 'circle' | 't' | 'chevron';
@@ -82,6 +84,7 @@ export type EnemyColor = 'red' | 'purple' | 'yellow';
 export type ColorblindPreset = 'off' | 'protanopia' | 'deuteranopia' | 'tritanopia';
 export type ReducedMotionMode = 'auto' | 'on' | 'off';
 export type TextSize = 100 | 115 | 130;
+export type GraphicsQuality = 'auto' | 'low' | 'medium' | 'high';
 
 export const ENEMY_COLORS: Record<EnemyColor, string> = { red: '#FF4655', purple: '#C34BFF', yellow: '#FFE600' };
 
@@ -92,6 +95,7 @@ export const SETTING_ENUMS = {
   colorblind: ['off', 'protanopia', 'deuteranopia', 'tritanopia'],
   reducedMotion: ['auto', 'on', 'off'],
   textSize: [100, 115, 130],
+  graphicsQuality: ['auto', 'low', 'medium', 'high'],
 } as const satisfies Partial<Record<keyof Settings, readonly (string | number)[]>>;
 
 /** numeric ranges (load() clamps into them) */
@@ -138,6 +142,7 @@ export const DEFAULT_SETTINGS: Settings = {
   textSize: 100,
   hudScale: 1,
   showFps: true,
+  graphicsQuality: 'auto',
 };
 
 /** base radians per mouse pixel at sensitivity 1 */

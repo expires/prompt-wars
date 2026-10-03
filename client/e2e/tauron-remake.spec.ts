@@ -44,7 +44,7 @@ type Win = Window & {
 async function boot(page: Page) {
   const logs: string[] = [];
   page.on('console', (m) => logs.push(m.text()));
-  await page.goto('/?offline=1&e2e=1&map=tauron-remake');
+  await page.goto('/?offline=1&e2e=1&map=tauron-remake&quality=high');
   await page.waitForFunction(
     () => {
       const w = window as unknown as Win;

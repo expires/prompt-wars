@@ -6,11 +6,15 @@ import {
   mapSource,
 } from '@ai-gaem/shared';
 import './ui/tokens.css';
+import { installTelemetry, reportError } from './telemetry';
 import { Game } from './engine/Game';
 import { loadRapier } from './engine/physics';
 import { resolveMapUrl } from './map/assetUrl';
 import { OfflineNetClient, SpacetimeNetClient, type NetClient } from './net';
 import { installTestHook } from './testHook';
+
+// first: global error / rejection / websocket-close capture (see telemetry.ts)
+installTelemetry();
 
 const params = new URLSearchParams(location.search);
 
@@ -68,6 +72,7 @@ game
   .then(() => boot?.done())
   .catch((err) => {
     console.error(err);
+    reportError('boot', err);
     boot?.error(String(err));
     (window as unknown as { __gameError: string }).__gameError = String(err);
     document.body.insertAdjacentHTML(

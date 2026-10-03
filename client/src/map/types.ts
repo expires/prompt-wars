@@ -19,5 +19,7 @@ export interface GameMap {
   killY: number;
   /** optional sidecar metadata from `<name>.meta.json` */
   meta?: MapMeta;
+  /** graphics quality hook: drop / range-limit decor (low), restore it (high) */
+  setQuality?(q: 'low' | 'medium' | 'high'): void;
   dispose(): void;
 }

@@ -1,4 +1,5 @@
 import { defineConfig, type Plugin } from 'vite';
+import { execSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,33 @@ import { brotliCompressSync, constants as zlib, gzipSync } from 'node:zlib';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const WASM_LOADER = resolve(here, 'src/boot/wasm.ts');
+
+/** build id: short git sha + build time (dev server: 'dev', which disables the version check) */
+function buildVersion(): string {
+  if (process.env.APP_VERSION) return process.env.APP_VERSION;
+  let sha = 'nogit';
+  try {
+    sha = execSync('git rev-parse --short HEAD', { cwd: here, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    /* not a git checkout */
+  }
+  return `${sha}-${new Date().toISOString().replace(/[-:]/g, '').slice(0, 13)}`;
+}
+
+/** Build only: dist/version.json ({ version }) for the client's stale-version check. */
+function versionFile(version: string): Plugin {
+  let outDir = 'dist';
+  return {
+    name: 'version-file',
+    apply: 'build',
+    configResolved(c) {
+      outDir = resolve(c.root, c.build.outDir);
+    },
+    closeBundle() {
+      writeFileSync(join(outDir, 'version.json'), JSON.stringify({ version, builtAt: new Date().toISOString() }) + '\n');
+    },
+  };
+}
 
 /**
  * Brotli at max settings (what precompress() writes and Caddy serves), memoised by output file
@@ -155,10 +183,13 @@ const forgeProxy = {
   },
 };
 
+const APP_VERSION = process.argv.includes('build') || process.env.NODE_ENV === 'production' ? buildVersion() : 'dev';
+
 export default defineConfig({
   server: { port: 5173, host: true, proxy: forgeProxy },
   preview: { proxy: forgeProxy },
-  plugins: [rapierWasm(), bootManifest(), precompress()],
+  define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
+  plugins: [rapierWasm(), bootManifest(), versionFile(APP_VERSION), precompress()],
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 1500,
