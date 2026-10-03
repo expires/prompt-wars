@@ -14,11 +14,17 @@ const ARM_KEYS: Record<string, ArmKeys> = {
   bash: [[0.25, 0.5, 0, 0.15, -0.2], [0.1, -0.2, 0, -0.22, 0.2], [0.05, -0.25, 0, -0.24, 0.2]],
   spin: [[0.3, -1.0, 0, 0, 0.5], [0.3, 1.0, 0, -0.1, 0.5], [0.2, 1.2, 0, 0, 0.5]],
 };
+// throw: wind-up (arm back/up) -> release (whip forward) -> recover
+const THROW_KEYS: ArmKeys = [
+  [-1.3, 0.2, 0, 0.12, -0.2],
+  [1.1, 0.1, 0, -0.3, 0.25],
+  [0.2, 0.1, 0, -0.05, 0.1],
+];
 const BLOCK_KEY: ArmKey = [0.6, 0.95, 0, -0.05, 0.2];
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
 export interface HumanoidAction {
-  kind: 'melee' | 'recoil';
+  kind: 'melee' | 'recoil' | 'throw';
   swing: MeleeSwing;
   combo: number;
   charge: number;
@@ -160,6 +166,11 @@ export class Humanoid {
     this.action = { kind: 'recoil', swing: 'slash', combo: 0, charge: 0, t: 0, duration: 0.22, kick: Math.min(1.5, kick) };
   }
 
+  /** play a throw (third person) */
+  playThrow(duration = 0.5, startAt = 0) {
+    this.action = { kind: 'throw', swing: 'thrust', combo: 0, charge: 0, t: startAt * duration, duration, kick: 0 };
+  }
+
   private animateAction(dt: number) {
     this.blockT += ((this.blocking ? 1 : 0) - this.blockT) * (1 - Math.exp(-dt * 12));
     let rx = 0, ry = 0, rz = 0, push = 0, twist = 0, spin = 0, lean = 0;
@@ -174,6 +185,15 @@ export class Humanoid {
         const k = (1 - u) * (1 - u) * a.kick;
         rx = 0.35 * k;
         lean = -0.1 * k;
+      } else if (a.kind === 'throw') {
+        const [w, s, f] = THROW_KEYS;
+        const lerp = (p: ArmKey, q: ArmKey, t: number): ArmKey => p.map((v, i) => v + (q[i] - v) * t) as ArmKey;
+        const zero: ArmKey = [0, 0, 0, 0, 0];
+        let k: ArmKey;
+        if (u < 0.4) k = lerp(zero, w, smooth(u / 0.4));
+        else if (u < 0.6) k = lerp(w, s, Math.pow((u - 0.4) / 0.2, 1.5));
+        else k = lerp(s, f, smooth((u - 0.6) / 0.4));
+        [rx, ry, rz, push, twist] = k;
       } else {
         const ph = MELEE_PHASES[a.swing];
         const key = a.swing === 'slash' ? `slash${a.combo % 3}` : a.swing;

@@ -4,6 +4,7 @@ import { onPartsLibrary } from './partsLibrary';
 import type { Weapon } from './types';
 import type { MeleeView } from './MeleeSystem';
 import { BLOCK_POSE, MELEE_SPRINT_POSE, SHIELD_BLOCK_POSE, blendPose, chargePose, swingPose, type VmPose } from './meleeAnim';
+import { throwPose, throwReleased } from './throwAnim';
 
 /** equip (draw) animation length, seconds */
 export const EQUIP_TIME = 0.4;
@@ -28,6 +29,8 @@ export interface ViewmodelState {
   melee?: MeleeView;
   /** melee shield (block pose differs) */
   shield?: boolean;
+  /** throwable weapons: throw animation progress 0..1, or null when not throwing */
+  throwing?: { t: number } | null;
 }
 const MAX_LEN = 0.6;
 const MAX_LEN_MELEE = 0.75;
@@ -233,6 +236,13 @@ export class Viewmodel {
       off.r = b.r;
     }
     if (this.melee) this.addPose(off, 1);
+    // throwable: wind-up -> release -> recover; the held object vanishes at the release frame
+    if (st.throwing) {
+      this.addPose(throwPose(st.throwing.t), 1);
+      if (this.holder) this.holder.visible = !throwReleased(st.throwing.t);
+    } else if (this.holder && !this.holder.visible) {
+      this.holder.visible = true;
+    }
     // equip (draw): rise from below the screen, rotating up into place
     if (this.equipT < EQUIP_TIME) {
       const t = this.equipT / EQUIP_TIME;

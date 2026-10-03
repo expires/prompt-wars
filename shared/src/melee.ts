@@ -92,7 +92,7 @@ export function isMeleeWeight(v: unknown): v is MeleeWeight {
 
 // Keyword -> swing (checked in this order against name + part ids, whole tokens / prefixes).
 const SWING_WORDS: [MeleeSwing, RegExp][] = [
-  ['bash', /\b(shield|chair|stool|door|stop ?sign|stopsign|table|lid|bin|trash ?can|buckler|guitar body|tray|suitcase|briefcase)/],
+  ['bash', /\b(shield|chair|stool|door|stop ?sign|stopsign|table|lid|bin|trash ?can|buckler|guitar body|tray|suitcase|briefcase|glove|boxing|punch|fist|knuckle)/],
   ['thrust', /\b(spear|pike|lance|trident|bident|naginata|glaive|umbrella|parasol|pitchfork|rapier|plunger|javelin|harpoon|fork|estoc|epee|foil|stake|pole)/],
   ['spin', /\b(scythe|flail|nunchuck|nunchaku|chain|yo ?yo|whip|propeller)/],
   ['overhead', /\b(hammer|sledge|maul|mallet|axe|hatchet|tomahawk|pan|wok|pot|saucepan|skillet|mace|morningstar|club|bat|pickaxe|gavel|wrench|shovel|tenderizer|halberd|cleaver|anvil|kettlebell|brick|log)/],

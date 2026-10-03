@@ -14,6 +14,7 @@ export interface CatalogEntry {
 }
 
 const KEYWORDS: [RegExp, WeaponClass][] = [
+  [/throw|toss|lob|hurl|chuck|fling|yeet|molotov/i, 'throwable'],
   [/flam|fire|burn|napalm|torch|dragon/i, 'flamethrower'],
   [/bubble|soap|foam/i, 'bubble_gun'],
   [/dart|blow ?gun|poison|venom/i, 'blowgun'],

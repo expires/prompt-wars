@@ -7,6 +7,8 @@ import { createTestMap } from '../map/testMap';
 import { addBoundsColliders, expandBox, type BoundsBox } from '../map/bounds';
 import { findGroundSpawns, loadMap } from '../map/loadMap';
 import { bakeSpawns } from '../map/bakeSpawns';
+import { PropSystem } from '../props/PropSystem';
+import { TEST_MAP_PROPS, type PropSpawn } from '../props/propDefs';
 import type { GameMap, Vec3 } from '../map/types';
 import { getSpawnPoints, pickRandomSpawn, type SpawnPoint } from '../map/spawns';
 import { PlayerController } from '../player/PlayerController';
@@ -78,6 +80,7 @@ export class Game {
   net!: NetClient;
   remotes!: RemotePlayers;
   dummies?: TargetDummies;
+  props!: PropSystem;
   spawnEditor!: SpawnEditor;
   readonly targets = new TargetRegistry();
   readonly rig = new CameraRig();
@@ -196,6 +199,9 @@ export class Game {
         });
     }
 
+    // ---- breakable props (dynamic bodies; never the static walls) ----
+    this.props = new PropSystem(this.physics, this.rc.scene, this.targets, this.propSpawns());
+
     // ---- weapons ----
     this.weapons = new WeaponSystem(
       this.physics,
@@ -238,14 +244,18 @@ export class Game {
             this.player.applyImpulse(f.multiplyScalar(meta.weight === 'heavy' ? 2.5 : 1.6));
           }
         },
-        onMeleeWorld: (meta) => {
+        onMeleeWorld: (meta, point) => {
           this.sfx.meleeImpact('blunt', meta.weight);
           this.rig.shake(0.3);
+          this.props.blast(point, 2.4, meta.weight === 'heavy' ? 5 : 2.5);
         },
         onShotEnd: () => this.net.flushShot?.(),
         onFire: (w) => this.sfx.gunshot(w.class),
         onRecoil: (p, y) => this.rig.kick(p, y),
-        onExplosion: (pos) => this.sfx.explosion(pos),
+        onExplosion: (pos) => {
+          this.sfx.explosion(pos);
+          this.props.blast(pos, 4.5, 9);
+        },
         onReload: () => {
           this.sfx.reload();
           this.net.reload?.();
@@ -513,6 +523,18 @@ export class Game {
 
   spawnPoints(): SpawnPoint[] {
     return getSpawnPoints(this.map.id, this.map.spawns);
+  }
+
+  /** Breakable props for the current map: a hand-placed set on the test map, else scattered near spawns. */
+  private propSpawns(): PropSpawn[] {
+    if (this.map.id === 'testmap') return TEST_MAP_PROPS;
+    const kinds = ['chair', 'chair', 'crate', 'cone', 'bottle'] as const;
+    const half: Record<(typeof kinds)[number], number> = { chair: 0.56, crate: 0.4, cone: 0.37, bottle: 0.25 };
+    return this.map.spawns.slice(0, 20).map((s, i) => {
+      const kind = kinds[i % kinds.length];
+      const a = (i / 5) * Math.PI * 2;
+      return { kind, pos: [s[0] + Math.cos(a) * 1.8, s[1] + half[kind], s[2] + Math.sin(a) * 1.8] as Vec3, yaw: a };
+    });
   }
 
   equip(w: Weapon) {
@@ -790,6 +812,7 @@ export class Game {
       dip: this.rig.dipOffset,
       melee: this.weapons.meleeView(),
       shield: this.weapons.melee.shield,
+      throwing: this.weapons.throwView(),
     });
     this.weapons.moveState = { speed, grounded: player.grounded, crouched: player.crouched, ads: this.ads };
     this.weapons.update(dt, input, canAct, actions);
@@ -812,6 +835,7 @@ export class Game {
     );
     this.updateCrosshair();
     this.dummies?.update(dt, this.rc.camera);
+    this.props.update(dt);
     this.remotes.update(dt, now);
     this.damageNumbers.update(dt, cam, (id) => this.remotes.headOf(id));
     this.hud.update(dt);

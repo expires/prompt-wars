@@ -116,7 +116,8 @@ export class PlayerController {
     this.cc.setMinSlopeSlideAngle((46 * Math.PI) / 180);
     this.cc.enableSnapToGround(0.45);
     this.cc.setSlideEnabled(true);
-    this.cc.setApplyImpulsesToDynamicBodies(false);
+    // push dynamic props (chairs, debris) as we walk into them
+    this.cc.setApplyImpulsesToDynamicBodies(true);
 
     this.curFeet.copy(spawn);
     this.prevFeet.copy(spawn);

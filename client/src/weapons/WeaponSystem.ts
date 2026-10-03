@@ -9,6 +9,8 @@ import { Viewmodel } from './Viewmodel';
 import type { HitInfo, HitTarget, TargetRegistry } from './targets';
 import { resolveFireMode, type FireMode, type Weapon } from './types';
 import { effectiveSpread, weaponHandling, type Handling, type MoveState } from './handling';
+import { buildWeaponModel } from './buildWeaponModel';
+import { THROW_TIME } from './throwAnim';
 import { WALK_SPEED } from '../player/PlayerController';
 
 const ARC_GRAVITY = 12;
@@ -19,7 +21,9 @@ interface Projectile {
   vel: THREE.Vector3;
   gravity: number;
   ttl: number;
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
+  /** thrown objects tumble in flight */
+  spin: number;
   /** visual offset from logical pos (starts at muzzle, decays to 0) */
   visOffset: THREE.Vector3;
   damage: number;
@@ -66,6 +70,10 @@ export class WeaponSystem {
   private reloadT = 0;
   private cooldown = 0;
   private projectiles: Projectile[] = [];
+  /** throwable weapons: remaining throw animation time, and a cached model template to clone */
+  private throwT = 0;
+  private throwSrcId: string | null = null;
+  private throwSrc: THREE.Object3D | null = null;
   readonly effects: Effects;
   readonly viewmodel: Viewmodel;
   private readonly tmpA = new THREE.Vector3();
@@ -160,9 +168,16 @@ export class WeaponSystem {
     this.viewmodel.reloadProgress = -1;
     this.cooldown = 0.2;
     this.viewmodel.setWeapon(w);
+    this.throwT = 0;
     if (this.fireMode === 'melee') this.melee.setWeapon(w);
     else this.melee.cancel();
     this.emitAmmo();
+  }
+
+  /** first-person throw animation progress (0..1) while throwing a throwable, else null */
+  throwView(): { t: number } | null {
+    if (this.throwT <= 0) return null;
+    return { t: 1 - this.throwT / THROW_TIME };
   }
 
   /** refill without rebuilding the model (respawn w/ same loadout) */
@@ -226,6 +241,7 @@ export class WeaponSystem {
     }
     const w = this.weapon;
     this.cooldown -= dt;
+    this.throwT = Math.max(0, this.throwT - dt);
     this.bloom = Math.max(0, this.bloom - this.handling.bloomRecovery * dt);
 
     if (this.reloading) {
@@ -325,6 +341,7 @@ export class WeaponSystem {
       case 'arc':
         this.viewmodel.kick(Math.max(0.6, h.vmKick));
         this.effects.muzzleLight(muzzle);
+        if (w.class === 'throwable') this.throwT = THROW_TIME;
         for (let i = 0; i < Math.max(1, w.pellets); i++) this.spawnProjectile(eye, muzzle, this.fireMode === 'arc', w, undefined, false, spread);
         break;
       case 'stream':
@@ -391,11 +408,15 @@ export class WeaponSystem {
     if (arc) dir.y += 0.12;
     dir.normalize();
     const speed = w.projectileSpeed > 0 ? w.projectileSpeed : 30;
-    const mesh = new THREE.Mesh(
-      this.projGeo,
-      new THREE.MeshBasicMaterial({ color: w.colors?.accent ?? 0xffaa33 }),
-    );
-    mesh.scale.setScalar(arc ? 1 : 1.3);
+    const thrown = w.class === 'throwable';
+    let mesh: THREE.Object3D;
+    if (thrown) mesh = this.thrownMesh(w);
+    else {
+      const sphere = new THREE.Mesh(this.projGeo, new THREE.MeshBasicMaterial({ color: w.colors?.accent ?? 0xffaa33 }));
+      sphere.scale.setScalar(arc ? 1 : 1.3);
+      mesh = sphere;
+    }
+    mesh.position.copy(eye);
     this.scene.add(mesh);
     this.projectiles.push({
       pos: eye.clone(),
@@ -403,12 +424,27 @@ export class WeaponSystem {
       gravity: arc ? ARC_GRAVITY : 0,
       ttl: Math.max(0.5, (w.range / speed) * (arc ? 3 : 1.2)),
       mesh,
+      spin: thrown ? 9 : 0,
       visOffset: muzzle.clone().sub(eye),
       damage: w.damage,
       splash: w.splashRadius,
       seq: this.curSeq,
       visualOnly,
     });
+  }
+
+  /** a throw-sized clone of the weapon's own model (chair, bottle, ...) for the flying object */
+  private thrownMesh(w: Weapon): THREE.Object3D {
+    const id = w.id ?? null;
+    if (this.throwSrcId !== id || !this.throwSrc) {
+      this.throwSrc = buildWeaponModel(w).root;
+      this.throwSrcId = id;
+    }
+    const obj = this.throwSrc.clone(true);
+    const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+    const s = Math.min(1.6, 0.55 / Math.max(size.x, size.y, size.z, 0.001));
+    obj.scale.setScalar(s);
+    return obj;
   }
 
   private updateProjectiles(dt: number) {
@@ -431,13 +467,17 @@ export class WeaponSystem {
           if (!p.visualOnly) this.splash(at, p.splash, p.damage, target, p.seq);
         } else this.effects.impact(at, hit?.normal);
         this.scene.remove(p.mesh);
-        (p.mesh.material as THREE.Material).dispose();
+        if (p.mesh instanceof THREE.Mesh) (p.mesh.material as THREE.Material).dispose();
         this.projectiles.splice(i, 1);
         continue;
       }
       p.pos.addScaledVector(dir, step);
       p.visOffset.multiplyScalar(Math.exp(-dt * 12));
       p.mesh.position.copy(p.pos).add(p.visOffset);
+      if (p.spin) {
+        p.mesh.rotation.x += p.spin * dt;
+        p.mesh.rotation.z += p.spin * 0.7 * dt;
+      }
       if (Math.random() < 0.6 && p.visOffset.lengthSq() < 0.01) this.effects.emit(p.mesh.position, new THREE.Vector3(), 0.3, 0x888888);
     }
   }

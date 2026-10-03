@@ -77,6 +77,12 @@ const RAW_PRESETS: Record<WeaponClass, RawWeapon> = {
     damage: 45, fireRate: 1.5, magSize: 1, reloadTime: 0, range: 2.5, spread: 70, knockback: 5,
     colors: { primary: '#b0b4ba', secondary: '#3a2a1a', accent: '#ff3030' },
   },
+  throwable: {
+    name: 'Bar Stool', class: 'throwable', fireMode: 'arc',
+    damage: 34, fireRate: 1.2, magSize: 1, reloadTime: 1, range: 30, spread: 2,
+    projectileSpeed: 18, gravityScale: 0.8, splashRadius: 1, knockback: 6,
+    colors: { primary: '#9a6a3a', secondary: '#5a3a22', accent: '#c0c0c0' },
+  },
   weird: {
     name: 'Rubber Chicken Cannon', class: 'weird', fireMode: 'projectile',
     damage: 15, pellets: 3, fireRate: 1.5, magSize: 5, reloadTime: 2.5, range: 40, spread: 6,

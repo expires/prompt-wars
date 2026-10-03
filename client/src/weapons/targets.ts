@@ -16,7 +16,7 @@ export interface HitInfo {
 /** Something weapons can damage (dummy, remote player, ...). */
 export interface HitTarget {
   id: string;
-  kind: 'dummy' | 'player';
+  kind: 'dummy' | 'player' | 'prop';
   /** center of mass in world space (for splash) */
   getCenter(out: THREE.Vector3): THREE.Vector3;
   alive(): boolean;

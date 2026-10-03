@@ -6,6 +6,7 @@ import { CENTER_OFFSET } from '../player/PlayerController';
 import { Hitboxes } from '../player/hitboxes';
 import { buildWeaponModel } from '../weapons/buildWeaponModel';
 import { onPartsLibrary } from '../weapons/partsLibrary';
+import { THROW_TIME } from '../weapons/throwAnim';
 import { MELEE_PHASES, meleeMetaOf, meleeSwingDuration } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
 import type { HitTarget, TargetRegistry } from '../weapons/targets';
@@ -122,6 +123,9 @@ export class RemotePlayers {
       const ph = MELEE_PHASES[meta.swing];
       r.model.playMelee(meta.swing, combo, charge, meleeSwingDuration(meta.weight, charge, combo), ph.strikeStart);
       r.melees++;
+    } else if (w.class === 'throwable') {
+      r.model.playThrow(THROW_TIME);
+      r.recoils++;
     } else {
       r.model.playRecoil(Math.min(1.5, 0.4 + (w.damage * w.pellets) / 40));
       r.recoils++;

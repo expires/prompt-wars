@@ -17,6 +17,7 @@ export const WEAPON_CLASSES = [
   'blowgun',
   'crossbow',
   'melee',
+  'throwable',
   'weird',
 ] as const;
 export type WeaponClass = (typeof WEAPON_CLASSES)[number];
