@@ -115,6 +115,9 @@ export async function optimizeVisual(
 		const unlit = document.createExtension(KHRMaterialsUnlit);
 		for (const material of document.getRoot().listMaterials()) {
 			material.setExtension('KHR_materials_unlit', unlit.createUnlit());
+			// Photogrammetry scans are single-sided surfaces; rendering both sides (as the
+			// Matterport viewer does) stops back-facing triangles reading as holes.
+			material.setDoubleSided(true);
 		}
 	}
 

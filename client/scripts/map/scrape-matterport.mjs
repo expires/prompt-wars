@@ -163,7 +163,10 @@ async function main() {
     .replace(/\\u003E/gi, '>');
 
   const meshUrl = unescaped.match(/https:\/\/cdn-[^"'\\\s]*_50k\.dam\?t=[^"'\\\s]*/)?.[0];
-  const texTemplate = unescaped.match(/https:\/\/cdn-[^"'\\\s]*_50k_texture_jpg_low\/[^"'\\\s]*_50k_<texture>\.jpg\?t=[^"'\\\s&]*&k=[^"'\\\s]*/)?.[0];
+  // Prefer the high-res texture set; fall back to low if the tour only exposes that.
+  const texTemplate =
+    unescaped.match(/https:\/\/cdn-[^"'\\\s]*_50k_texture_jpg_high\/[^"'\\\s]*_50k_<texture>\.jpg\?t=[^"'\\\s&]*&k=[^"'\\\s]*/)?.[0] ??
+    unescaped.match(/https:\/\/cdn-[^"'\\\s]*_50k_texture_jpg_low\/[^"'\\\s]*_50k_<texture>\.jpg\?t=[^"'\\\s&]*&k=[^"'\\\s]*/)?.[0];
   if (!meshUrl) throw new Error('could not find the 50k .dam mesh URL in the tour page (model may not be public)');
   if (!texTemplate) throw new Error('could not find the texture template in the tour page');
 
