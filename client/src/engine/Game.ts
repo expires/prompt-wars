@@ -4,6 +4,7 @@ import { createRenderer, type RenderContext } from './renderer';
 import { initPhysics, FIXED_DT, type PhysicsContext } from './physics';
 import { Input } from './input';
 import { createTestMap } from '../map/testMap';
+import { addBoundsColliders, expandBox, type BoundsBox } from '../map/bounds';
 import { findGroundSpawns, loadMap } from '../map/loadMap';
 import { bakeSpawns } from '../map/bakeSpawns';
 import type { GameMap, Vec3 } from '../map/types';
@@ -20,6 +21,8 @@ import { OfflineNetClient, RemotePlayers, type NetClient, type NetPlayer } from 
 
 export const MAX_HP = 100;
 const NET_SEND_HZ = 15;
+/** room between the scan's own bounds and the invisible wall net */
+const BOUNDS_MARGIN = 0.5;
 
 export interface GameOptions {
   /** GLB url; omitted => procedural test map */
@@ -111,6 +114,15 @@ export class Game {
       }
     } else if (mapFailed && online) {
       this.hud.showWarning('Venue map failed to load — playing test map; spawns may be wrong');
+    }
+
+    // ---- invisible bounds walls: safety net over the holes in a scan ----
+    if (this.map.id !== 'testmap') {
+      const box = this.boundsBox(url);
+      if (box) {
+        this.map.colliders.push(...addBoundsColliders(this.physics, box));
+        this.map.killY = box.min[1] - 20;
+      }
     }
 
     // ---- dev tool: bake multi-floor spawns for a scanned map ----
@@ -329,6 +341,22 @@ export class Game {
 
   // ------------------------------------------------------------------ helpers
 
+  /** Box the invisible wall net wraps for a scanned map: venue MapDef → scan bbox (T-004) → drawn geometry. */
+  private boundsBox(url?: string): BoundsBox | null {
+    const def: MapDef | undefined = url ? Object.values(MAPS).find((m) => m.url === url) : undefined;
+    const meta = (this.map as GameMap & { meta?: { bbox?: unknown } }).meta;
+    const box = toBoundsBox(def?.bounds) ?? toBoundsBox(meta?.bbox) ?? this.visualBox();
+    return box ? expandBox(box, BOUNDS_MARGIN) : null;
+  }
+
+  /** bbox of the rendered scan: its own root object when it exposes one, else everything in the scene */
+  private visualBox(): BoundsBox | null {
+    const map = this.map as GameMap & { root?: THREE.Object3D };
+    const bbox = new THREE.Box3().setFromObject(map.root ?? this.rc.scene);
+    if (bbox.isEmpty()) return null;
+    return { min: [bbox.min.x, bbox.min.y, bbox.min.z], max: [bbox.max.x, bbox.max.y, bbox.max.z] };
+  }
+
   private async tryLoadMap(url: string): Promise<GameMap | null> {
     try {
       return await loadMap(url, this.physics, this.rc.scene);
@@ -495,6 +523,18 @@ export class Game {
     this.rc.render();
     input.endFrame();
   };
+}
+
+/** glTF extras are untyped JSON: a box only counts when it really is a numeric min/max pair */
+function toBoundsBox(raw: unknown): BoundsBox | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { min, max } = raw as { min?: unknown; max?: unknown };
+  if (!isVec3(min) || !isVec3(max)) return null;
+  return { min, max };
+}
+
+function isVec3(v: unknown): v is [number, number, number] {
+  return Array.isArray(v) && v.length === 3 && v.every((n: unknown) => typeof n === 'number' && Number.isFinite(n));
 }
 
 function createTestMapOr(game: Game, loaded: GameMap | null): GameMap {
