@@ -24,6 +24,7 @@ import { Document, NodeIO } from '@gltf-transform/core';
 import type { Accessor, Mesh, Node, Scene } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { flatten, prune, transformMesh, weld } from '@gltf-transform/functions';
+import { MeshoptEncoder } from 'meshoptimizer';
 
 import {
 	axisMatrix,
@@ -390,7 +391,10 @@ async function fileSizeMB(filePath: string): Promise<number> {
 
 async function main(): Promise<void> {
 	const options = parseCliArgs(process.argv.slice(2));
-	const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
+	// EXT_meshopt_compression needs the encoder installed on the IO for the deferred write step.
+	const io = new NodeIO()
+		.registerExtensions(ALL_EXTENSIONS)
+		.registerDependencies({ 'meshopt.encoder': MeshoptEncoder });
 
 	const kind = classifyInput(options.input);
 	if (kind === null) {
@@ -502,5 +506,6 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
 	console.error(`process-scan: ${error instanceof Error ? error.message : String(error)}`);
+	if (error instanceof Error && error.stack) console.error(error.stack);
 	process.exit(1);
 });

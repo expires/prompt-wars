@@ -18,6 +18,8 @@ export interface BakedSpawn {
 export interface BakeSpawnsOptions {
   /** grid pitch in metres */
   spacing?: number;
+  /** explicit bounds (defaults to `map.meta.bbox`) */
+  bbox?: { min: Point3; max: Point3 };
 }
 
 export interface Point3 {
@@ -102,6 +104,16 @@ function hasClearance(world: World, x: number, y: number, z: number): boolean {
   return true;
 }
 
+/** Map bounds from the scan's `<name>.meta.json` sidecar, as `Point3` corners. */
+function boundsFromMap(map: GameMap): { min: Point3; max: Point3 } {
+  const meta = map.meta?.bbox;
+  if (!meta) throw new Error('bakeSpawns: map has no meta.bbox and no explicit bbox was given');
+  return {
+    min: { x: meta.min[0], y: meta.min[1], z: meta.min[2] },
+    max: { x: meta.max[0], y: meta.max[1], z: meta.max[2] },
+  };
+}
+
 /**
  * Bake multi-floor spawn candidates for a scanned map. Only reads the query pipeline (plus one
  * `step()` to make sure it is current); the world is never mutated.
@@ -109,13 +121,13 @@ function hasClearance(world: World, x: number, y: number, z: number): boolean {
 export function bakeSpawns(
   map: GameMap,
   physics: PhysicsContext,
-  { spacing = 3 }: BakeSpawnsOptions = {},
+  { spacing = 3, bbox: explicitBox }: BakeSpawnsOptions = {},
 ): BakedSpawn[] {
   const world = physics.world;
   world.step(); // the query pipeline is only refreshed by a step
 
-  // the map bounds are a THREE.Box3 in practice; read them structurally
-  const bbox = (map as unknown as { bbox: { min: Point3; max: Point3 } }).bbox;
+  // Bounds come from the explicit option, else the scan's meta sidecar (T-004).
+  const bbox = explicitBox ?? boundsFromMap(map);
   const centreX = (bbox.min.x + bbox.max.x) / 2;
   const centreZ = (bbox.min.z + bbox.max.z) / 2;
   const floorY = bbox.min.y;

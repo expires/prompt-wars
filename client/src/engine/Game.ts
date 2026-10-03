@@ -35,6 +35,8 @@ export interface GameOptions {
   serverLabel?: string;
   /** e2e mode: never show the click-to-play overlay */
   e2e?: boolean;
+  /** render the collision shell as a neutral backdrop to hide holes in a scan (default true) */
+  shell?: boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -359,7 +361,7 @@ export class Game {
 
   private async tryLoadMap(url: string): Promise<GameMap | null> {
     try {
-      return await loadMap(url, this.physics, this.rc.scene);
+      return await loadMap(url, this.physics, this.rc.scene, { shell: this.opts.shell });
     } catch (err) {
       console.warn('[game] map load failed, using test map', err);
       return null;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACTIVE_MAP_ID, MAPS, activeMap, effectiveSpawns, spawnSetsEqual } from './maps';
+import { ACTIVE_MAP_ID, MAPS, TAURON_ARENA_SPAWNS, activeMap, effectiveSpawns, spawnSetsEqual } from './maps';
 import type { MapDef, MapSpawn } from './maps';
 import { TEST_MAP_SPAWN_POINTS } from './net';
 
@@ -12,12 +12,13 @@ describe('MAPS registry', () => {
     expect(testmap!.spawns).toBe(TEST_MAP_SPAWN_POINTS);
   });
 
-  it('registers tauron-arena with its glb url and no spawns', () => {
+  it('registers tauron-arena with its glb url and baked spawns', () => {
     const arena = MAPS['tauron-arena'];
     expect(arena).toBeDefined();
     expect(arena!.id).toBe('tauron-arena');
     expect(arena!.url).toBe('/maps/tauron-arena.glb');
-    expect(arena!.spawns).toHaveLength(0);
+    expect(arena!.spawns).toBe(TAURON_ARENA_SPAWNS);
+    expect(arena!.spawns.length).toBeGreaterThan(0);
   });
 
   it('keys every map entry by its id', () => {
@@ -28,9 +29,9 @@ describe('MAPS registry', () => {
 });
 
 describe('activeMap', () => {
-  it('defaults to testmap', () => {
-    expect(ACTIVE_MAP_ID).toBe('testmap');
-    expect(activeMap()).toBe(MAPS.testmap);
+  it('defaults to the tauron arena', () => {
+    expect(ACTIVE_MAP_ID).toBe('tauron-arena');
+    expect(activeMap()).toBe(MAPS['tauron-arena']);
   });
 });
 
@@ -71,9 +72,8 @@ describe('spawnSetsEqual', () => {
 
 describe('effectiveSpawns', () => {
   it('falls back to the test map spawns when a map declares none', () => {
-    const arena = MAPS['tauron-arena']!;
-    expect(arena.spawns).toHaveLength(0);
-    expect(effectiveSpawns(arena)).toBe(TEST_MAP_SPAWN_POINTS);
+    const empty: MapDef = { id: 'custom', url: null, spawns: [] };
+    expect(effectiveSpawns(empty)).toBe(TEST_MAP_SPAWN_POINTS);
   });
 
   it('returns the map spawns when present', () => {

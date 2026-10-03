@@ -1,4 +1,7 @@
 import { TEST_MAP_SPAWN_POINTS } from './net';
+import { TAURON_ARENA_SPAWNS } from './tauron-arena.spawns';
+
+export { TAURON_ARENA_SPAWNS };
 
 export interface MapSpawn {
   x: number;
@@ -25,11 +28,12 @@ export const MAPS: Record<string, MapDef> = {
   'tauron-arena': {
     id: 'tauron-arena',
     url: '/maps/tauron-arena.glb',
-    spawns: [],
+    spawns: TAURON_ARENA_SPAWNS,
+    bounds: { min: [-77.71, 0, -73.31], max: [77.71, 37.94, 73.31] },
   },
 };
 
-export const ACTIVE_MAP_ID = 'testmap';
+export const ACTIVE_MAP_ID = 'tauron-arena';
 
 export function activeMap(): MapDef {
   const def = MAPS[ACTIVE_MAP_ID];

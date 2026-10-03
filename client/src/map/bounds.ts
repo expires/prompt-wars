@@ -13,6 +13,8 @@ export interface BoundsOptions {
   thickness?: number;
   /** also cap the top (scanned ceilings usually have holes too) */
   ceiling?: boolean;
+  /** add a solid floor slab at `box.min[1]` so gaps in a scan can't drop a player out */
+  floor?: boolean;
 }
 
 /** grow a box by `by` metres on every axis */
@@ -32,7 +34,7 @@ export function expandBox(box: BoundsBox, by: number): BoundsBox {
 export function addBoundsColliders(
   physics: PhysicsContext,
   box: BoundsBox,
-  { thickness = 1, ceiling = true }: BoundsOptions = {},
+  { thickness = 1, ceiling = true, floor = true }: BoundsOptions = {},
 ): RAPIER.Collider[] {
   const t = Math.max(0.05, thickness);
   const half = t / 2;
@@ -53,6 +55,8 @@ export function addBoundsColliders(
     { half: [half, hy, hz], center: [maxX + half, cy, cz] },
   ];
   if (ceiling) slabs.push({ half: [hx, half, hz], center: [cx, maxY + half, cz] });
+  // floor slab: top face sits at minY, so falls through scan holes land here instead of leaving the world
+  if (floor) slabs.push({ half: [hx, half, hz], center: [cx, minY - half, cz] });
 
   return slabs.map(({ half: h, center: c }) => {
     const desc = RAPIER.ColliderDesc.cuboid(h[0], h[1], h[2]).setTranslation(c[0], c[1], c[2]);

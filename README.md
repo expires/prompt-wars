@@ -206,6 +206,18 @@ raw capture to spawning players inside the arena.
   whole space in one pass; when it is an OBJ, keep the exported textures next to the `.obj`.
 - **MatterPak** — if the venue has a Matterport tour, the tour owner can export an official
   **MatterPak OBJ** from that space. Prefer it when it exists: it is already aligned and scaled.
+- **Scrape a public Matterport tour** — when you only have the tour link and need the map for a
+  hackathon, `client/scripts/map/scrape-matterport.mjs` pulls the 50k mesh and its textures straight
+  from the tour page and writes an OBJ:
+
+  ```bash
+  node client/scripts/map/scrape-matterport.mjs eECbFJAzMzz --name tauron-arena
+  # -> scans/tauron-arena/tauron-arena.obj + textures/
+  ```
+
+  It reads the signed asset manifest the `show/` page embeds (valid ~24 h) and decodes the tiled
+  `.dam` mesh (f32 positions/UVs + LEB128 indices). **This downloads someone else's model — only do
+  it for a model you are allowed to use, and do not redistribute the result without permission.**
 
 Put the raw files in `scans/` (repo root). That directory is only a staging area for captures — the
 game never loads anything from it directly.
@@ -218,22 +230,59 @@ far too heavy to collide against). Run it straight with Node — it is erasable 
 Node 26 strips natively.
 
 ```bash
-# the usual case: a Z-up OBJ exported from a phone scan
-node client/scripts/map/process-scan.ts \
-  --input  scans/tauron-arena.obj \
-  --output client/public/maps/tauron-arena.glb \
-  --up=z
+# the usual case: a Z-up OBJ (phone scan or Matterport .dam export)
+node client/scripts/map/process-scan.ts scans/tauron-arena/tauron-arena.obj --name tauron-arena --up z
+
+# scanned venues: keep the collision 1:1 with what you can see (defaults decimate to 80k tris and
+# drop islands < 50 tris, which turns walls into swiss cheese)
+node client/scripts/map/process-scan.ts scans/tauron-arena/tauron-arena.obj \
+  --name tauron-arena --up z --collision-tris 400000 --min-island-tris 1
+# -> client/public/maps/tauron-arena.glb + tauron-arena_collision.glb + tauron-arena.meta.json
 ```
 
 | Flag | Meaning |
 | --- | --- |
-| `--input <file>` | raw scan to read (`.obj` or `.glb`) |
-| `--output <file>` | runtime GLB to write; the collision mesh is written next to it |
-| `--up=z` | the input is Z-up; leave it off for Y-up (the default) |
+| `<in.obj\|.glb>` | raw scan to read (positional); OBJ needs its `.mtl` + textures alongside |
+| `--name <id>` | map id; writes `<id>.glb`, `<id>_collision.glb`, `<id>.meta.json` |
+| `--up <y\|z>` | `z` rotates Z-up sources into Y-up (default `y`) |
+| `--out <dir>` | output directory (default `client/public/maps`) |
+| `--visual-tris` / `--collision-tris` | triangle budgets (default 400000 / 80000) |
+| `--min-island-tris <n>` | drop collision islands smaller than n tris (default 50; use 1 to keep everything) |
+| `--no-meshopt` | skip EXT_meshopt_compression on the visual GLB |
 
-A **MatterPak OBJ** goes through the same command without `--up=z`, since those exports are already
-Y-up. If the processed map comes out lying on its side or floating, re-run with the other up axis
-before digging any deeper.
+A Y-up source goes through the same command without `--up z`. If the processed map comes out lying
+on its side or floating, re-run with the other up axis before digging any deeper. The pipeline logs
+the resulting bbox, triangle counts and file sizes (`tauron-arena`: 265k visual tris / 8.2 MB,
+265k collision tris / 4.9 MB with the 1:1 flags, 193 textures).
+
+### Seal holes (solid collision)
+
+Photogrammetry scans have holes, and a 1:1 collision faithfully keeps them — you can walk through
+walls and fall through the floor. `client/scripts/map/solidify.ts` rebuilds the collision as a
+**watertight voxel shell**: it rasterizes the surface, morphologically closes it (bridging gaps up
+to ~2·close·pitch metres) and emits only the exposed cell faces, then simplifies.
+
+```bash
+# keep the raw collision so this is re-runnable
+cp client/public/maps/tauron-arena_collision.glb scans/tauron-arena_collision_raw.glb
+node client/scripts/map/solidify.ts \
+  scans/tauron-arena_collision_raw.glb \
+  client/public/maps/tauron-arena_collision.glb \
+  --pitch 0.6 --close 1 --tris 300000
+```
+
+The visual map is untouched, so texture holes stay cosmetic. Re-run `bake-spawns.ts` afterwards (the
+walkable surface moved slightly) and rebuild the client. Verified for `tauron-arena`: 0/255 drop
+points fell out and all spawns have ground beneath them.
+
+The collision shell is also drawn as a **neutral backdrop** (`loadMap()`): the same geometry is
+added to the scene with an unlit `BackSide` material and `polygonOffset`, so where the photo scan
+has a hole you see a solid grey wall behind it instead of a void, while the texture still wins
+wherever the scan exists. It costs one extra draw of the collision mesh (~300k tris for the arena)
+and can be turned off with `?shell=0`.
+
+If you still see through a wall in-game, bump `--close` (2 closes bigger gaps) — at the cost of
+sealing very narrow doorways; drop `--pitch` for a finer shell.
 
 ### Check it offline
 
@@ -248,6 +297,12 @@ stairs and edges are where a scan's collider usually hurts. Without `VITE_MAP_BA
 resolved against the client origin, i.e. `client/public/maps/`; a missing file falls back to the
 procedural test map. Serving the map from the CDN instead is covered under
 [Deploying](#deploying).
+
+Scanned maps always get an **invisible safety box** (`client/src/map/bounds.ts`): four walls, a
+ceiling and a **floor slab at `bounds.min[1]`**, pushed as colliders so gaps in the scan can't drop
+a player out of the world. The box comes from `MAPS[id].bounds` (else the scan's `meta.bbox`),
+expanded by 0.5 m; for `tauron-arena` its floor sits at y = 0. Raise `bounds.min[1]` in
+`shared/src/maps.ts` if you want the catch plane higher (e.g. at concourse level).
 
 ### Bake spawn points
 
@@ -266,6 +321,20 @@ paste into `shared/src/maps.ts`.
 Spawns are also kept in `localStorage` (`ai-gaem.spawns.<mapId>`), so a reload does not lose them.
 When you are happy with the set, paste the logged list into the spawn entry for that map in
 `shared/src/maps.ts`.
+
+To bake them headlessly (no browser), run the same logic straight from Node:
+
+```bash
+node client/scripts/map/bake-spawns.ts \
+  client/public/maps/tauron-arena_collision.glb \
+  client/public/maps/tauron-arena.meta.json --spacing 6 \
+  --ts shared/src/tauron-arena.spawns.ts --export TAURON_ARENA_SPAWNS
+```
+
+It casts down every column so multi-floor arenas (bowl tiers, concourses) all get spawn points.
+Without `--ts` it prints a `MapSpawn[]` JSON array to paste into `MAPS[id].spawns`; with `--ts` it
+writes a module (as `shared/src/tauron-arena.spawns.ts` is), which `shared/src/maps.ts` imports —
+re-run it after re-processing the map's collision GLB.
 
 ### Make it the active map
 

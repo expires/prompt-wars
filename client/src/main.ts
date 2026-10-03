@@ -54,6 +54,7 @@ game
     net,
     serverLabel: label,
     e2e,
+    shell: params.get('shell') === '1',
   })
   .catch((err) => {
     console.error(err);

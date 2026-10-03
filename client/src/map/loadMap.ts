@@ -81,7 +81,7 @@ export async function loadMap(
   url: string,
   physics: PhysicsContext,
   scene: THREE.Scene,
-  opts: { spawns?: Vec3[]; collisionUrl?: string } = {},
+  opts: { spawns?: Vec3[]; collisionUrl?: string; shell?: boolean } = {},
 ): Promise<GameMap> {
   const visual = await tryLoad(url);
   if (!visual) throw new Error(`Map not found: ${url}`);
@@ -111,6 +111,28 @@ export async function loadMap(
     `[map] ${url}: ${colliders.length} colliders from ${collisionScene ? 'collision GLB' : 'visual mesh'}, ${triangles} visual triangles`,
   );
 
+  // Neutral backdrop: render the (solidified) collision shell's back faces so holes in the photo
+  // scan read as solid walls instead of voids. polygonOffset pushes it behind the scan, so the
+  // texture wins wherever the scan actually has geometry; the shell only shows through gaps.
+  let shell: THREE.Object3D | null = null;
+  if (collisionScene && opts.shell !== false) {
+    const shellMat = new THREE.MeshBasicMaterial({ color: 0x707379, side: THREE.BackSide });
+    shellMat.polygonOffset = true;
+    shellMat.polygonOffsetFactor = 1;
+    shellMat.polygonOffsetUnits = 1;
+    collisionScene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      m.material = shellMat;
+      m.castShadow = false;
+      m.receiveShadow = false;
+      m.frustumCulled = true;
+    });
+    collisionScene.renderOrder = -1;
+    scene.add(collisionScene);
+    shell = collisionScene;
+  }
+
   const meta = await tryLoadMeta(metaUrlFor(url));
 
   const bb = new THREE.Box3().setFromObject(visual);
@@ -126,6 +148,7 @@ export async function loadMap(
     meta,
     dispose() {
       scene.remove(visual);
+      if (shell) scene.remove(shell);
       colliders.forEach((c) => physics.world.removeCollider(c, false));
     },
   };
