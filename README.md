@@ -205,6 +205,16 @@ open "http://localhost:5173/?server=local"
 | `?offline=1` | no server (`OfflineNetClient`, optional `?bots=3`, `?map=`) |
 | `?name=Alice` | display name (`set_name`) |
 | `?fresh=1` | ignore the stored token -> new identity |
+| `?music=0` | mute the procedural lobby music |
+
+### Lobby music
+
+The menus play **procedurally composed indie music** (`client/src/audio/Music.ts`) — no audio files.
+Each time it starts it randomises the key, mode (major/minor/dorian/lydian/pentatonic), tempo and
+chord progression, and re-rolls the arpeggio/melody every 4 bars, so it never quite repeats. Layers:
+soft pad chords, a plucked arpeggio, bass, brushed drums and a sparse lead, through a lowpass +
+feedback delay. It plays on the landing / pause / death / forge screens and fades out during a match;
+it honours the master volume and `?music=0`.
 
 The auth token lives in `sessionStorage`, so **each browser tab is a separate player** (a reload
 keeps your identity). Multiplayer plays the active map — `ACTIVE_MAP_ID` in `shared/src/maps.ts`,

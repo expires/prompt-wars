@@ -25,6 +25,7 @@ import { getSpawnPoints, pickRandomSpawn, type SpawnPoint } from '../map/spawns'
 import { PlayerController } from '../player/PlayerController';
 import { CameraRig } from '../player/CameraRig';
 import { Sfx } from '../audio/Sfx';
+import { Music } from '../audio/Music';
 import { settings } from '../settings';
 import { TargetDummies } from '../player/TargetDummies';
 import { TargetRegistry } from '../weapons/targets';
@@ -44,6 +45,8 @@ import { DamageNumbers } from '../ui/DamageNumbers';
 export const MAX_HP = 100;
 /** room between the scan's own bounds and the invisible wall net */
 const BOUNDS_MARGIN = 0.5;
+/** `?music=0` disables the procedural lobby music */
+const MUSIC_OFF = new URLSearchParams(location.search).get('music') === '0';
 
 export interface GameOptions {
   /** GLB url; omitted => procedural test map */
@@ -99,6 +102,7 @@ export class Game {
   readonly targets = new TargetRegistry();
   readonly rig = new CameraRig();
   readonly sfx = new Sfx();
+  readonly music = new Music();
   /** 0..1 ADS blend */
   ads = 0;
   /** test hook: force the melee block on / off (null = F / RB) */
@@ -869,6 +873,9 @@ export class Game {
     this.hud.update(dt);
 
     this.flow.update();
+    // lobby music: plays in the menus (landing / pause / death / forge), fades out during a match
+    if (!MUSIC_OFF && this.flow.screen !== 'none') this.music.play();
+    else this.music.stop();
     this.scoreAcc += dt;
     if (this.scoreAcc > 0.5) {
       this.scoreAcc = 0;
