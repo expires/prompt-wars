@@ -25,6 +25,8 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 page.on('pageerror', (e) => console.log('pageerror:', e.message));
 await page.goto(`${base}/?offline=1&e2e=1&fresh=1&map=testmap&name=MouseBench`);
 await page.waitForFunction(gameReadyInPage, null, { timeout: 120_000, polling: 250 });
+// a known floor spot on the test map (random spawns near the edge can fall out mid-run)
+await page.evaluate(() => window.__game.teleport(8, 0.1, -24, 0));
 await page.waitForTimeout(1500);
 console.log(`${which} ${await browser.version()}  ${base}`);
 for (const hz of rates) {
@@ -33,7 +35,8 @@ for (const hz of rates) {
     `${String(hz).padStart(5)} Hz: ${r.events} events (${r.eventsPerSec}/s)  sum dx ${r.sumX}  ` +
       `yaw err ${r.yawError.toExponential(2)} rad  pitch err ${r.pitchError.toExponential(2)}  ` +
       `${r.usPerEvent.toFixed(2)} us/event  fps ${r.fps}  frame p50 ${r.frameMsP50.toFixed(1)} p99 ${r.frameMsP99.toFixed(1)} max ${r.frameMsMax.toFixed(1)} ms` +
-      (r.perf ? `  [F3: ${r.perf.fps} fps, ${r.perf.mouseHz} ev/s]` : ''),
+      (r.perf ? `  [F3: ${r.perf.fps} fps, ${r.perf.mouseHz} ev/s]` : '') +
+      (r.inactiveFrames ? `  (${r.inactiveFrames} frames dead / unlocked: input discarded, screen ${r.screen})` : ''),
   );
 }
 await browser.close();
