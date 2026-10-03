@@ -11,7 +11,8 @@ Binding for every card.
   Cards may add or update specs there. Name the spec in the card summary so a human can run
   `pnpm e2e --grep <name>`.
 - Never hand-edit `pnpm-lock.yaml`. When a card needs a dependency, add it to the right package's
-  `package.json` with a caret range; verify installs it and a human commits the lockfile.
+  `package.json` with a caret range. Verify's install regenerates the lockfile, and that generated
+  `pnpm-lock.yaml` change is EXPECTED in the diff. Reviewers must not request changes for it.
 - Node scripts under `client/scripts/` run directly on Node 26 with native type stripping:
   use only erasable TS syntax (no enums, namespaces or parameter properties) and import local
   files with an explicit `.ts` extension. Test them with `node:test` + `node:assert/strict` in
