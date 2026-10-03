@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { MAPS, findMapDef, mapSource } from '../maps';
-import { accessStairs, buildArenaGeometry, type ArenaGeometry, type Prop } from './geometry';
+import { STAGE, accessStairs, buildArenaGeometry, type ArenaGeometry, type Prop } from './geometry';
 import {
   A_D0,
   A_END,
@@ -37,7 +37,7 @@ import {
   columnPoint,
   layout,
 } from './layout';
-import { TAURON_REMAKE_SPAWNS } from './spawns';
+import { TAURON_REMAKE_PICKUPS, TAURON_REMAKE_SPAWNS } from './spawns';
 
 // ------------------------------------------------------------------ tiny BVH raycaster
 
@@ -275,6 +275,27 @@ describe('tauron-remake spawns', () => {
       }
     }
     expect(bad).toEqual([]);
+  });
+});
+
+describe('tauron-remake pickups', () => {
+  it('the health pack sits in the middle of the stage deck, on its top surface, with room around it', () => {
+    expect(TAURON_REMAKE_PICKUPS.length).toBe(1);
+    const p = TAURON_REMAKE_PICKUPS[0]!;
+    expect(p.kind).toBe('health');
+    expect(p.x).toBeCloseTo((STAGE.x0 + STAGE.x1) / 2);
+    expect(p.z).toBeCloseTo((STAGE.z0 + STAGE.z1) / 2);
+    expect(p.y).toBeCloseTo(STAGE.h);
+    const g = groundAt(p.x, p.z, p.y + 1.0);
+    expect(g).toBeTruthy();
+    expect(Math.abs(g!.y - p.y)).toBeLessThan(0.02);
+    // nothing solid around the pack up to head height (players can walk onto it)
+    for (const h of [0.3, 0.9, 1.5]) {
+      for (let a = 0; a < 8; a++) {
+        const dir = [Math.cos((a * Math.PI) / 4), 0, Math.sin((a * Math.PI) / 4)];
+        expect(solid.ray([p.x, p.y + h, p.z], dir, 1.2), `blocked at ${h} m dir ${a}`).toBeFalsy();
+      }
+    }
   });
 });
 

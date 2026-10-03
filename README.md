@@ -80,6 +80,13 @@ On init / every connect (`seedWorld`, idempotent): 14 preset weapons (one per cl
 parts get their class's first recipe) and the 8 TEST MAP spawn points (`TEST_MAP_SPAWN_POINTS` in
 `@ai-gaem/shared`, also used by the client's test map; the old placeholder ring is migrated
 automatically). It also deletes any leftover `tick_timer` rows (the old always-on 4 Hz tick).
+
+**Pickups**: the active map's `MapDef.pickups` (tauron-remake: one health pack in the middle of the
+stage) are synced into the public `pickup` table the same way. `take_pickup(id)` (the client calls it
+when the local player overlaps a pack) checks the caller's server pose (1.5 m) and HP < 100, heals +50
+(capped), marks it unavailable and schedules a one-shot `pickup_timer` row that brings it back after
+`respawnSecs` (60 s); `pickup_event` drives the heal feedback. Tests shorten the delay with the admin
+reducer `set_pickup_respawn <seconds>` (see `client/e2e/pickups.spec.ts`; reset it to 60 afterwards).
 New players start **forging**: `alive = false`, no weapon, `needsLoadout = true`; `respawn` is refused
 until they `register_design` (or `equip_weapon` a preset). Respawning without "keep loadout" still rolls
 a random preset. See "Forge" below.

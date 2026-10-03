@@ -129,6 +129,7 @@ export class Hud {
   private readonly hitFlash = el('div', 'hud-hitflash');
   /** kill hit-stop flash (brief contrast pop) */
   private readonly hitStopFx = el('div', 'hud-hitstop');
+  private readonly healFlashFx = el('div', 'hud-healflash');
   /** screen-edge vignettes for elemental status (orange flames / frost) */
   private readonly burnFx = el('div', 'hud-burn');
   private readonly chillFx = el('div', 'hud-chill');
@@ -226,7 +227,7 @@ export class Hud {
     topLeft.append(this.netEl, this.debugEl);
 
     this.frame.append(health, ammo, topLeft, this.killfeed.root, this.scoreboard.root, this.spawnEditorEl);
-    this.root.append(this.scope, this.lowHp, this.burnFx, this.chillFx, this.poisonFx, this.hitFlash, this.hitStopFx, this.numbersLayer, this.center, this.frame);
+    this.root.append(this.scope, this.lowHp, this.burnFx, this.chillFx, this.poisonFx, this.hitFlash, this.healFlashFx, this.hitStopFx, this.numbersLayer, this.center, this.frame);
     parent.append(this.root, this.toasts.root);
 
     this.setHealth(100);
@@ -466,6 +467,15 @@ export class Hud {
   }
 
   // ------------------------------------------------------------------ damage
+
+  /** green screen-edge flash (health pack) */
+  healFlash() {
+    const s = this.healFlashFx.style;
+    s.setProperty('--vi', String(settings.current.vignetteIntensity));
+    this.healFlashFx.classList.remove('is-on');
+    void this.healFlashFx.offsetWidth;
+    this.healFlashFx.classList.add('is-on');
+  }
 
   damageFlash() {
     const s = this.hitFlash.style;

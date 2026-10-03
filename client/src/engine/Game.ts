@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import {
+  ACTIVE_MAP_ID,
   BLOCK_MOVE_MULT,
+  mapPickups,
   PRESET_WEAPONS,
   findMapDef,
   computeWeaponStats,
@@ -20,6 +22,7 @@ import { addBoundsColliders, expandBox, type BoundsBox } from '../map/bounds';
 import { findGroundSpawns, loadMap } from '../map/loadMap';
 import { bakeSpawns } from '../map/bakeSpawns';
 import { PropSystem } from '../props/PropSystem';
+import { PickupSystem } from '../props/Pickups';
 import { TEST_MAP_PROPS, type PropSpawn } from '../props/propDefs';
 import type { GameMap, Vec3 } from '../map/types';
 import { getSpawnPoints, pickRandomSpawn, type SpawnPoint } from '../map/spawns';
@@ -102,6 +105,7 @@ export class Game {
   remotes!: RemotePlayers;
   dummies?: TargetDummies;
   props!: PropSystem;
+  pickups!: PickupSystem;
   spawnEditor!: SpawnEditor;
   readonly targets = new TargetRegistry();
   readonly rig = new CameraRig();
@@ -340,6 +344,29 @@ export class Game {
     }
     this.remotes = new RemotePlayers(this.net, this.physics, this.rc.scene, this.targets);
     this.remotes.fx = this.weapons.effects;
+
+    // ---- pickups (health pack on the stage): server rows online (seeded from the active map),
+    // the map's own list offline ----
+    const pickupDef = this.map.id !== 'testmap' ? findMapDef(url) : undefined;
+    const pickupDefs = mapPickups(pickupDef);
+    this.pickups = new PickupSystem(this.rc.scene, this.net, pickupDefs, pickupDefs.length > 0 && (!online || pickupDef?.id === ACTIVE_MAP_ID));
+    this.pickups.onLocalHeal = (amount) => {
+      this.hp = Math.min(MAX_HP, this.hp + amount);
+      this.hud.setHealth(this.hp);
+    };
+    this.pickups.onTaken = ({ e, local }) => {
+      if (!local) {
+        this.sfx.heal(new THREE.Vector3(...e.pos));
+        return;
+      }
+      this.sfx.heal();
+      this.hud.healFlash();
+      // "+50" floats in front of the camera (the pack itself is below the view)
+      const cam = this.rc.camera;
+      const at = cam.position.clone().addScaledVector(cam.getWorldDirection(new THREE.Vector3()), 1.8);
+      at.y -= 0.45;
+      this.damageNumbers.add('heal:local', e.amount, at, { heal: true });
+    };
     this.net.onKill?.((e) => {
       const me = this.net.localId;
       const killer = e.killerId === me ? 'You' : e.killerName;
@@ -934,6 +961,7 @@ export class Game {
     this.updateCrosshair();
     this.dummies?.update(dt, this.rc.camera);
     this.props.update(dt);
+    this.pickups.update(dt, { feet: player.feet, hp: this.hp, alive: this.alive });
     this.remotes.update(dt, now);
     this.damageNumbers.update(vdt, cam, (id) => this.remotes.headOf(id));
     this.hud.update(dt);

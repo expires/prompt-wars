@@ -72,6 +72,36 @@ export const HitReport = __t.object("HitReport", {
 });
 export type HitReport = __Infer<typeof HitReport>;
 
+export const Pickup = __t.object("Pickup", {
+  id: __t.u32(),
+  kind: __t.string(),
+  x: __t.f32(),
+  y: __t.f32(),
+  z: __t.f32(),
+  available: __t.bool(),
+  respawnAt: __t.timestamp(),
+  respawnSecs: __t.f32(),
+});
+export type Pickup = __Infer<typeof Pickup>;
+
+export const PickupEvent = __t.object("PickupEvent", {
+  who: __t.identity(),
+  pickupId: __t.u32(),
+  kind: __t.string(),
+  amount: __t.f32(),
+  x: __t.f32(),
+  y: __t.f32(),
+  z: __t.f32(),
+});
+export type PickupEvent = __Infer<typeof PickupEvent>;
+
+export const PickupTimer = __t.object("PickupTimer", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+  pickupId: __t.u32(),
+});
+export type PickupTimer = __Infer<typeof PickupTimer>;
+
 export const Player = __t.object("Player", {
   identity: __t.identity(),
   name: __t.string(),

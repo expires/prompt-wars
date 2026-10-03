@@ -457,6 +457,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
 .hud-hitflash::before { content: ''; position: absolute; inset: 0; box-shadow: inset 0 0 calc(180 * var(--u)) calc(40 * var(--u)) rgba(255, 40, 60, 0.9); opacity: 0; }
 .hud-hitflash.is-on::before { animation: hud-hitflash 300ms var(--ease-out); }
 @keyframes hud-hitflash { from { opacity: 1; } to { opacity: 0; } }
+.hud-healflash { position: absolute; inset: 0; opacity: calc(0.7 * var(--vignette-intensity, 1)); pointer-events: none; }
+.hud-healflash::before { content: ''; position: absolute; inset: 0; box-shadow: inset 0 0 calc(200 * var(--u)) calc(50 * var(--u)) rgba(60, 235, 130, 0.85); opacity: 0; }
+.hud-healflash.is-on::before { animation: hud-hitflash 520ms var(--ease-out); }
 .hud-lowhp { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 42%, rgba(140, 0, 16, 0.45) 72%, rgba(70, 0, 8, 0.9) 100%); transition: opacity var(--t-slow) var(--ease-out); }
 .hud-lowhp > i { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 50%, rgba(200, 0, 24, 0.5) 100%); }
 .hud-lowhp.is-beat > i { animation: hud-beat 1.05s linear infinite; }
@@ -487,6 +490,7 @@ html.reduced-motion .hud-lowhp.is-beat > i, html.reduced-motion .hud-health__pla
 .dmg-num.headshot::before { content: '◆'; display: inline-block; margin-right: 0.15em; font-size: 0.55em; vertical-align: 0.35em; }
 .dmg-num.kill { color: var(--kill); font-size: max(26px, calc(42 * var(--u))); }
 @keyframes dn-pop { from { scale: 1.4; } to { scale: 1; } }
+.dmg-num.heal { color: var(--hp-hi); font-size: max(26px, calc(40 * var(--u))); }
 
 /* ------------------------------------------------------------------ toasts (outside .hud: survive setVisible(false)) */
 .hud-toasts {

@@ -158,6 +158,28 @@ export interface ForgedInfo {
   uses: number;
 }
 
+/** A map pickup (health pack) as the server has it (`pickup` table). */
+export interface NetPickup {
+  id: number;
+  kind: string;
+  /** feet-level anchor (the surface it sits on) */
+  pos: Vec3;
+  available: boolean;
+  /** ms since epoch when a taken pickup comes back (0 while available) */
+  respawnAt: number;
+}
+
+/** Someone took a pickup (`pickup_event`). */
+export interface PickupTakenEvent {
+  /** player id of the taker */
+  who: string;
+  id: number;
+  kind: string;
+  /** HP gained */
+  amount: number;
+  pos: Vec3;
+}
+
 export interface GenerateWeaponResult {
   ok: boolean;
   weaponId: string;
@@ -233,6 +255,14 @@ export interface NetClient {
   onHitConfirmed?(cb: (e: HitConfirmEvent) => void): () => void;
   /** fires when a weapon definition arrives/changes */
   onWeaponsChanged?(cb: () => void): () => void;
+  /** map pickups (server-authoritative clients; offline the game simulates them) */
+  pickups?(): NetPickup[];
+  /** fires with all pickups whenever a pickup row changes */
+  onPickupsChanged?(cb: (list: NetPickup[]) => void): () => void;
+  /** collect a pickup the local player overlaps (server validates reach / HP) */
+  takePickup?(id: number): void;
+  /** someone (incl. the local player) took a pickup */
+  onPickupTaken?(cb: (e: PickupTakenEvent) => void): () => void;
   /** current local player state, if known */
   getLocal?(): NetPlayer | undefined;
   /** look up weapon definitions by id (for remote player models) */

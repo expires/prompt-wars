@@ -9,7 +9,7 @@
 // last <= 250 ms) against the *stored* weapon stats.
 //
 // Cost notes: there is no always-on scheduled reducer (pose_flush only runs while someone
-// moves). Damage-over-time uses a per-victim `dot_timer` row that exists only while a DoT is active; slows expire client-side from
+// moves). Pickups respawn through a one-shot `pickup_timer` row per taken pickup. Damage-over-time uses a per-victim `dot_timer` row that exists only while a DoT is active; slows expire client-side from
 // `slowUntil`; expired `shot` rows are cleaned up inside `fire` for that shooter.
 
 import { schema, table, t, SenderError, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
@@ -74,6 +74,12 @@ import {
   type PoseFloats,
   censorText,
   normalizePrompt,
+  mapPickups,
+  healAmount,
+  pickupInReach,
+  clampRespawnSeconds,
+  PICKUP_RESPAWN_SECONDS,
+  PICKUP_SERVER_RADIUS,
 } from '@ai-gaem/shared';
 import { PART_CATALOG, PART_RECIPES } from './catalog.generated';
 
@@ -409,6 +415,52 @@ const forgedPrompt = table(
   },
 );
 
+/**
+ * Map pickups (health packs), seeded from the active map's MapDef.pickups (id = 1-based index).
+ * Taking one sets available = false and schedules a one-shot `pickup_timer` row that brings it
+ * back at respawnAt (no always-on tick).
+ */
+const pickup = table(
+  { name: 'pickup', public: true },
+  {
+    id: t.u32().primaryKey(),
+    /** 'health' */
+    kind: t.string(),
+    x: t.f32(),
+    y: t.f32(),
+    z: t.f32(),
+    available: t.bool(),
+    /** when a taken pickup comes back (EPOCH while available) */
+    respawnAt: t.timestamp(),
+    /** respawn delay (PICKUP_RESPAWN_SECONDS; set_pickup_respawn shortens it for tests) */
+    respawnSecs: t.f32(),
+  },
+);
+
+/** One-shot respawn of a taken pickup (exists only while it is unavailable). */
+const pickupTimer = table(
+  { name: 'pickup_timer' },
+  {
+    scheduledId: t.u64().primaryKey().autoInc(),
+    scheduledAt: t.scheduleAt(),
+    pickupId: t.u32().unique(),
+  },
+);
+
+/** Broadcast: `who` took pickup `pickupId` and gained `amount` HP (client feedback). */
+const pickupEvent = table(
+  { name: 'pickup_event', public: true, event: true },
+  {
+    who: t.identity(),
+    pickupId: t.u32(),
+    kind: t.string(),
+    amount: t.f32(),
+    x: t.f32(),
+    y: t.f32(),
+    z: t.f32(),
+  },
+);
+
 const spacetimedb = schema({
   player,
   playerPose,
@@ -425,6 +477,9 @@ const spacetimedb = schema({
   tickTimer,
   dotTimer,
   forgedPrompt,
+  pickup,
+  pickupTimer,
+  pickupEvent,
 });
 export default spacetimedb;
 
@@ -723,10 +778,43 @@ function seedWorld(ctx: Ctx) {
     for (const p of points) ctx.db.spawnPoint.id.delete(p.id);
     for (const sp of activeSpawns) ctx.db.spawnPoint.insert({ id: 0n, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw });
   }
+  syncPickups(ctx);
   // Migration: the old always-on 4 Hz tick is gone.
   for (const row of [...ctx.db.tickTimer.iter()]) ctx.db.tickTimer.scheduledId.delete(row.scheduledId);
   // Migration: poses moved to the quantized `pose` table (+ private pose_state).
   for (const row of [...ctx.db.playerPose.iter()]) ctx.db.playerPose.slot.delete(row.slot);
+}
+
+/**
+ * Keep the pickup rows in sync with the active map (idempotent; runs with seedWorld on init and
+ * every connect, which also seeds a database that pre-dates the table). A row whose position /
+ * kind changed is reset to available; a taken pickup whose timer is missing (or overdue) is
+ * brought back so it can never get stuck.
+ */
+function syncPickups(ctx: Ctx) {
+  const want = mapPickups(activeMap());
+  const keep = new Set<number>();
+  want.forEach((d, i) => {
+    const id = i + 1;
+    keep.add(id);
+    const cur = ctx.db.pickup.id.find(id);
+    if (!cur) {
+      ctx.db.pickup.insert({ id, kind: d.kind, x: d.x, y: d.y, z: d.z, available: true, respawnAt: EPOCH, respawnSecs: PICKUP_RESPAWN_SECONDS });
+      return;
+    }
+    const moved = cur.kind !== d.kind || Math.abs(cur.x - d.x) > 1e-3 || Math.abs(cur.y - d.y) > 1e-3 || Math.abs(cur.z - d.z) > 1e-3;
+    const timer = ctx.db.pickupTimer.pickupId.find(id);
+    const stuck = !cur.available && (!timer || micros(ctx.timestamp) > micros(cur.respawnAt) + 5_000_000n);
+    if (moved || stuck) {
+      if (timer) ctx.db.pickupTimer.scheduledId.delete(timer.scheduledId);
+      ctx.db.pickup.id.update({ ...cur, kind: d.kind, x: d.x, y: d.y, z: d.z, available: true, respawnAt: EPOCH });
+    }
+  });
+  for (const row of [...ctx.db.pickup.iter()]) {
+    if (keep.has(row.id)) continue;
+    ctx.db.pickupTimer.pickupId.delete(row.id);
+    ctx.db.pickup.id.delete(row.id);
+  }
 }
 
 /** Parts for a weapon that has none (no LLM, or the LLM only used unknown ids): a random class recipe. */
@@ -1309,6 +1397,50 @@ export const register_weapon = spacetimedb.reducer(
     insertWeapon(ctx, ctx.sender, w, censorText(prompt), false);
   },
 );
+
+// ---------------------------------------------------------------------------
+// Pickups
+// ---------------------------------------------------------------------------
+
+/**
+ * Collect a pickup (the client calls this once when the local player overlaps it). Validated
+ * against the caller's current server pose (PICKUP_SERVER_RADIUS, generous for latency); a health
+ * pack heals HEALTH_PACK_HEAL capped at MAX_HP and is only consumed when the caller is hurt.
+ * Respawns after the pickup's respawnSecs via a one-shot pickup_timer row.
+ */
+export const take_pickup = spacetimedb.reducer({ id: t.u32() }, (ctx, { id }) => {
+  const p = requirePlayer(ctx);
+  if (!p.alive) return;
+  const pk = ctx.db.pickup.id.find(id);
+  if (!pk || !pk.available) return;
+  const s = ctx.db.poseState.identity.find(ctx.sender);
+  if (!s || !s.alive) return;
+  if (!pickupInReach(s, pk, PICKUP_SERVER_RADIUS)) throw new SenderError('too far from the pickup');
+  const amount = pk.kind === 'health' ? healAmount(p.hp) : 0;
+  if (amount <= 0) return; // full HP: leave it for someone who needs it
+  ctx.db.player.identity.update({ ...p, hp: Math.min(MAX_HP, p.hp + amount) });
+  const secs = clampRespawnSeconds(pk.respawnSecs);
+  const respawnAt = addSeconds(ctx.timestamp, secs);
+  ctx.db.pickup.id.update({ ...pk, available: false, respawnAt });
+  ctx.db.pickupTimer.pickupId.delete(id);
+  ctx.db.pickupTimer.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.time(micros(respawnAt)), pickupId: id });
+  ctx.db.pickupEvent.insert({ who: ctx.sender, pickupId: id, kind: pk.kind, amount, x: pk.x, y: pk.y, z: pk.z });
+});
+
+/** One-shot (pickup_timer): the taken pickup is available again. */
+export const pickup_respawn = spacetimedb.reducer({ onSchedule: pickupTimer }, { timer: pickupTimer.rowType }, (ctx, { timer }) => {
+  requireScheduler(ctx);
+  ctx.db.pickupTimer.scheduledId.delete(timer.scheduledId);
+  const pk = ctx.db.pickup.id.find(timer.pickupId);
+  if (pk && !pk.available) ctx.db.pickup.id.update({ ...pk, available: true, respawnAt: EPOCH });
+});
+
+/** Admin (tests): respawn delay of every pickup in seconds (clamped 1..600; production = 60). */
+export const set_pickup_respawn = spacetimedb.reducer({ seconds: t.f32() }, (ctx, { seconds }) => {
+  requireAdmin(ctx);
+  const secs = clampRespawnSeconds(seconds);
+  for (const pk of [...ctx.db.pickup.iter()]) ctx.db.pickup.id.update({ ...pk, respawnSecs: secs });
+});
 
 // ---------------------------------------------------------------------------
 // Map editing

@@ -21,6 +21,8 @@ import RespawnReducer from "../respawn_reducer";
 import SetApiKeyReducer from "../set_api_key_reducer";
 import SetLlmModelReducer from "../set_llm_model_reducer";
 import SetNameReducer from "../set_name_reducer";
+import SetPickupRespawnReducer from "../set_pickup_respawn_reducer";
+import TakePickupReducer from "../take_pickup_reducer";
 import UpdateTransformReducer from "../update_transform_reducer";
 import UseForgedReducer from "../use_forged_reducer";
 
@@ -39,6 +41,8 @@ export type RespawnParams = __Infer<typeof RespawnReducer>;
 export type SetApiKeyParams = __Infer<typeof SetApiKeyReducer>;
 export type SetLlmModelParams = __Infer<typeof SetLlmModelReducer>;
 export type SetNameParams = __Infer<typeof SetNameReducer>;
+export type SetPickupRespawnParams = __Infer<typeof SetPickupRespawnReducer>;
+export type TakePickupParams = __Infer<typeof TakePickupReducer>;
 export type UpdateTransformParams = __Infer<typeof UpdateTransformReducer>;
 export type UseForgedParams = __Infer<typeof UseForgedReducer>;
 

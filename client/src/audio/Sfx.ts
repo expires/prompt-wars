@@ -288,6 +288,18 @@ export class Sfx {
     this.noiseBurst(c, dest, t, 'bandpass', 3500, 2, 0.05, 1);
   }
 
+  /** health pack: bright rising arpeggio + airy shimmer (pos: someone else's pickup, attenuated) */
+  heal(pos?: THREE.Vector3) {
+    const c = this.ready();
+    if (!c) return;
+    const dest = this.out(c, pos ? 0.22 : 0.38, pos);
+    if (!dest) return;
+    const t = c.currentTime;
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => this.tone(c, dest, t + i * 0.055, f, f, 0.32, 0.4, 'triangle'));
+    this.tone(c, dest, t + 0.22, 2093, 2093, 0.4, 0.12);
+    this.noiseBurst(c, dest, t, 'highpass', 6000, 0.7, 0.3, 0.12, 0.03);
+  }
+
   dryFire() {
     const c = this.ready();
     if (!c) return;

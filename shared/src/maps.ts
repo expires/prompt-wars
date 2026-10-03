@@ -1,8 +1,9 @@
 import { TEST_MAP_SPAWN_POINTS } from './net';
 import { TAURON_ARENA_SPAWNS } from './tauron-arena.spawns';
-import { TAURON_REMAKE_SPAWNS } from './tauronRemake/spawns';
+import { TAURON_REMAKE_PICKUPS, TAURON_REMAKE_SPAWNS } from './tauronRemake/spawns';
+import type { MapPickup } from './pickups';
 
-export { TAURON_ARENA_SPAWNS, TAURON_REMAKE_SPAWNS };
+export { TAURON_ARENA_SPAWNS, TAURON_REMAKE_SPAWNS, TAURON_REMAKE_PICKUPS };
 
 export interface MapSpawn {
   x: number;
@@ -20,6 +21,8 @@ export interface MapDef {
   spawns: readonly MapSpawn[];
   bounds?: { min: [number, number, number]; max: [number, number, number] };
   killY?: number;
+  /** health packs etc. (server seeds one `pickup` row each for the active map) */
+  pickups?: readonly MapPickup[];
 }
 
 export const MAPS: Record<string, MapDef> = {
@@ -49,6 +52,7 @@ export const MAPS: Record<string, MapDef> = {
     url: null,
     procedural: true,
     spawns: TAURON_REMAKE_SPAWNS,
+    pickups: TAURON_REMAKE_PICKUPS,
     bounds: { min: [-68.6, 0, -55.6], max: [68.6, 30, 55.6] },
     killY: -20,
   },
@@ -95,4 +99,9 @@ export function findMapDef(source: string | undefined): MapDef | undefined {
 
 export function effectiveSpawns(def: MapDef): readonly MapSpawn[] {
   return def.spawns.length > 0 ? def.spawns : TEST_MAP_SPAWN_POINTS;
+}
+
+/** pickups of a map (none when it defines none) */
+export function mapPickups(def: MapDef | undefined): readonly MapPickup[] {
+  return def?.pickups ?? [];
 }

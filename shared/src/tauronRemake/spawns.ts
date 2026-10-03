@@ -5,6 +5,15 @@
  */
 import { A_D0, A_ROW_D, C_D0, C_ROW_D, LEVEL_B, aSeatTop, cSeatTop, columnPoint, layout, type Column } from './layout';
 
+/**
+ * Health pack in the middle of the central stage deck (STAGE in geometry.ts: x/z centre (0, 0),
+ * deck top 1.2 m; kept as literals so the server bundle doesn't pull in the mesher, checked by
+ * tauronRemake.test.ts). Clear of the stage spawn at (-2, 1.2, 2) (~2.8 m away).
+ */
+export const TAURON_REMAKE_PICKUPS: readonly { kind: 'health'; x: number; y: number; z: number }[] = [
+  { kind: 'health', x: 0, y: 1.2, z: 0 },
+];
+
 export interface RemakeSpawn {
   x: number;
   y: number;

@@ -49,6 +49,8 @@ import RespawnReducer from "./respawn_reducer";
 import SetApiKeyReducer from "./set_api_key_reducer";
 import SetLlmModelReducer from "./set_llm_model_reducer";
 import SetNameReducer from "./set_name_reducer";
+import SetPickupRespawnReducer from "./set_pickup_respawn_reducer";
+import TakePickupReducer from "./take_pickup_reducer";
 import UpdateTransformReducer from "./update_transform_reducer";
 import UseForgedReducer from "./use_forged_reducer";
 
@@ -58,6 +60,8 @@ import * as GenerateWeaponProcedure from "./generate_weapon_procedure";
 // Import all table schema definitions
 import ForgedPromptRow from "./forged_prompt_table";
 import HitEventRow from "./hit_event_table";
+import PickupRow from "./pickup_table";
+import PickupEventRow from "./pickup_event_table";
 import PlayerRow from "./player_table";
 import PlayerPoseRow from "./player_pose_table";
 import PoseRow from "./pose_table";
@@ -91,6 +95,25 @@ const tablesSchema = __schema({
     ],
     event: true,
   }, HitEventRow),
+  pickup: __table({
+    name: 'pickup',
+    indexes: [
+      { accessor: 'id', name: 'pickup_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'pickup_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PickupRow),
+  pickupEvent: __table({
+    name: 'pickup_event',
+    indexes: [
+    ],
+    constraints: [
+    ],
+    event: true,
+  }, PickupEventRow),
   player: __table({
     name: 'player',
     indexes: [
@@ -176,6 +199,8 @@ const reducersSchema = __reducers(
   __reducerSchema("set_api_key", SetApiKeyReducer),
   __reducerSchema("set_llm_model", SetLlmModelReducer),
   __reducerSchema("set_name", SetNameReducer),
+  __reducerSchema("set_pickup_respawn", SetPickupRespawnReducer),
+  __reducerSchema("take_pickup", TakePickupReducer),
   __reducerSchema("update_transform", UpdateTransformReducer),
   __reducerSchema("use_forged", UseForgedReducer),
 );

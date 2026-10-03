@@ -36,7 +36,7 @@ export class DamageNumbers {
     targetId: string,
     damage: number,
     at: THREE.Vector3,
-    opts: { headshot?: boolean; killed?: boolean; element?: string | null; dot?: boolean } = {},
+    opts: { headshot?: boolean; killed?: boolean; element?: string | null; dot?: boolean; heal?: boolean } = {},
   ) {
     const dot = !!opts.dot;
     let e = this.entries.find((x) => x.targetId === targetId && x.age < AGGREGATE_S && x.dot === dot);
@@ -51,13 +51,14 @@ export class DamageNumbers {
       el.dataset.testid = 'dmg-num';
       this.parent.append(el);
       if (dot) el.classList.add('dot');
+      if (opts.heal) el.classList.add('heal');
       e = { el, targetId, total: 0, age: 0, anchor: at.clone(), rise: 0, dot, drift: (Math.random() - 0.5) * 40 };
       this.entries.push(e);
     }
     e.total += damage;
     e.age = 0;
     e.anchor.copy(at);
-    e.el.textContent = String(Math.round(e.total));
+    e.el.textContent = opts.heal ? `+${Math.round(e.total)}` : String(Math.round(e.total));
     if (opts.headshot) e.el.classList.add('headshot');
     if (opts.killed) e.el.classList.add('kill');
     if (opts.element && !e.el.classList.contains(`el-${opts.element}`)) e.el.classList.add(`el-${opts.element}`);

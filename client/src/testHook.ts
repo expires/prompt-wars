@@ -128,6 +128,9 @@ function getState(game: Game) {
     hitmarker: ready ? (document.querySelector('[data-testid=hitmarker]')?.className ?? '') : '',
     killConfirm: ready ? game.hud.killConfirmVisible : false,
     damageNumbers: ready ? game.damageNumbers.snapshot() : [],
+    /** map pickups (health packs) as this client sees them, and how many take events it handled */
+    pickups: ready && game.pickups ? game.pickups.snapshot() : [],
+    pickupEvents: ready && game.pickups ? game.pickups.taken : 0,
     /** crouch flag of our own pose row as the server has it */
     serverCrouching: (ready && game.net.getPose?.(game.net.localId)?.crouching) || false,
     ready,

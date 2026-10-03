@@ -13,8 +13,10 @@ import type {
   LocalHitEvent,
   LocalPose,
   NetClient,
+  NetPickup,
   NetPlayer,
   NetStats,
+  PickupTakenEvent,
   PoseSnapshot,
   ShotEvent,
   Vec3,
@@ -58,6 +60,16 @@ interface WeaponRow {
   prompt?: string;
   ownerIdentity?: Identity;
   weaponClass?: string;
+}
+
+interface PickupRow {
+  id: number;
+  kind: string;
+  x: number;
+  y: number;
+  z: number;
+  available: boolean;
+  respawnAt: { toMillis(): bigint };
 }
 
 interface ForgedRow {
@@ -121,7 +133,7 @@ function toSnapshot(row: PoseRow, arrival: number): PoseSnapshot {
  * every browser tab is its own player (reloading a tab keeps the identity; `?fresh=1` forces a
  * new one).
  *
- * Subscriptions: player, pose, spawn_point, the two event tables and preset weapons;
+ * Subscriptions: player, pose, spawn_point, pickup, the event tables and preset weapons;
  * other weapon rows are subscribed on demand when someone equips them.
  */
 export class SpacetimeNetClient implements NetClient {
@@ -154,6 +166,8 @@ export class SpacetimeNetClient implements NetClient {
   private localHitCbs: Listener<LocalHitEvent>[] = [];
   private confirmCbs: Listener<HitConfirmEvent>[] = [];
   private weaponCbs: Listener<void>[] = [];
+  private pickupCbs: Listener<NetPickup[]>[] = [];
+  private pickupTakenCbs: Listener<PickupTakenEvent>[] = [];
   private emitScheduled = false;
 
   constructor(private readonly opts: SpacetimeNetOptions) {}
@@ -221,6 +235,7 @@ export class SpacetimeNetClient implements NetClient {
               for (const r of conn.db.pose.iter()) this.onPoseRow(r as PoseRow);
               for (const r of conn.db.forgedPrompt.iter()) this.cacheForged(r as ForgedRow);
               if (this.opts.name) this.setName(this.opts.name);
+              this.emitPickups();
               tryReady();
             })
             .onError(() => done(new Error('subscription error')))
@@ -231,6 +246,8 @@ export class SpacetimeNetClient implements NetClient {
               tables.shotEvent,
               tables.hitEvent,
               tables.forgedPrompt,
+              tables.pickup,
+              tables.pickupEvent,
               tables.weapon.where((w) => w.isPreset.eq(true)),
               // our own weapons (register_design results show up here right away)
               tables.weapon.where((w) => w.ownerIdentity.eq(identity)),
@@ -314,6 +331,14 @@ export class SpacetimeNetClient implements NetClient {
     db.forgedPrompt.onInsert((_ctx, row) => this.onForgedRow(row as ForgedRow));
     db.forgedPrompt.onUpdate((_ctx, _old, row) => this.onForgedRow(row as ForgedRow));
 
+    db.pickup.onInsert(() => this.emitPickups());
+    db.pickup.onUpdate(() => this.emitPickups());
+    db.pickup.onDelete(() => this.emitPickups());
+    db.pickupEvent.onInsert((_ctx, e) => {
+      const ev: PickupTakenEvent = { who: e.who.toHexString(), id: e.pickupId, kind: e.kind, amount: e.amount, pos: [e.x, e.y, e.z] };
+      this.pickupTakenCbs.forEach((cb) => cb(ev));
+    });
+
     db.weapon.onInsert((_ctx, row) => this.cacheWeapon(row as WeaponRow));
     db.weapon.onUpdate((_ctx, _old, row) => this.cacheWeapon(row as WeaponRow));
 
@@ -362,6 +387,36 @@ export class SpacetimeNetClient implements NetClient {
         this.killCbs.forEach((cb) => cb(kill));
       }
     });
+  }
+
+  pickups(): NetPickup[] {
+    if (!this.conn) return [];
+    const out: NetPickup[] = [];
+    for (const r of this.conn.db.pickup.iter() as Iterable<PickupRow>) {
+      out.push({ id: r.id, kind: r.kind, pos: [r.x, r.y, r.z], available: r.available, respawnAt: r.available ? 0 : ms(r.respawnAt) });
+    }
+    return out.sort((a, b) => a.id - b.id);
+  }
+
+  private emitPickups() {
+    if (!this.pickupCbs.length) return;
+    const list = this.pickups();
+    this.pickupCbs.forEach((cb) => cb(list));
+  }
+
+  onPickupsChanged(cb: Listener<NetPickup[]>) {
+    this.pickupCbs.push(cb);
+    if (this.connected) cb(this.pickups());
+    return () => (this.pickupCbs = this.pickupCbs.filter((c) => c !== cb));
+  }
+
+  onPickupTaken(cb: Listener<PickupTakenEvent>) {
+    this.pickupTakenCbs.push(cb);
+    return () => (this.pickupTakenCbs = this.pickupTakenCbs.filter((c) => c !== cb));
+  }
+
+  takePickup(id: number) {
+    this.call('take_pickup', this.conn?.reducers.takePickup({ id }));
   }
 
   private cacheForged(r: ForgedRow) {
