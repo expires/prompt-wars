@@ -20,6 +20,7 @@ import {
   type OutfitPiece,
 } from '@ai-gaem/shared';
 import { expandMacros } from '@ai-gaem/shared/forge/macros';
+import { MIN_BODY_LIGHTNESS, lightness, refinePalette, withLightness } from '@ai-gaem/shared/forge/refine';
 import { OUTFIT_EXAMPLES, OUTFIT_PRESETS } from '@ai-gaem/shared/outfit/examples';
 import { mulberry32 } from './mock';
 
@@ -156,6 +157,8 @@ export class OutfitAssembler {
     const preview = sanitizeOutfit({ ...rest, body: rest.body ?? prev?.body, palette: rest.palette ?? prev?.palette, pieces: [] }).outfit;
     preview.name = censorText(preview.name);
     preview.theme = censorText(preview.theme);
+    // readability: no near-black suits (they vanish in the arena), clear primary / secondary contrast
+    preview.palette = refinePalette(preview.palette);
     this.meta = { name: preview.name, theme: preview.theme, body: preview.body, skin: preview.skin, palette: preview.palette };
     this.emit({ type: 'meta', variant: this.opts.variant, name: preview.name, theme: preview.theme, body: preview.body, skin: preview.skin, palette: preview.palette });
     for (const p of this.opts.locked) {
@@ -194,6 +197,7 @@ export class OutfitAssembler {
       pid = `${pid.slice(0, 20)}-${n}`;
     }
     p.id = pid;
+    liftDarkShapes(p);
     fitPiece(p, this.warnings);
     this.ids.add(pid);
     this.pieces.push(p);
@@ -208,6 +212,16 @@ export class OutfitAssembler {
     const warnings = [...this.warnings, ...res.warnings];
     this.emit({ type: 'done', variant: this.opts.variant, outfit, warnings });
     return outfit;
+  }
+}
+
+/** big shapes in near-black hex colours read as holes in the arena: lift them (small details stay dark) */
+export function liftDarkShapes(p: OutfitPiece): void {
+  for (const sh of p.shapes) {
+    const c = sh.material.color;
+    if (!c.startsWith('#')) continue;
+    const big = sh.type === 'box' ? [...sh.size].sort((a, b) => b - a)[1] > 0.08 : sh.type === 'sphere' || sh.type === 'capsule' ? sh.r > 0.06 : sh.type === 'cylinder' ? Math.max(sh.rTop, sh.rBottom) > 0.06 || sh.h > 0.2 : false;
+    if (big && lightness(c) < MIN_BODY_LIGHTNESS - 2) sh.material.color = withLightness(c, MIN_BODY_LIGHTNESS);
   }
 }
 
