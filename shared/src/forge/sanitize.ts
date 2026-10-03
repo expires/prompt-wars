@@ -3,6 +3,7 @@
 // sanitizeDesign(sanitizeDesign(x).design).design deep-equals sanitizeDesign(x).design.
 
 import { clampWeapon, NUMERIC_STATS } from '../balance';
+import { MOVE_MULT_MAX, MOVE_MULT_MIN, carryMultiplier, designBulkPenalty } from '../elements';
 import type { Weapon, WeaponPart } from '../weapon';
 import {
   ANCHORS,
@@ -729,6 +730,22 @@ export function sanitizeDesign(input: unknown, opts: SanitizeOptions = {}): Sani
   const stats = {} as DesignStats;
   for (const k of NUMERIC_STATS) stats[k] = w[k];
   if (melee) stats.melee = melee;
+  stats.element = w.element ?? null;
+  // carry weight: class / melee weight / magazine, minus the bulk of the model (never above the
+  // derived value, whatever the input said; clampWeapon accepts it since the penalty is <= 0.05)
+  {
+    const b3 = designBox(layoutComponents(comps));
+    const longest = isEmptyBox(b3) ? 0 : Math.max(...boxSize(b3));
+    const derived = carryMultiplier({
+      class: w.class,
+      fireMode: w.fireMode,
+      meleeWeight: melee?.weight,
+      magSize: w.magSize,
+      partCount: legacyPartsOf({ components: comps }).length,
+    });
+    const pen = designBulkPenalty(longest, comps.length, w.fireMode === 'melee');
+    stats.moveSpeedMult = fix(clamp(derived - pen, MOVE_MULT_MIN, MOVE_MULT_MAX));
+  }
 
   const design: ForgeDesign = {
     v: FORGE_DSL_VERSION,

@@ -12,6 +12,7 @@ import type { Weapon } from '../weapons/types';
 import type { HitTarget, TargetRegistry } from '../weapons/targets';
 import type { NetClient, NetPlayer, PoseSnapshot } from './NetClient';
 import { RemoteInterpolator, type InterpStats } from './interp';
+import { ELEMENT_LOOK, emitStatusParticles, playerStatus, statusTint, type ParticleSink, type PlayerStatus } from '../weapons/elementFx';
 
 /** crouch blend speed (full transition in ~0.15 s) */
 const CROUCH_RATE = 1 / 0.15;
@@ -50,6 +51,9 @@ export class RemotePlayers {
   private readonly unsubParts: () => void;
   /** per-frame hook (tests: trace rendered positions) */
   onFrame?: (now: number) => void;
+  /** where status particles (burning / chilled) go; set by the game once its effects exist */
+  fx?: ParticleSink;
+  private statusTime = 0;
 
   constructor(
     private readonly net: NetClient,
@@ -82,6 +86,9 @@ export class RemotePlayers {
         hasWeaponModel: boolean;
         crouchT: number;
         head: THREE.Vector3;
+        /** elemental status (burning / chilled / ...) and the body glow shown for it */
+        status: PlayerStatus;
+        tint: number;
         /** third-person animation state */
         anim: { action: string; swing: string; combo: number; charge: number; u: number; blocking: boolean; armX: number; armY: number; twist: number; melees: number; recoils: number };
       }
@@ -95,6 +102,8 @@ export class RemotePlayers {
       hasWeaponModel: r.model.hand.children.length > 0,
       crouchT: r.crouchT,
       head: this.headOf(id)!,
+      status: playerStatus(r.state),
+      tint: r.model.statusTint,
       anim: {
         action: r.model.action?.kind ?? 'none',
         swing: r.model.action?.swing ?? '',
@@ -274,7 +283,17 @@ export class RemotePlayers {
 
   /** call every render frame; `now` = the frame's timestamp (same clock as performance.now()) */
   update(dt: number, now = performance.now()) {
+    this.statusTime += dt;
+    const wall = Date.now();
     for (const r of this.remotes.values()) {
+      // elemental status: body glow (fire flickers) + particles
+      const status = playerStatus(r.state, wall);
+      const tint = statusTint(status);
+      if (tint) {
+        const flicker = tint === 'fire' ? 0.55 + 0.25 * Math.sin(this.statusTime * 23 + r.melees) * Math.sin(this.statusTime * 7.3) : tint === 'shock' ? (Math.random() < 0.5 ? 0.9 : 0.2) : 0.55;
+        r.model.setStatusTint(ELEMENT_LOOK[tint].tint, flicker);
+        if (this.fx && r.model.root.visible) emitStatusParticles(this.fx, status, r.model.root.position, 1.8 - 0.6 * r.crouchT, dt);
+      } else r.model.setStatusTint(null);
       const st = r.interp.update(now);
       if (!st) continue;
       const [x, y, z] = st.pos;

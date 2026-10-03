@@ -1,5 +1,16 @@
 import * as THREE from 'three';
-import { BLOCK_MOVE_MULT, PRESET_WEAPONS, findMapDef, computeWeaponStats, meleeMetaOf, type MapDef } from '@ai-gaem/shared';
+import {
+  BLOCK_MOVE_MULT,
+  PRESET_WEAPONS,
+  findMapDef,
+  computeWeaponStats,
+  elementFromCode,
+  meleeMetaOf,
+  moveSpeedLabel,
+  weaponMoveMultiplier,
+  type MapDef,
+} from '@ai-gaem/shared';
+import { playerStatus } from '../weapons/elementFx';
 import { createRenderer, type RenderContext } from './renderer';
 import { initPhysics, FIXED_DT, type PhysicsContext } from './physics';
 import { Input } from './input';
@@ -66,6 +77,9 @@ export function describeWeapon(w: Weapon): string {
   if (w.slowPercent > 0) parts.push(`slow ${w.slowPercent}%`);
   if (w.dotDamage > 0) parts.push(`dot ${w.dotDamage}`);
   if (w.knockback > 0) parts.push(`knockback ${w.knockback}`);
+  if (w.element) parts.push(w.element);
+  const move = moveSpeedLabel(weaponMoveMultiplier(w));
+  if (move !== '±0%') parts.push(`move ${move}`);
   return parts.join(' · ');
 }
 
@@ -282,6 +296,7 @@ export class Game {
         .catch((err) => console.warn('[weapons] melee samples unavailable', err));
     }
     this.remotes = new RemotePlayers(this.net, this.physics, this.rc.scene, this.targets);
+    this.remotes.fx = this.weapons.effects;
     this.net.onKill?.((e) => {
       const me = this.net.localId;
       const killer = e.killerId === me ? 'You' : e.killerName;
@@ -309,6 +324,7 @@ export class Game {
         mine: e.killerId === me || e.victimId === me,
         killerIsYou: e.killerId === me,
         victimIsYou: e.victimId === me,
+        element: elementFromCode(e.element) ?? w?.element ?? null,
       });
     });
     // server-confirmed damage by us: aggregated damage numbers; kills get the kill X + chime
@@ -540,7 +556,14 @@ export class Game {
   equip(w: Weapon) {
     this.weapons.setWeapon(w);
     const r = rarityOf(w);
-    this.hud.setWeapon({ name: w.name, tier: r.tier, tierLabel: r.label, melee: w.fireMode === 'melee' ? { swing: meleeMetaOf(w).swing } : null });
+    this.hud.setWeapon({
+      name: w.name,
+      tier: r.tier,
+      tierLabel: r.label,
+      melee: w.fireMode === 'melee' ? { swing: meleeMetaOf(w).swing } : null,
+      move: moveSpeedLabel(weaponMoveMultiplier(w)),
+      element: w.element ?? null,
+    });
   }
 
   die(message = '') {
@@ -738,9 +761,11 @@ export class Game {
     if (input.wasPressed('F3')) this.showDebug = !this.showDebug;
     this.spawnEditor.update();
 
-    // server slow effect
+    // server slow effect (ice / shock / bubbles) + elemental status on the HUD
     const me = this.me;
-    player.speedScale = me && (me.slowPercent ?? 0) > 0 && Date.now() < (me.slowUntil ?? 0) ? 1 - (me.slowPercent ?? 0) / 100 : 1;
+    const status = playerStatus(me);
+    player.speedScale = 1 - status.slowPercent / 100;
+    this.hud.setElementStatus(status);
 
     // look every frame, simulate at a fixed rate
     const canAct = this.alive && input.active;
@@ -756,8 +781,8 @@ export class Game {
     };
     // shooting cancels sprint (you can't fire mid-sprint; the shot goes out as the sprint ends)
     if (canAct && actions.fire && player.sprinting) player.blockSprint();
-    // blocking slows you down
-    player.moveMult = melee && this.weapons.melee.blocking ? BLOCK_MOVE_MULT : 1;
+    // carry weight (big guns slower, melee / sidearms faster); blocking slows you down further
+    player.moveMult = weaponMoveMultiplier(this.weapons.weapon) * (melee && this.weapons.melee.blocking ? BLOCK_MOVE_MULT : 1);
     player.aimSlow = this.aimSlowdown(pad);
     const md = input.active ? player.frameInput(dt, this.rig.fovScale) : (input.consumeMouse(), { dx: 0, dy: 0 });
     this.acc += dt;

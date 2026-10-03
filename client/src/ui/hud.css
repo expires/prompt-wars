@@ -293,6 +293,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
 .kf-glyph { display: inline-flex; font-size: max(15px, calc(18 * var(--u))); }
 .kf-glyph--hs { color: var(--crit); }
 .kf-glyph--melee { color: var(--fg-dim); }
+.kf-el--fire { color: var(--el-fire); }
+.kf-el--ice { color: var(--el-ice); }
+.kf-el--poison { color: var(--el-poison); }
+.kf-el--shock { color: var(--el-shock); }
 
 /* ------------------------------------------------------------------ scoreboard (hold Tab) */
 .hud-sb {
@@ -549,3 +553,80 @@ html.reduced-motion .hud-lowhp.is-beat > i, html.reduced-motion .hud-health__pla
   pointer-events: none;
 }
 .hud-warning .ui-icon { width: 16px; height: 16px; flex: none; }
+
+/* ------------------------------------------------------------------ weapon carry weight / element (ammo plate) */
+.hud-ammo__move, .hud-ammo__el {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(4 * var(--u));
+  font: 700 max(11px, calc(13 * var(--u) * var(--text-scale))) / 1 var(--font-label);
+  letter-spacing: 0.06em;
+}
+.hud-ammo__move.is-fast { color: var(--hp-hi); }
+.hud-ammo__move.is-slow { color: var(--crit); }
+.hud-ammo__el { font-size: max(14px, calc(18 * var(--u))); }
+
+/* ------------------------------------------------------------------ elemental status (local player) */
+.hud-fx { position: absolute; left: 0; bottom: calc(100% + 10 * var(--u)); display: flex; gap: calc(8 * var(--u)); }
+.hud-fx__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  height: calc(30 * var(--u));
+  min-height: 20px;
+  padding: 0 calc(12 * var(--u));
+  background: var(--plate-bg);
+  clip-path: var(--clip-hud);
+  font: 700 max(11px, calc(13 * var(--u) * var(--text-scale))) / 1 var(--font-label);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-left: max(3px, calc(4 * var(--u))) solid currentColor;
+  animation: hud-fx-in var(--t-fast) var(--ease-pop);
+}
+.hud-fx__chip .ui-icon { font-size: max(14px, calc(18 * var(--u))); }
+.hud-fx__chip b { color: var(--fg); font-weight: 600; }
+.hud-fx--fire { color: var(--el-fire); }
+.hud-fx--fire .ui-icon { animation: hud-fx-flicker 0.5s steps(2) infinite; }
+.hud-fx--ice { color: var(--el-ice); }
+.hud-fx--poison { color: var(--el-poison); }
+.hud-fx--shock { color: var(--el-shock); }
+@keyframes hud-fx-in { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes hud-fx-flicker { 50% { opacity: 0.55; } }
+
+.hud-burn, .hud-chill, .hud-poison { position: absolute; inset: 0; opacity: 0; transition: opacity var(--t-med) var(--ease-out); }
+.hud-burn.is-on, .hud-chill.is-on, .hud-poison.is-on { opacity: var(--vignette-intensity, 1); }
+.hud-burn {
+  background:
+    radial-gradient(ellipse 85% 80% at 50% 45%, transparent 52%, rgba(255, 120, 20, 0.28) 74%, rgba(255, 70, 0, 0.7) 100%),
+    linear-gradient(to top, rgba(255, 90, 0, 0.45), transparent 22%);
+}
+.hud-burn > i {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 30% 22% at 12% 100%, rgba(255, 190, 60, 0.55), transparent 70%),
+    radial-gradient(ellipse 26% 20% at 50% 100%, rgba(255, 140, 30, 0.5), transparent 70%),
+    radial-gradient(ellipse 30% 22% at 88% 100%, rgba(255, 190, 60, 0.55), transparent 70%);
+  animation: hud-burn-lick 0.7s ease-in-out infinite alternate;
+  transform-origin: 50% 100%;
+}
+@keyframes hud-burn-lick { from { opacity: 0.55; transform: scaleY(0.85); } to { opacity: 1; transform: scaleY(1.15); } }
+.hud-chill {
+  background:
+    radial-gradient(ellipse 80% 75% at 50% 50%, transparent 45%, rgba(150, 215, 255, 0.36) 70%, rgba(230, 248, 255, 0.85) 100%);
+}
+.hud-chill > i {
+  position: absolute;
+  inset: 0;
+  /* frost crystals creeping in from the corners */
+  background:
+    repeating-conic-gradient(from 0deg at 0 0, rgba(255, 255, 255, 0.3) 0 2deg, transparent 2deg 9deg),
+    repeating-conic-gradient(from 0deg at 100% 0, rgba(255, 255, 255, 0.3) 0 2deg, transparent 2deg 9deg),
+    repeating-conic-gradient(from 0deg at 0 100%, rgba(255, 255, 255, 0.3) 0 2deg, transparent 2deg 9deg),
+    repeating-conic-gradient(from 0deg at 100% 100%, rgba(255, 255, 255, 0.3) 0 2deg, transparent 2deg 9deg);
+  -webkit-mask-image: radial-gradient(ellipse 85% 80% at 50% 50%, transparent 60%, #000 100%);
+  mask-image: radial-gradient(ellipse 85% 80% at 50% 50%, transparent 60%, #000 100%);
+}
+.hud-poison { background: radial-gradient(ellipse 85% 80% at 50% 50%, transparent 55%, rgba(80, 220, 40, 0.22) 80%, rgba(40, 160, 20, 0.55) 100%); }
+html.reduced-motion .hud-burn > i, html.reduced-motion .hud-fx--fire .ui-icon { animation: none; }

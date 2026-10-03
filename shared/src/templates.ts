@@ -7,6 +7,7 @@
 import { CLASS_TEMPLATES, normalizeClass, sanitizeParts } from './balance';
 import { isMeleeSwing, isMeleeWeight, type MeleeMeta } from './melee';
 import type { WeaponClass, WeaponPart } from './weapon';
+import { inferElementFromText } from './elements';
 
 export type Level = 'low' | 'med' | 'high';
 export type Speed = 'slow' | 'med' | 'fast';
@@ -113,6 +114,10 @@ export function templateToRawWeapon(t: TemplateSummary, name?: string): Record<s
   };
   if (h.splash === false) raw.splashRadius = 0;
   if (t.melee) raw.melee = t.melee;
+  // element from the template's name / description (e.g. "lava", "frost"); otherwise clampWeapon
+  // infers it from the final name / class
+  const element = inferElementFromText(`${raw.name} ${t.desc ?? ''}`);
+  if (element) raw.element = element;
   return raw;
 }
 

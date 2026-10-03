@@ -610,3 +610,12 @@
   .forge.stats-open .forge-side { transform: none; }
   .forge-count-seg { display: none; }
 }
+
+/* carry weight / element rows under TTK */
+.forge-move .ui-num, .forge-element .ui-num { font-size: 18px; letter-spacing: 0.04em; }
+.forge-move.up .ui-num { color: var(--hp-hi); }
+.forge-move.down .ui-num { color: var(--crit); }
+.forge-el--fire .ui-num { color: var(--el-fire); }
+.forge-el--ice .ui-num { color: var(--el-ice); }
+.forge-el--poison .ui-num { color: var(--el-poison); }
+.forge-el--shock .ui-num { color: var(--el-shock); }

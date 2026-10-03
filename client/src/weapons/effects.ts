@@ -13,35 +13,77 @@ interface Particle {
   vel: THREE.Vector3;
   life: number;
   maxLife: number;
+  color: THREE.Color;
+  /** gravity (m/s²) */
+  g: number;
 }
 
 const MAX_PARTICLES = 600;
+const MAX_BIG_PARTICLES = 400;
 
-/** World-space visual effects: tracers, impacts, explosions, stream particles. */
-export class Effects {
-  private items: Timed[] = [];
-  private particles: Particle[] = [];
-  private readonly points: THREE.Points;
-  private readonly pGeo: THREE.BufferGeometry;
-  private readonly pMat: THREE.PointsMaterial;
-  private readonly light: THREE.PointLight;
-  private lightLife = 0;
+/** one additive point cloud (fixed point size) */
+class ParticleLayer {
+  readonly particles: Particle[] = [];
+  private readonly geo = new THREE.BufferGeometry();
+  readonly points: THREE.Points;
 
-  constructor(private readonly scene: THREE.Scene) {
-    this.pGeo = new THREE.BufferGeometry();
-    this.pGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3));
-    this.pGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3));
-    this.pMat = new THREE.PointsMaterial({
-      size: 0.15,
+  constructor(scene: THREE.Scene, private readonly max: number, size: number) {
+    this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(max * 3), 3));
+    this.geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(max * 3), 3));
+    const mat = new THREE.PointsMaterial({
+      size,
       vertexColors: true,
       transparent: true,
       opacity: 0.9,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
-    this.points = new THREE.Points(this.pGeo, this.pMat);
+    this.points = new THREE.Points(this.geo, mat);
     this.points.frustumCulled = false;
     scene.add(this.points);
+  }
+
+  emit(pos: THREE.Vector3, vel: THREE.Vector3, life: number, color: THREE.ColorRepresentation, g: number) {
+    if (this.particles.length >= this.max) this.particles.shift();
+    this.particles.push({ pos: pos.clone(), vel: vel.clone(), life, maxLife: life, color: new THREE.Color(color), g });
+  }
+
+  update(dt: number) {
+    const pos = this.geo.getAttribute('position') as THREE.BufferAttribute;
+    const col = this.geo.getAttribute('color') as THREE.BufferAttribute;
+    let n = 0;
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.life -= dt;
+      if (p.life <= 0) {
+        this.particles.splice(i, 1);
+        continue;
+      }
+      p.vel.y -= p.g * dt;
+      p.pos.addScaledVector(p.vel, dt);
+      const f = p.life / p.maxLife;
+      pos.setXYZ(n, p.pos.x, p.pos.y, p.pos.z);
+      col.setXYZ(n, p.color.r * f, p.color.g * f, p.color.b * f);
+      n++;
+    }
+    this.geo.setDrawRange(0, n);
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
+  }
+}
+
+/** World-space visual effects: tracers, impacts, explosions, stream particles, status flames / frost. */
+export class Effects {
+  private items: Timed[] = [];
+  private readonly small: ParticleLayer;
+  /** bigger particles: burning flames / frost flakes on players */
+  private readonly big: ParticleLayer;
+  private readonly light: THREE.PointLight;
+  private lightLife = 0;
+
+  constructor(private readonly scene: THREE.Scene) {
+    this.small = new ParticleLayer(scene, MAX_PARTICLES, 0.15);
+    this.big = new ParticleLayer(scene, MAX_BIG_PARTICLES, 0.3);
     this.light = new THREE.PointLight(0xffc070, 0, 8, 2);
     scene.add(this.light);
   }
@@ -140,10 +182,12 @@ export class Effects {
   }
 
   emit(pos: THREE.Vector3, vel: THREE.Vector3, life: number, color: THREE.ColorRepresentation) {
-    if (this.particles.length >= MAX_PARTICLES) this.particles.shift();
-    const p: Particle & { color?: THREE.Color } = { pos: pos.clone(), vel: vel.clone(), life, maxLife: life };
-    p.color = new THREE.Color(color);
-    this.particles.push(p);
+    this.small.emit(pos, vel, life, color, 4);
+  }
+
+  /** big particle with its own gravity (negative = buoyant, e.g. flames) */
+  emitBig(pos: THREE.Vector3, vel: THREE.Vector3, life: number, color: THREE.ColorRepresentation, gravity = 4) {
+    this.big.emit(pos, vel, life, color, gravity);
   }
 
   update(dt: number) {
@@ -163,26 +207,8 @@ export class Effects {
         this.light.distance = 8;
       }
     }
-    const pos = this.pGeo.getAttribute('position') as THREE.BufferAttribute;
-    const col = this.pGeo.getAttribute('color') as THREE.BufferAttribute;
-    let n = 0;
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i] as Particle & { color: THREE.Color };
-      p.life -= dt;
-      if (p.life <= 0) {
-        this.particles.splice(i, 1);
-        continue;
-      }
-      p.vel.y -= 4 * dt;
-      p.pos.addScaledVector(p.vel, dt);
-      const f = p.life / p.maxLife;
-      pos.setXYZ(n, p.pos.x, p.pos.y, p.pos.z);
-      col.setXYZ(n, p.color.r * f, p.color.g * f, p.color.b * f);
-      n++;
-    }
-    this.pGeo.setDrawRange(0, n);
-    pos.needsUpdate = true;
-    col.needsUpdate = true;
+    this.small.update(dt);
+    this.big.update(dt);
   }
 }
 

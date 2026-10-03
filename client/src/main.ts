@@ -57,7 +57,8 @@ const game = new Game();
 installTestHook(game);
 game
   .start(document.getElementById('app')!, {
-    mapUrl: resolveMapUrl(params.get('map') ?? mapSource(activeMap())),
+    // `?map=testmap` (e2e combat tests): the built-in test map, no venue load
+    mapUrl: params.get('map') === 'testmap' ? undefined : resolveMapUrl(params.get('map') ?? mapSource(activeMap())),
     bots: Number(params.get('bots') ?? 0) || 0,
     net,
     serverLabel: label,

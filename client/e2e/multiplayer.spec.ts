@@ -436,8 +436,9 @@ test('g. netcode: smooth remote motion, idle sends nothing, reducer call rates',
   const m = smoothness(trace);
   console.log(`[e2e] moving A: ${JSON.stringify(moveA)} rtt=${(aNet as { rtt: number } | null)?.rtt.toFixed(1)}ms`);
   console.log(`[e2e] B renders A: ${JSON.stringify(m)} net=${JSON.stringify(bNet)}`);
-  expect(moveA.byName.update_transform).toBeGreaterThan(15);
-  expect(moveA.byName.update_transform).toBeLessThan(25);
+  // 30 Hz while moving
+  expect(moveA.byName.update_transform).toBeGreaterThan(25);
+  expect(moveA.byName.update_transform).toBeLessThan(35);
   expect(m.frames).toBeGreaterThan(30);
   expect(m.meanSpeed).toBeGreaterThan(4.5 * 0.85);
   expect(m.meanSpeed).toBeLessThan(4.5 * 1.15);

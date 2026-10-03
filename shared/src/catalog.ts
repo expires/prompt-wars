@@ -105,13 +105,17 @@ Reply with ONE JSON object and nothing else (no markdown fences). Shape:
   "projectileSpeed": number (m/s, 0 for hitscan/stream/melee), "splashRadius": number (m),
   "gravityScale": number, "fuseTime": number (s), "dotDamage": number (total), "dotDuration": number (s),
   "knockback": number, "slowPercent": number, "chargeTime": number (s), "headshotMultiplier": number (1-3),
+  "element": "fire" | "ice" | "poison" | "shock" | null  (fire = burn DoT, poison = long weak DoT, ice = stacking slow, shock = brief heavy slow; null = none),
   "colors": { "primary": "#rrggbb", "secondary": "#rrggbb", "accent": "#rrggbb" },
   "parts": [ { "partId": string from the catalog, "scale"?: number | [x,y,z], "color"?: "#rrggbb", "offset"?: [x,y,z] } ],
   "melee"?: { "swing": "slash"|"overhead"|"thrust"|"bash"|"spin", "reach": number (m, hand to tip), "weight": "light"|"medium"|"heavy" }  (melee only)
 }
 Rules: use ONLY partIds from the provided catalog. Use 4-14 parts. Offsets are metres, weapon points down -Z,
 grip at the origin. Stay inside the given stat ranges; the server re-balances anything overpowered anyway
-(sustained DPS budget ~55, max 95 damage per shot), so prefer interesting trade-offs over maxing stats.`;
+(sustained DPS budget ~55, max 95 damage per shot), so prefer interesting trade-offs over maxing stats.
+Give an element only when the request implies one (flames / lava -> fire, frost / snow -> ice, venom / acid -> poison,
+lightning / tesla -> shock); elemental effects cost budget like DoT / slow. Big weapons slow their carrier down,
+melee and sidearms make them faster (automatic).`;
 
 export function buildWeaponGenUserPrompt(cls: WeaponClass, playerPrompt: string, catalogSubset: readonly CatalogEntry[], templates: readonly TemplateSummary[] = []): string {
   const ref = templatesPromptBlock(templates);

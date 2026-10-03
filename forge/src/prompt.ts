@@ -2,7 +2,7 @@
 // request-specific goes in the user message.
 
 import { CLASS_TEMPLATES, WEAPON_CLASSES, describeTemplateForPrompt, filterCatalogForClass, type CatalogEntry, type WeaponClass } from '@ai-gaem/shared';
-import { FORGE_LIMITS, type Component, type ForgeDesign } from '@ai-gaem/shared/forge';
+import { FORGE_LIMITS, type Component, type DesignStats, type ForgeDesign } from '@ai-gaem/shared/forge';
 import { FORGE_EXAMPLES } from '@ai-gaem/shared/forge/examples';
 import { catalog, searchTemplates, type Template } from '@ai-gaem/parts';
 
@@ -25,7 +25,9 @@ export function designToNdjson(d: (typeof FORGE_EXAMPLES)[number] | ForgeDesign)
     if (transform.scale.some(x => x !== 1)) tr.scale = transform.scale;
     lines.push(JSON.stringify({ t: 'component', ...rest, transform: tr }));
   }
-  lines.push(JSON.stringify({ t: 'stats', ...stats }));
+  // carry weight is derived by the server from class + model size: don't teach the model to send it
+  const { moveSpeedMult: _carry, ...shownStats } = (stats ?? {}) as Partial<DesignStats>;
+  lines.push(JSON.stringify({ t: 'stats', ...shownStats }));
   return lines.join('\n');
 }
 
@@ -78,8 +80,9 @@ material: {"color":"#rrggbb" | "primary"|"secondary"|"accent"|"glow", "metalness
 # Stats and balance
 Classes (fireMode options in brackets):
 ${CLASS_LINES}
-Stats line fields: damage, pellets, fireRate, magSize, reloadTime, range, spread, projectileSpeed, splashRadius, gravityScale, fuseTime, dotDamage, dotDuration, knockback, slowPercent, chargeTime, headshotMultiplier, and for melee "melee":{"swing":"slash|overhead|thrust|bash|spin","weight":"light|medium|heavy"} (reach is measured from your model: the hand is at the origin, the tip at the most negative Z).
+Stats line fields: damage, pellets, fireRate, magSize, reloadTime, range, spread, projectileSpeed, splashRadius, gravityScale, fuseTime, dotDamage, dotDuration, knockback, slowPercent, chargeTime, headshotMultiplier, element ("fire" | "ice" | "poison" | "shock" | null), and for melee "melee":{"swing":"slash|overhead|thrust|bash|spin","weight":"light|medium|heavy"} (reach is measured from your model: the hand is at the origin, the tip at the most negative Z).
 The server enforces the balance budget (max 95 damage per shot, sustained DPS ~55, melee 80, splash / slow / knockback cost budget, per-class bounds), so pick stats that express the fantasy (slow + huge, fast + weak, splashy, sticky...) rather than maxing everything.
+Elements: set "element" only when the request implies one (flames / lava / dragon -> "fire": burn DoT; frost / snow / freeze -> "ice": stacking slow; venom / acid -> "poison": long weak DoT; lightning / tesla -> "shock": brief heavy slow). Elemental effects come out of the same budget. Carry weight is automatic: launchers / snipers / LMGs / huge models slow the player down, melee and sidearms speed them up.
 
 # Editing rules
 - LOCKED components are given as JSON: output each one VERBATIM as a component line (same id, everything identical) and build the rest of the design around them.

@@ -1,4 +1,4 @@
-import { designToWeapon, meleeHitDamage, zoneDamage, type ForgeDesign } from '@ai-gaem/shared';
+import { designToWeapon, elementCode, meleeHitDamage, slowDurationFor, zoneDamage, type ForgeDesign } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
 import type { HitInfo, KillEvent, LocalPose, NetClient, NetPlayer, PoseSnapshot, Vec3 } from './NetClient';
 
@@ -45,8 +45,8 @@ export class OfflineNetClient implements NetClient {
       });
     }
     if (n > 0) {
-      // simulate a 20Hz server tick
-      this.timer = window.setInterval(() => this.tick(0.05), 50);
+      // simulated bots send at the same 30 Hz as real moving players
+      this.timer = window.setInterval(() => this.tick(1 / 30), 1000 / 30);
     }
     console.info('[net] offline mode', n ? `with ${n} simulated bots` : '');
   }
@@ -111,6 +111,19 @@ export class OfflineNetClient implements NetClient {
     const w = this.weapons.get(weaponId);
     const body = (w?.damage ?? 20) * Math.max(1, info?.pellets ?? 1);
     bot.hp -= w ? (w.fireMode === 'melee' ? meleeHitDamage(w, info?.charge ?? 0, info?.zone ?? 0) : zoneDamage(w, body, info?.zone ?? 0)) : body;
+    // elemental status for the visuals (no DoT simulation offline)
+    if (w?.element) {
+      const now = Date.now();
+      if (w.dotDamage > 0) {
+        bot.dotUntil = now + w.dotDuration * 1000;
+        bot.dotElement = elementCode(w.element);
+      }
+      if (w.slowPercent > 0 && (w.element === 'ice' || w.element === 'shock')) {
+        bot.slowPercent = w.slowPercent;
+        bot.slowUntil = now + slowDurationFor(w.element) * 1000;
+        bot.slowElement = elementCode(w.element);
+      }
+    }
     if (bot.hp <= 0) {
       bot.alive = false;
       bot.hp = 0;

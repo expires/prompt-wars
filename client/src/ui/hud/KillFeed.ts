@@ -10,6 +10,8 @@ export interface KillOpts {
   mine?: boolean;
   killerIsYou?: boolean;
   victimIsYou?: boolean;
+  /** element of the killing blow (fire / ice / poison / shock) */
+  element?: string | null;
 }
 
 const MAX = 5;
@@ -30,11 +32,15 @@ export class KillFeed {
       : opts.melee
         ? `<span class="kf-glyph kf-glyph--melee" title="Melee">${icon('melee', 'ui-icon')}</span>`
         : '';
+    const elementGlyph = opts.element
+      ? `<span class="kf-glyph kf-glyph--el kf-el--${esc(opts.element)}" data-testid="kf-element-${esc(opts.element)}" title="${esc(opts.element)}">${icon(opts.element, 'ui-icon')}<span class="sr-only">${esc(opts.element)}</span></span>`
+      : '';
     const row = el(
       'div',
       `kf-row${mine ? ' is-mine' : ''}`,
       `<span class="kf-name kf-killer${opts.killerIsYou ? ' is-you' : ''}">${esc(killer)}</span>` +
         `<span class="kf-chip tier-${tier}"><span class="kf-chip__in">${icon(opts.melee ? 'blade' : 'ammo', 'ui-icon')}<span class="kf-chip__name">${esc(weapon)}</span></span></span>` +
+        elementGlyph +
         glyph +
         `<span class="kf-name kf-victim${opts.victimIsYou ? ' is-you' : ''}">${esc(victim)}</span>`,
     );

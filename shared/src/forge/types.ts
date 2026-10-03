@@ -12,6 +12,7 @@
 
 import type { FireMode, WeaponClass } from '../weapon';
 import type { MeleeMeta } from '../melee';
+import type { Element } from '../elements';
 
 export const FORGE_DSL_VERSION = 1;
 
@@ -166,6 +167,10 @@ export interface DesignStats {
   chargeTime: number;
   headshotMultiplier: number;
   melee?: MeleeMeta;
+  /** fire | ice | poison | shock | null (none); inferred from the name / class when missing */
+  element?: Element | null;
+  /** carry-weight movement multiplier (derived from class + model size by sanitizeDesign) */
+  moveSpeedMult?: number;
 }
 
 export interface ForgeDesign {

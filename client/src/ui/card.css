@@ -89,3 +89,13 @@
   animation: wcard-sheen 3.2s var(--ease-out) infinite;
 }
 @keyframes wcard-sheen { 0%, 55% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+/* carry weight + element traits */
+.wcard-traits { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 6px; font: 700 11px/1.2 var(--font-label); letter-spacing: 0.12em; text-transform: uppercase; }
+.wcard-traits .ui-icon { width: 1.1em; height: 1.1em; margin-right: 4px; vertical-align: -0.2em; }
+.wcard-el--fire { color: var(--el-fire); }
+.wcard-el--ice { color: var(--el-ice); }
+.wcard-el--poison { color: var(--el-poison); }
+.wcard-el--shock { color: var(--el-shock); }
+.wcard-move.is-fast { color: var(--hp-hi); }
+.wcard-move.is-slow { color: var(--crit); }

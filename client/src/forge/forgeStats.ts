@@ -5,6 +5,7 @@ import {
   MAX_HEADSHOT_DAMAGE,
   boundsFor,
   clampWeapon,
+  slowDurationFor,
   computeWeaponStats,
   type DesignStats,
   type FireMode,
@@ -148,4 +149,17 @@ export function budgetOf(raw: Partial<DesignStats>, cls: string, mode: string): 
   pct('magSize', 'MAG');
   pct('range', 'RANGE');
   return { usage, nerfs };
+}
+
+/** "FIRE · burn 4/s for 3 s" style one-liner for the weapon's element ('' when none) */
+export function elementBlurb(w: Weapon): string {
+  const e = w.element;
+  if (!e) return '';
+  const n = (v: number) => `${+v.toFixed(1)}`;
+  if (e === 'fire' || e === 'poison') {
+    const dps = w.dotDuration > 0 ? w.dotDamage / w.dotDuration : 0;
+    return `${e.toUpperCase()} · ${e === 'fire' ? 'burn' : 'poison'} ${n(dps)}/s for ${n(w.dotDuration)} s`;
+  }
+  const dur = slowDurationFor(e);
+  return `${e.toUpperCase()} · slow ${Math.round(w.slowPercent)}% for ${n(dur)} s${e === 'ice' ? ' (stacks to 60%)' : ''}`;
 }

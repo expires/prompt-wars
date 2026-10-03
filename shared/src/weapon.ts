@@ -2,6 +2,7 @@
 // Keep this file free of runtime dependencies: it is bundled into the server module.
 
 import type { MeleeMeta } from './melee';
+import type { Element } from './elements';
 
 export const WEAPON_CLASSES = [
   'pistol',
@@ -105,6 +106,17 @@ export interface Weapon {
    * weight class (swing timing). See shared/src/melee.ts.
    */
   melee?: MeleeMeta;
+  /**
+   * Elemental effect applied on hit (see shared/src/elements.ts): fire = burn DoT, poison = long
+   * weak DoT, ice = stacking slow, shock = brief heavy slow. Always set (null = none) on clamped
+   * weapons; inferred from the name / class when missing.
+   */
+  element?: Element | null;
+  /**
+   * Carry-weight movement multiplier (0.85 - 1.12): big guns slow you down, melee / sidearms speed
+   * you up. Always set on clamped weapons (derived from class / melee weight / size when missing).
+   */
+  moveSpeedMult?: number;
 }
 
 /** Loose input shape: anything an LLM or client might send. */

@@ -39,6 +39,9 @@ interface PlayerRow {
   slowUntil: { toMillis(): bigint };
   slot: number;
   needsLoadout?: boolean;
+  dotUntil?: { toMillis(): bigint };
+  dotElement?: number;
+  slowElement?: number;
 }
 
 interface PoseRow {
@@ -327,11 +330,12 @@ export class SpacetimeNetClient implements NetClient {
           slowPercent: e.slowPercent,
           headshot: e.headshot,
           blocked: e.blocked,
+          element: e.element,
         };
         this.localHitCbs.forEach((cb) => cb(ev));
       }
       if (shooterId === this.localId && targetId !== this.localId) {
-        const ev: HitConfirmEvent = { targetId, damage: e.damage, killed: e.killed, headshot: e.headshot, dot: e.dot, point: [e.x, e.y, e.z], blocked: e.blocked };
+        const ev: HitConfirmEvent = { targetId, damage: e.damage, killed: e.killed, headshot: e.headshot, dot: e.dot, point: [e.x, e.y, e.z], blocked: e.blocked, element: e.element };
         this.confirmCbs.forEach((cb) => cb(ev));
       }
       if (e.killed) {
@@ -344,6 +348,7 @@ export class SpacetimeNetClient implements NetClient {
           weaponId,
           at: Date.now(),
           headshot: e.headshot,
+          element: e.element,
         };
         this.killCbs.forEach((cb) => cb(kill));
       }
@@ -397,6 +402,9 @@ export class SpacetimeNetClient implements NetClient {
       respawnAt: ms(r.respawnAt),
       slowPercent: r.slowPercent,
       slowUntil: ms(r.slowUntil),
+      slowElement: r.slowElement ?? 0,
+      dotUntil: r.dotUntil ? ms(r.dotUntil) : 0,
+      dotElement: r.dotElement ?? 0,
       crouching: pose?.crouching ?? false,
       needsLoadout: !!r.needsLoadout,
     };

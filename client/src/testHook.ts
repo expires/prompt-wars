@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { clampWeapon, sanitizeDesign } from '@ai-gaem/shared';
 import type { Game } from './engine/Game';
 import { Humanoid } from './player/humanoid';
+import { playerStatus } from './weapons/elementFx';
 import { settings } from './settings';
 import { getDefaultWeapons } from './weapons/defaultWeapons';
 
@@ -68,6 +69,10 @@ export interface GameTestHook {
   forceScoreboard(on: boolean): void;
   /** register a Forge design and deploy with it (same path as the editor's EQUIP) */
   equipDesign(design: unknown, prompt?: string): Promise<void>;
+  /** walk forward with real input-driven movement (autorun + pad play, no pointer lock); false stops */
+  setAutoRun(on: boolean): void;
+  /** median horizontal speed of the local player over `ms` (real input-driven movement, m/s) */
+  measureSpeed(ms: number): Promise<number>;
 }
 
 function getState(game: Game) {
@@ -102,6 +107,13 @@ function getState(game: Game) {
     eyeHeight: p?.eyeHeight ?? 0,
     ceilingBlocked: p?.ceilingBlocked() ?? false,
     sprinting: p?.sprinting ?? false,
+    /** carry-weight x block multiplier and server slow scale applied to movement */
+    moveMult: p?.moveMult ?? 1,
+    speedScale: p?.speedScale ?? 1,
+    hSpeed: p?.horizontalSpeed() ?? 0,
+    /** elemental status on the local player (burning / chilled / ...) */
+    status: playerStatus(game.me),
+    hudStatus: ready ? [...document.querySelectorAll('[data-testid=status-effects] [data-testid^=status-]')].map((e) => (e as HTMLElement).dataset.testid ?? '') : [],
     ads: ready ? game.ads : 0,
     fov: ready ? game.rc.camera.fov : 0,
     spread: ready ? game.weapons.currentSpread() : 0,
@@ -172,6 +184,9 @@ function getState(game: Game) {
             head: [r.head.x, r.head.y, r.head.z] as [number, number, number],
             /** third-person animation (melee swing / recoil / block) */
             anim: r.anim,
+            /** elemental status + rendered body glow */
+            status: r.status,
+            tint: r.tint,
           };
         })
       : [],
@@ -310,6 +325,26 @@ export function installTestHook(game: Game) {
     },
     forceScoreboard(on) {
       game.hud.forceScoreboard = on;
+    },
+    setAutoRun(on) {
+      game.input.padPlaying = on;
+      game.player.autoRun = on;
+    },
+    measureSpeed(ms) {
+      // median of the per-frame horizontal speed (robust to a teleport / a single slow frame)
+      return new Promise((resolve) => {
+        const samples: number[] = [];
+        const t0 = performance.now();
+        const tick = () => {
+          samples.push(game.player.horizontalSpeed());
+          if (performance.now() - t0 < ms) requestAnimationFrame(tick);
+          else {
+            samples.sort((a, b) => a - b);
+            resolve(samples[Math.floor(samples.length / 2)] ?? 0);
+          }
+        };
+        requestAnimationFrame(tick);
+      });
     },
     equipDesign(design, prompt = 'test design') {
       const { design: d } = sanitizeDesign(design);

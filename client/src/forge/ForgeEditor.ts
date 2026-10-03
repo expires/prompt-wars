@@ -6,10 +6,10 @@
 // one (card fade-in + clip-plane materialize in the 3D preview), stats / budget update live, rarity
 // reveal + name type-in when done. KEEP / LOCK / REJECT per component, variants, reprompt + EQUIP.
 import './forge.css';
-import { designToWeapon, type Component, type ForgeDesign, type ForgeEvent } from '@ai-gaem/shared';
+import { designToWeapon, moveSpeedLabel, type Component, type ForgeDesign, type ForgeEvent } from '@ai-gaem/shared';
 import { ForgeSession, type ForgeDraft, type ForgeSessionState } from './forgeClient';
 import { Turntable, type Mark } from './Turntable';
-import { budgetOf, statRows, ttk, weaponFromStats } from './forgeStats';
+import { budgetOf, elementBlurb, statRows, ttk, weaponFromStats } from './forgeStats';
 import { el, esc, reducedMotion } from '../ui/dom';
 import { icon } from '../ui/icons';
 import { flavorFor, pipsHtml, rarityOfDesign, TIER_LABELS, type Tier } from '../ui/rarity';
@@ -645,12 +645,15 @@ class ForgeEditor implements ForgeEditorHandle {
       rarity: draft && !draft.design ? { tier: Math.max(1, r.tier - 0) as Tier, label: TIER_LABELS[r.tier] } : r,
       flavor: flavorFor(design.name, design.class),
       forgedBy: this.opts.playerName,
+      move: moveSpeedLabel(w.moveSpeedMult),
+      element: w.element ?? null,
     };
     renderWeaponCard(this.$.card, card, { testid: 'forge-card' });
     const ref = this.prevDesign && this.prevDesign !== design ? designToWeapon(this.prevDesign) : null;
     const rows = statRows(w, ref);
     const t = ttk(w);
     const budget = budgetOf(raw, design.class, design.fireMode);
+    const move = moveSpeedLabel(w.moveSpeedMult);
     const segs = (row: (typeof rows)[number]) => {
       const on = Math.round(row.norm * 8);
       const tick = Math.min(7, Math.floor(row.avg * 8));
@@ -675,6 +678,8 @@ class ForgeEditor implements ForgeEditorHandle {
         )
         .join('')}
       <div class="forge-ttk"><span class="ui-micro">TTK @100 HP</span><span class="ui-num" data-testid="forge-ttk">${t === null ? '—' : t < 0.05 ? '0.00 s' : `${t.toFixed(2)} s`}</span></div>
+      <div class="forge-ttk forge-move ${move.startsWith('+') ? 'up' : move.startsWith('−') ? 'down' : ''}"><span class="ui-micro">Move speed</span><span class="ui-num" data-testid="forge-move">${esc(move)}</span></div>
+      ${w.element ? `<div class="forge-ttk forge-element forge-el--${esc(w.element)}"><span class="ui-micro">Element</span><span class="ui-num" data-testid="forge-element">${icon(w.element, 'ui-icon ui-icon--sm')} ${esc(elementBlurb(w))}</span></div>` : ''}
       <div class="forge-budget ${over ? 'over' : ''}">
         <div class="forge-budget-head"><span class="ui-micro">Balance budget</span><span class="ui-num">${Math.round(budget.usage * 100)}%</span></div>
         <div class="forge-budget-bar">${bh}</div>

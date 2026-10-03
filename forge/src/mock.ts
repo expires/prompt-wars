@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { assembleWeapon, getPart, type Template } from '@ai-gaem/parts';
-import { templateToRawWeapon } from '@ai-gaem/shared';
+import { inferElementFromText, templateToRawWeapon } from '@ai-gaem/shared';
 import type { DesignAssembler } from './assembler';
 import type { PromptContext } from './prompt';
 
@@ -126,5 +126,8 @@ export async function generateMock(
   await delay();
   const { parts: _p, name: _n, class: _c, fireMode: _f, ...stats } = raw as Record<string, unknown>;
   for (const k of ['damage', 'fireRate', 'range'] as const) if (typeof stats[k] === 'number') stats[k] = (stats[k] as number) * (0.85 + rand() * 0.3);
+  // the request names an element ("frost cannon", "flaming axe"): the mock honours it like the LLM would
+  const element = inferElementFromText(ctx.prompt);
+  if (element) stats.element = element;
   asm.push({ t: 'stats', ...stats });
 }

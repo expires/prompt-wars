@@ -26,4 +26,5 @@ export default __t.row({
   slowPercent: __t.f32().name("slow_percent"),
   headshot: __t.bool(),
   blocked: __t.bool(),
+  element: __t.u8(),
 });
