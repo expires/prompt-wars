@@ -4,15 +4,17 @@
 
 import { clampWeapon, NUMERIC_STATS } from '../balance';
 import { MOVE_MULT_MAX, MOVE_MULT_MIN, carryMultiplier, designBulkPenalty } from '../elements';
-import type { Weapon, WeaponPart } from '../weapon';
+import type { FireMode, Weapon, WeaponPart } from '../weapon';
 import {
   ANCHORS,
   COMPONENT_ROLES,
   FORGE_DSL_VERSION,
   FORGE_LIMITS as L,
   PALETTE_TOKENS,
+  PROJECTILE_IMPACTS,
   PROJECTILE_SHAPES,
   SHAPE_TYPES,
+  SPIN_AXES,
   TRAILS,
   type Anchor,
   type CatalogPartRef,
@@ -22,13 +24,14 @@ import {
   type DesignPalette,
   type DesignStats,
   type ForgeDesign,
+  type ProjectileDesign,
   type Shape,
   type ShapeMaterial,
   type Transform,
   type V2,
   type V3,
 } from './types';
-import { boxSize, designBox, designTrisEstimate, isEmptyBox, layoutComponents, shapeTris, transformBox, type Box3 } from './math';
+import { boxSize, designBox, designTrisEstimate, emptyBox, isEmptyBox, layoutComponents, shapeBox, shapeTris, transformBox, unionBox, type Box3 } from './math';
 
 export interface SanitizeOptions {
   /** Known catalog part ids; catalogPart components with other ids are dropped. Omit to accept any well-formed id. */
@@ -569,6 +572,131 @@ export function snapFloating(list: Component[], warnings: string[] = []): boolea
 }
 
 // ---------------------------------------------------------------------------
+// projectile
+// ---------------------------------------------------------------------------
+
+/** The shape uniformly scaled by `f` (offset + intrinsic dimensions; rotation / scale kept). */
+function scaleShapeDims(s: Shape, f: number): Record<string, unknown> {
+  const k = (v: number) => v * f;
+  const o: Record<string, unknown> = { ...s };
+  if (s.pos) o.pos = s.pos.map(k);
+  switch (s.type) {
+    case 'box': o.size = s.size.map(k); break;
+    case 'cylinder': o.rTop = k(s.rTop); o.rBottom = k(s.rBottom); o.h = k(s.h); break;
+    case 'cone': o.r = k(s.r); o.h = k(s.h); break;
+    case 'sphere': o.r = k(s.r); break;
+    case 'torus': o.r = k(s.r); o.tube = k(s.tube); break;
+    case 'capsule': o.r = k(s.r); o.h = k(s.h); break;
+    case 'lathe': o.points = s.points.map(p => p.map(k)); break;
+    case 'extrude': o.outline = s.outline.map(p => p.map(k)); o.depth = k(s.depth); if (s.bevel) o.bevel = k(s.bevel); break;
+    case 'tube': o.path = s.path.map(p => p.map(k)); o.r = k(s.r); break;
+  }
+  return o;
+}
+
+/** Fire modes that launch a visible projectile (the only ones that keep `design.projectile`). */
+export function firesProjectiles(fireMode: FireMode | string | undefined): boolean {
+  return fireMode === 'projectile' || fireMode === 'arc';
+}
+
+function projectileBox(shapes: readonly Shape[]): Box3 {
+  let b = emptyBox();
+  for (const s of shapes) b = unionBox(b, shapeBox(s));
+  return b;
+}
+
+function projectileTris(shapes: readonly Shape[]): number {
+  return shapes.reduce((n, s) => n + shapeTris(s), 0);
+}
+
+/**
+ * Clean a projectile section (LLM / client JSON): <= maxProjectileShapes shapes, tri budget,
+ * centred on the origin, longest side within [projectileMinSize, projectileMaxSize]. Returns
+ * undefined when nothing usable is left. Idempotent.
+ */
+export function sanitizeProjectile(raw: unknown, warnings: string[] = []): ProjectileDesign | undefined {
+  const r = obj(raw);
+  if (!r) return undefined;
+  const label = cleanText(r.label ?? r.name, L.maxLabelLength) || 'projectile';
+  const shapesRaw = Array.isArray(r.shapes) ? r.shapes : Array.isArray(r.parts) ? r.parts : [];
+  let shapes: Shape[] = [];
+  for (const sr of shapesRaw) {
+    if (shapes.length >= L.maxProjectileShapes) {
+      warnings.push(`projectile: more than ${L.maxProjectileShapes} shapes, extra dropped`);
+      break;
+    }
+    const sh = sanitizeShape(sr);
+    if (sh) shapes.push(sh);
+    else warnings.push('projectile: invalid shape dropped');
+  }
+  if (!shapes.length) {
+    if (shapesRaw.length || r.label !== undefined) warnings.push('projectile: no geometry, dropped');
+    return undefined;
+  }
+  // triangle budget: lower segment counts, then drop shapes from the end
+  if (projectileTris(shapes) > L.projectileMaxTris) {
+    warnings.push(`projectile over ${L.projectileMaxTris} triangles; simplified`);
+    for (let pass = 0; pass < 4 && projectileTris(shapes) > L.projectileMaxTris; pass++) {
+      const k = Math.max(0.35, Math.sqrt(L.projectileMaxTris / projectileTris(shapes)));
+      for (const s of shapes) {
+        for (const [key, floor] of SEG_FLOORS[s.type] ?? []) {
+          const rec = s as unknown as Record<string, number>;
+          const cur = rec[key];
+          if (typeof cur === 'number') rec[key] = Math.max(floor, Math.floor(cur * k));
+        }
+      }
+    }
+    while (shapes.length > 1 && projectileTris(shapes) > L.projectileMaxTris) shapes = shapes.slice(0, -1);
+  }
+  // size: uniform scale of every shape (offsets + intrinsic dimensions) into [min, max]
+  const scaleAll = (f: number) => {
+    shapes = shapes.map(sh => sanitizeShape(scaleShapeDims(sh, f))).filter((x): x is Shape => !!x);
+  };
+  for (let pass = 0; pass < 3; pass++) {
+    const b = projectileBox(shapes);
+    if (isEmptyBox(b)) break;
+    const longest = Math.max(...boxSize(b));
+    if (longest > L.projectileMaxSize + 1e-6) {
+      if (pass === 0) warnings.push(`projectile is ${longest.toFixed(2)} m; scaled down to ${L.projectileMaxSize} m`);
+      scaleAll((L.projectileMaxSize * 0.995) / longest);
+    } else if (longest < L.projectileMinSize - 1e-6) {
+      if (pass === 0) warnings.push(`projectile is ${longest.toFixed(3)} m; scaled up to ${L.projectileMinSize} m`);
+      scaleAll((L.projectileMinSize * 1.01) / Math.max(longest, 1e-4));
+    } else break;
+  }
+  // centre on the origin (spin pivots around it); small offsets are left alone (stable)
+  const b = projectileBox(shapes);
+  if (!isEmptyBox(b)) {
+    const c = [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2);
+    if (Math.hypot(c[0], c[1], c[2]) > 0.005) {
+      for (const s of shapes) {
+        const p = (s.pos ?? [0, 0, 0]).map((x, i) => fix(clamp(x - c[i], -L.maxCoord, L.maxCoord))) as V3;
+        if (p.every(x => x === 0)) delete s.pos;
+        else s.pos = p;
+      }
+    }
+  }
+  const p: ProjectileDesign = { label, shapes };
+  const sp = obj(r.spin);
+  const axis = pick(sp?.axis, SPIN_AXES) ?? 'z';
+  const rate = num(sp?.rate ?? (typeof r.spin === 'number' ? r.spin : undefined));
+  if (rate !== undefined) {
+    const v = fix(clamp(rate, -L.maxProjectileSpin, L.maxProjectileSpin));
+    if (v !== 0) p.spin = { axis, rate: v };
+  }
+  const wob = num(r.wobble);
+  if (wob !== undefined && wob > 0) p.wobble = fix(clamp(wob, 0, 1));
+  const tr = pick(r.trail, TRAILS);
+  if (tr) p.trail = tr;
+  const tc = sanitizeHex(r.trailColor);
+  if (tc) p.trailColor = tc;
+  const im = pick(r.impact, PROJECTILE_IMPACTS);
+  if (im) p.impact = im;
+  if (r.locked === true) p.locked = true;
+  return p;
+}
+
+// ---------------------------------------------------------------------------
 // design
 // ---------------------------------------------------------------------------
 
@@ -757,6 +885,13 @@ export function sanitizeDesign(input: unknown, opts: SanitizeOptions = {}): Sani
     fx,
     components: comps,
   };
+  // projectile: cosmetic only (never affects stats); only for modes that fire one
+  if (raw.projectile !== undefined && raw.projectile !== null) {
+    if (firesProjectiles(w.fireMode)) {
+      const proj = sanitizeProjectile(raw.projectile, warnings);
+      if (proj) design.projectile = proj;
+    } else warnings.push(`projectile dropped (${w.fireMode} weapons fire none)`);
+  }
   if (!comps.length) warnings.push('design has no components');
   return { design, warnings };
 }

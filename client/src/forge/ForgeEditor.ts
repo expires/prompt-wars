@@ -6,7 +6,7 @@
 // one (card fade-in + clip-plane materialize in the 3D preview), stats / budget update live, rarity
 // reveal + name type-in when done. KEEP / LOCK / REJECT per component, variants, reprompt + EQUIP.
 import './forge.css';
-import { designToWeapon, moveSpeedLabel, type Component, type ForgeDesign, type ForgeEvent } from '@ai-gaem/shared';
+import { designToWeapon, moveSpeedLabel, PROJECTILE_ID, type Component, type ForgeDesign, type ForgeEvent } from '@ai-gaem/shared';
 import { ForgeSession, type ForgeDraft, type ForgeSessionState } from './forgeClient';
 import { Turntable, type Mark } from './Turntable';
 import { budgetOf, elementBlurb, statRows, ttk, weaponFromStats } from './forgeStats';
@@ -63,6 +63,26 @@ const COMPONENT_DESC = (c: Component): string => {
   return `${shapes.length} shape${shapes.length === 1 ? '' : 's'} · ${types.slice(0, 3).join(', ')}${types.length > 3 ? '…' : ''} · from scratch`;
 };
 
+/** A card in the parts list: a component, or the projectile (id PROJECTILE_ID). */
+interface Entry {
+  id: string;
+  label: string;
+  role: string;
+  desc: string;
+  locked: boolean;
+}
+
+function entriesOf(d: ForgeDesign | null): Entry[] {
+  if (!d) return [];
+  const out: Entry[] = d.components.map((c) => ({ id: c.id, label: c.label, role: c.role, desc: COMPONENT_DESC(c), locked: !!c.locked }));
+  const p = d.projectile;
+  if (p) {
+    const n = p.shapes.length;
+    out.push({ id: PROJECTILE_ID, label: p.label, role: 'projectile', desc: `${n} shape${n === 1 ? '' : 's'} · ${p.spin ? 'spins' : p.wobble ? 'wobbles' : 'flies straight'}`, locked: !!p.locked });
+  }
+  return out;
+}
+
 function partialDesign(d: ForgeDraft, fallback: ForgeDesign | null): ForgeDesign | null {
   if (d.design) return d.design;
   if (!d.components.length) return null;
@@ -76,6 +96,7 @@ function partialDesign(d: ForgeDraft, fallback: ForgeDesign | null): ForgeDesign
     palette: d.palette ?? fallback?.palette ?? { primary: '#3a3f4b', secondary: '#20242c', accent: '#ffd23f', glow: '#ff3da5' },
     fx: d.fx ?? {},
     components: d.components,
+    ...(d.projectile ? { projectile: d.projectile } : {}),
   };
 }
 
@@ -100,6 +121,7 @@ class ForgeEditor implements ForgeEditorHandle {
   private hoverVariant: number | null = null;
   private shownKey = '';
   private shownCount = 0;
+  private shownProjectile = false;
   private lastPrompt = '';
   private hoverId: string | null = null;
   private focusIdx = 0;
@@ -210,6 +232,10 @@ class ForgeEditor implements ForgeEditorHandle {
     if (seed?.prompt) this.prompt.value = seed.prompt;
     if (seed?.design) {
       const d: ForgeDesign = { ...seed.design, components: seed.design.components.map(({ locked: _l, ...c }) => c) };
+      if (d.projectile) {
+        const { locked: _pl, ...projectile } = d.projectile;
+        d.projectile = projectile;
+      }
       this.session.seed(d);
     } else this.render(this.session.state);
     if (seed?.autostart && (seed.prompt || seed.design)) void this.reforge();
@@ -239,14 +265,15 @@ class ForgeEditor implements ForgeEditorHandle {
     $.lockAll.addEventListener('click', () => {
       const d = this.session.design;
       if (!d) return;
-      for (const c of d.components) this.marks.set(c.id, 'lock');
-      this.session.lock(d.components.map((c) => c.id));
+      const ids = entriesOf(d).map((e) => e.id);
+      for (const id of ids) this.marks.set(id, 'lock');
+      this.session.lock(ids);
     });
     $.clearMarks.addEventListener('click', () => {
       const d = this.session.design;
       this.marks.clear();
       if (d) {
-        const locked = d.components.filter((c) => c.locked).map((c) => c.id);
+        const locked = entriesOf(d).filter((e) => e.locked).map((e) => e.id);
         if (locked.length) this.session.unlock(locked);
         else this.render(this.session.state);
       }
@@ -363,7 +390,7 @@ class ForgeEditor implements ForgeEditorHandle {
     if (inText) return;
     const d = this.session.design;
     if (!d) return;
-    const comps = d.components;
+    const comps = entriesOf(d);
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       this.focusIdx = Math.max(0, Math.min(comps.length - 1, this.focusIdx + (e.key === 'ArrowDown' ? 1 : -1)));
@@ -416,10 +443,11 @@ class ForgeEditor implements ForgeEditorHandle {
     let prompt = text;
     if (d && !retry) {
       // rejected parts: removed now (their labels go to the request's `rejected`)
-      const rej = [...this.marks].filter(([, m]) => m === 'reject').map(([id]) => id).filter((id) => d.components.some((c) => c.id === id));
+      const ids = new Set(entriesOf(d).map((e) => e.id));
+      const rej = [...this.marks].filter(([, m]) => m === 'reject').map(([id]) => id).filter((id) => ids.has(id));
       if (rej.length) this.session.reject(rej);
       const cur = this.session.design!;
-      const keep = cur.components.filter((c) => this.marks.get(c.id) === 'keep').map((c) => c.label);
+      const keep = entriesOf(cur).filter((e) => this.marks.get(e.id) === 'keep').map((e) => (e.id === PROJECTILE_ID ? `projectile ${e.label}` : e.label));
       if (!prompt) prompt = 'same weapon, reroll the unmarked parts';
       if (keep.length) prompt += ` (keep these parts as they are: ${keep.join(', ')})`;
     }
@@ -429,6 +457,7 @@ class ForgeEditor implements ForgeEditorHandle {
     this.hoverVariant = null;
     this.shownKey = '';
     this.shownCount = 0;
+    this.shownProjectile = false;
     this.thumbs.clear();
     // marks survive only as locks (in the design); keep / reject are spent
     for (const [id, m] of [...this.marks]) if (m !== 'lock') this.marks.delete(id);
@@ -522,8 +551,9 @@ class ForgeEditor implements ForgeEditorHandle {
     // design changed underneath (lock flags): marks follow the design's locked flags
     const d = s.design;
     if (d) {
-      for (const c of d.components) if (c.locked) this.marks.set(c.id, 'lock');
-      for (const [id, m] of [...this.marks]) if (m === 'lock' && !d.components.find((c) => c.id === id)?.locked) this.marks.delete(id);
+      const ents = entriesOf(d);
+      for (const e of ents) if (e.locked) this.marks.set(e.id, 'lock');
+      for (const [id, m] of [...this.marks]) if (m === 'lock' && !ents.find((e) => e.id === id)?.locked) this.marks.delete(id);
     }
     const { design, draft } = this.shown(s);
     this.root.classList.toggle('busy', s.busy);
@@ -556,7 +586,7 @@ class ForgeEditor implements ForgeEditorHandle {
   }
 
   private renderList(s: ForgeSessionState, design: ForgeDesign | null, draft: ForgeDraft | null) {
-    const comps = design?.components ?? [];
+    const comps = entriesOf(design);
     const list = this.$.list;
     const editable = !draft && !!s.design;
     const skeletons = s.busy && !draft?.design ? Math.max(0, Math.max(5, this.prevDesign?.components.length ?? 0) - comps.length) : 0;
@@ -572,7 +602,7 @@ class ForgeEditor implements ForgeEditorHandle {
       if (!card) {
         card = el('div', 'forge-comp');
         card.dataset.id = c.id;
-        card.dataset.testid = 'forge-comp';
+        card.dataset.testid = c.id === PROJECTILE_ID ? 'forge-projectile' : 'forge-comp';
         card.setAttribute('role', 'listitem');
         card.tabIndex = 0;
         if (!reducedMotion()) card.classList.add('in');
@@ -580,7 +610,7 @@ class ForgeEditor implements ForgeEditorHandle {
       card.dataset.idx = String(i);
       card.dataset.mark = mark ?? '';
       card.classList.toggle('readonly', !editable);
-      const sig = `${c.label}|${c.role}|${mark ?? ''}|${editable}`;
+      const sig = `${c.label}|${c.role}|${c.desc}|${mark ?? ''}|${editable}`;
       if (card.dataset.sig !== sig) {
         card.dataset.sig = sig;
         card.innerHTML = `
@@ -588,7 +618,7 @@ class ForgeEditor implements ForgeEditorHandle {
           <span class="forge-comp-text">
             <span class="ui-micro">${esc(c.role)}${mark === 'lock' ? ` · ${icon('lock', 'ui-icon forge-inline-icon')} locked` : ''}</span>
             <span class="forge-comp-label">${esc(c.label)}</span>
-            <span class="forge-comp-desc">${esc(COMPONENT_DESC(c))}</span>
+            <span class="forge-comp-desc">${esc(c.desc)}</span>
           </span>
           <span class="forge-comp-ctrl" role="group" aria-label="Mark ${esc(c.label)}">
             ${(['keep', 'lock', 'reject'] as Mark[])
@@ -615,15 +645,17 @@ class ForgeEditor implements ForgeEditorHandle {
 
   private renderPreview(s: ForgeSessionState, o: { crossfade?: boolean } = {}) {
     const { design } = this.shown(s);
-    const key = design ? `${design.name}|${design.components.map((c) => c.id + (c.locked ? 'L' : '')).join(',')}|${this.hoverVariant ?? this.viewIdx}|${s.picked}` : '';
+    const key = design ? `${design.name}|${design.components.map((c) => c.id + (c.locked ? 'L' : '')).join(',')}|${design.projectile ? `${design.projectile.label}${design.projectile.locked ? 'L' : ''}` : ''}|${this.hoverVariant ?? this.viewIdx}|${s.picked}` : '';
     if (key !== this.shownKey) {
       const prevCount = this.shownCount;
       const comps = design?.components ?? [];
       // materialize the components that just arrived while streaming
       const fresh = s.busy && comps.length > prevCount && !o.crossfade ? comps.slice(prevCount).map((c) => c.id) : [];
+      if (s.busy && design?.projectile && !this.shownProjectile && !o.crossfade) fresh.push(PROJECTILE_ID);
       this.turntable.setDesign(design, { materialize: fresh, crossfade: o.crossfade, keepFrame: s.busy && prevCount > 0 });
       this.shownKey = key;
       this.shownCount = comps.length;
+      this.shownProjectile = !!design?.projectile;
     }
     this.turntable.setMarks(this.marks);
     this.$.empty.hidden = !!design || s.busy;
@@ -741,13 +773,14 @@ class ForgeEditor implements ForgeEditorHandle {
         let keep = 0;
         let lock = 0;
         let rej = 0;
-        for (const c of d.components) {
+        const ents = entriesOf(d);
+        for (const c of ents) {
           const m = this.marks.get(c.id);
           if (m === 'keep') keep++;
           else if (m === 'lock') lock++;
           else if (m === 'reject') rej++;
         }
-        const reroll = d.components.length - keep - lock - rej;
+        const reroll = ents.length - keep - lock - rej;
         sub.textContent = `keep ${keep} · locked ${lock} · reroll ${reroll}${rej ? ` · reject ${rej}` : ''}`;
       } else sub.textContent = this.variantCount > 1 ? `${this.variantCount} variants` : 'from scratch';
     }

@@ -4,3 +4,4 @@ export * from './math';
 export * from './sanitize';
 export * from './edit';
 export * from './protocol';
+export * from './projectilePresets';

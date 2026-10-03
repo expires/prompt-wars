@@ -3,7 +3,8 @@
 // dim / ghost (rejected) / lock glyphs, and the streaming "materialize" clip-plane sweep.
 import * as THREE from 'three';
 import { buildDesign, disposeDesignObject } from '@ai-gaem/shared/forge/build';
-import type { ForgeDesign } from '@ai-gaem/shared';
+import { buildProjectileGroup } from '@ai-gaem/shared/forge/projectile3d';
+import { PROJECTILE_ID, presetProjectile, type ForgeDesign } from '@ai-gaem/shared';
 import { icon } from '../ui/icons';
 import { reducedMotion } from '../ui/dom';
 
@@ -99,6 +100,8 @@ export class Turntable {
   private hl: string | null = null;
   private sweeps = new Map<string, number>();
   private hoverCb: ((id: string | null) => void) | null = null;
+  /** floating projectile preview beside the weapon */
+  private proj: { holder: THREE.Object3D; inner: THREE.Object3D; baseY: number; axis: THREE.Vector3; rate: number; t: number } | null = null;
 
   private yaw = -0.6;
   private pitch = 0.18;
@@ -267,6 +270,7 @@ export class Turntable {
       } else this.disposeModel(this.model);
     }
     this.model = null;
+    this.proj = null;
     this.comps.clear();
     if (!design || !design.components.length) {
       this.syncGlyphs();
@@ -301,12 +305,50 @@ export class Turntable {
       });
       this.comps.set(id, { id, group: g, meshes });
     }
+    this.addProjectile(design, group);
     for (const id of opts.materialize ?? []) if (!reducedMotion()) this.sweeps.set(id, performance.now());
     this.model = group;
     this.pivot.add(group);
     this.frameModel(!opts.keepFrame);
     this.applyLooks();
     this.syncGlyphs();
+  }
+
+  /** small floating copy of the projectile to the right of the weapon (generated, else preset) */
+  private addProjectile(design: ForgeDesign, group: THREE.Group) {
+    const p = design.projectile ?? (design.fx.projectileShape && (design.fireMode === 'projectile' || design.fireMode === 'arc') ? presetProjectile(design.fx.projectileShape, design.fx.projectileColor ?? design.palette.accent) : null);
+    if (!p) return;
+    group.updateMatrixWorld(true);
+    const wb = new THREE.Box3().setFromObject(group);
+    if (wb.isEmpty()) return;
+    const ws = wb.getSize(new THREE.Vector3());
+    const wl = Math.max(ws.x, ws.y, ws.z);
+    const inner = buildProjectileGroup(p, design.palette);
+    const pb = new THREE.Box3().setFromObject(inner);
+    const pl = Math.max(0.01, ...pb.getSize(new THREE.Vector3()).toArray());
+    // readable next to the weapon: at least ~30% of its size, never bigger than it
+    const k = Math.min(Math.max(1, (0.3 * wl) / pl), Math.max(1, wl / pl));
+    inner.scale.multiplyScalar(k);
+    const holder = new THREE.Group();
+    holder.name = PROJECTILE_ID;
+    holder.userData = { componentId: PROJECTILE_ID, label: p.label, role: 'projectile' };
+    holder.add(inner);
+    const c = wb.getCenter(new THREE.Vector3());
+    const baseY = c.y + ws.y * 0.35 + pl * k * 0.3;
+    holder.position.set(wb.max.x + pl * k * 0.7 + 0.06, baseY, c.z);
+    group.add(holder);
+    const meshes: THREE.Mesh[] = [];
+    inner.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mat = (m.material as THREE.MeshStandardMaterial).clone();
+      mat.userData.base = { color: mat.color.clone(), emissive: mat.emissive.clone(), emissiveIntensity: mat.emissiveIntensity, opacity: mat.opacity, transparent: mat.transparent, depthWrite: mat.depthWrite } satisfies BaseMat;
+      m.material = mat;
+      meshes.push(m);
+    });
+    this.comps.set(PROJECTILE_ID, { id: PROJECTILE_ID, group: holder, meshes });
+    const axis = new THREE.Vector3(p.spin?.axis === 'x' ? 1 : 0, p.spin?.axis === 'y' || !p.spin ? 1 : 0, p.spin?.axis === 'z' ? 1 : 0);
+    this.proj = { holder, inner, baseY, axis, rate: p.spin ? Math.sign(p.spin.rate) * Math.min(1.2, Math.abs(p.spin.rate)) * Math.PI * 2 * 0.5 : 0.8, t: 0 };
   }
 
   private cloneForFade(obj: THREE.Group) {
@@ -485,6 +527,12 @@ export class Turntable {
     if (!rm && !this.dragging && idle && this.hl === null) this.yaw += SPIN * dt;
     this.spinner.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     this.ring.rotation.z += dt * (rm ? 0 : 0.12);
+    if (this.proj && !rm) {
+      const pr = this.proj;
+      pr.t += dt;
+      pr.holder.position.y = pr.baseY + Math.sin(pr.t * 2.2) * 0.015;
+      pr.inner.rotateOnAxis(pr.axis, pr.rate * dt);
+    }
 
     const k = 1 - Math.exp(-dt / 0.1); // ~300 ms ease
     this.dist += (this.distGoal - this.dist) * k;

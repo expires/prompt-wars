@@ -588,6 +588,10 @@ export class SpacetimeNetClient implements NetClient {
     const before = new Set(this.ownWeaponIds().map(String));
     // locked flags are editor state; the server strips them too
     const clean: ForgeDesign = { ...design, components: design.components.map(({ locked: _l, ...c }) => c) };
+    if (design.projectile) {
+      const { locked: _pl, ...projectile } = design.projectile;
+      clean.projectile = projectile;
+    }
     await this.conn.reducers.registerDesign({ designJson: JSON.stringify(clean), prompt: prompt.slice(0, 400) });
     const t0 = performance.now();
     while (performance.now() - t0 < 5000) {

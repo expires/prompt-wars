@@ -109,7 +109,13 @@ function checkInvariants(d: ForgeDesign) {
   expect(s.effectiveDps).toBeLessThanOrEqual(s.dpsCap + 1e-6);
   expect(w.damage * w.pellets + w.dotDamage).toBeLessThanOrEqual(95 + 1e-6);
   expect(JSON.parse(JSON.stringify(d))).toEqual(d);
-  expect(Object.keys(d).sort()).toEqual(['class', 'components', 'fireMode', 'fx', 'name', 'palette', 'stats', 'v']);
+  const { projectile, ...rest } = d;
+  expect(Object.keys(rest).sort()).toEqual(['class', 'components', 'fireMode', 'fx', 'name', 'palette', 'stats', 'v']);
+  if (projectile) {
+    expect(['projectile', 'arc']).toContain(d.fireMode);
+    expect(projectile.shapes.length).toBeGreaterThan(0);
+    expect(projectile.shapes.length).toBeLessThanOrEqual(FORGE_LIMITS.maxProjectileShapes);
+  }
 }
 
 describe('sanitizeDesign', () => {

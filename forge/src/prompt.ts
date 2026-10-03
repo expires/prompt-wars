@@ -2,7 +2,7 @@
 // request-specific goes in the user message.
 
 import { CLASS_TEMPLATES, WEAPON_CLASSES, describeTemplateForPrompt, filterCatalogForClass, type CatalogEntry, type WeaponClass } from '@ai-gaem/shared';
-import { FORGE_LIMITS, type Component, type DesignStats, type ForgeDesign } from '@ai-gaem/shared/forge';
+import { FORGE_LIMITS, type Component, type DesignStats, type ForgeDesign, type ProjectileDesign } from '@ai-gaem/shared/forge';
 import { FORGE_EXAMPLES } from '@ai-gaem/shared/forge/examples';
 import { catalog, searchTemplates, type Template } from '@ai-gaem/parts';
 
@@ -11,11 +11,13 @@ const EXAMPLE_PROMPTS = [
   'a frying pan',
   'a bubble gun with a big soap tank and a rubber duck',
   'a crocodile rocket launcher whose jaws are the muzzle',
+  'a banana launcher',
+  'throwing a fish',
 ];
 
 /** Example design as the NDJSON lines the model must produce. */
 export function designToNdjson(d: (typeof FORGE_EXAMPLES)[number] | ForgeDesign): string {
-  const { name, class: cls, fireMode, palette, fx, stats, components } = d as ForgeDesign;
+  const { name, class: cls, fireMode, palette, fx, stats, components, projectile } = d as ForgeDesign;
   const lines = [JSON.stringify({ t: 'meta', name, class: cls, fireMode, palette, fx })];
   for (const c of components as Component[]) {
     const { transform, ...rest } = c;
@@ -24,6 +26,10 @@ export function designToNdjson(d: (typeof FORGE_EXAMPLES)[number] | ForgeDesign)
     if (transform.rot.some(x => x !== 0)) tr.rot = transform.rot;
     if (transform.scale.some(x => x !== 1)) tr.scale = transform.scale;
     lines.push(JSON.stringify({ t: 'component', ...rest, transform: tr }));
+  }
+  if (projectile) {
+    const { locked: _l, ...p } = projectile as ProjectileDesign;
+    lines.push(JSON.stringify({ t: 'projectile', ...p }));
   }
   // carry weight is derived by the server from class + model size: don't teach the model to send it
   const { moveSpeedMult: _carry, ...shownStats } = (stats ?? {}) as Partial<DesignStats>;
@@ -39,7 +45,8 @@ export const FORGE_SYSTEM_PROMPT = `You are the weapon forge of a fast, silly, l
 Output ONLY newline-delimited JSON (NDJSON): one complete JSON object per line, no prose, no markdown, no code fences, no blank lines. In this order:
 1. {"t":"meta","name":...,"class":...,"fireMode":...,"palette":{"primary","secondary","accent","glow"},"fx":{...}}
 2. one {"t":"component",...} line per component, PARENTS BEFORE CHILDREN, the core / main body first
-3. {"t":"stats",...} last
+3. projectile / arc weapons only: one {"t":"projectile",...} line (the model of what it fires or throws)
+4. {"t":"stats",...} last
 Lines stream to the player one by one, so emit each component as soon as you have designed it.
 
 # Coordinates (metres)
@@ -77,6 +84,14 @@ material: {"color":"#rrggbb" | "primary"|"secondary"|"accent"|"glow", "metalness
 # fx (optional, in meta)
 {"muzzleFlashColor":"#rrggbb","projectileColor":"#rrggbb","projectileShape":"pellet|bolt|rocket|sphere|bubble|arrow|blob|disc|shard","projectileScale":0.2-3,"trail":"none|smoke|spark|fire|bubble|glow","trailColor":"#rrggbb"}
 
+# Projectile (projectile and arc fireModes: ALWAYS include one; never for hitscan / stream / melee)
+{"t":"projectile","label":"soap bubble","shapes":[...],"spin":{"axis":"x|y|z","rate":rev/s},"wobble":0-1,"trail":"none|smoke|spark|fire|bubble|glow","trailColor":"#rrggbb","impact":"puff|spark|splash|shatter|burst|splat"}
+- The flying object, designed from the same shapes and materials as components (<= ${FORGE_LIMITS.maxProjectileShapes} shapes, <= ${FORGE_LIMITS.projectileMaxTris} triangles, seg 4-10). Its own frame: centred on the origin, flight direction = -Z (rocket nose / arrow head toward -Z). Purely cosmetic: stats decide damage.
+- Size: real but readable, longest side ${FORGE_LIMITS.projectileMinSize}-${FORGE_LIMITS.projectileMaxSize} m (dart 0.15, rocket 0.4-0.6, bubble 0.2-0.3, thrown chair 0.6-0.9).
+- Make it match the weapon: rocket launcher -> rocket with fins + emissive flame cone at +Z; bubble gun -> translucent sphere (opacity 0.3) + small white highlight sphere, wobble 0.6; banana launcher -> a banana (tube or bent capsule); crossbow -> bolt with fletching.
+- Throwables (class throwable): the projectile IS the held object, a simplified copy of the weapon model (same look, 3-8 shapes) at its real size; give it spin (tumbling, e.g. {"axis":"x","rate":2}).
+- spin: rate in revolutions / s (-${FORGE_LIMITS.maxProjectileSpin}..${FORGE_LIMITS.maxProjectileSpin}); z = roll around the flight axis (rockets, drills), x = end-over-end tumble (thrown things), y = frisbee spin (discs). wobble: squash / stretch for soft things. Omit what you don't need.
+
 # Stats and balance
 Classes (fireMode options in brackets):
 ${CLASS_LINES}
@@ -85,7 +100,7 @@ The server enforces the balance budget (max 95 damage per shot, sustained DPS ~5
 Elements: set "element" only when the request implies one (flames / lava / dragon -> "fire": burn DoT; frost / snow / freeze -> "ice": stacking slow; venom / acid -> "poison": long weak DoT; lightning / tesla -> "shock": brief heavy slow). Elemental effects come out of the same budget. Carry weight is automatic: launchers / snipers / LMGs / huge models slow the player down, melee and sidearms speed them up.
 
 # Editing rules
-- LOCKED components are given as JSON: output each one VERBATIM as a component line (same id, everything identical) and build the rest of the design around them.
+- LOCKED components are given as JSON: output each one VERBATIM as a component line (same id, everything identical) and build the rest of the design around them. A LOCKED projectile is kept by the server: skip the projectile line.
 - REJECTED labels: never produce those components (or anything that is basically the same thing) again; do something different.
 - When a previous design is given, the player is iterating: keep its spirit unless asked otherwise.
 
@@ -100,6 +115,7 @@ export interface PromptContext {
   templates: Template[];
   catalogLines: string[];
   locked: Component[];
+  lockedProjectile?: ProjectileDesign;
   rejected: string[];
   previous?: ForgeDesign;
   variant: number;
@@ -145,12 +161,14 @@ export function buildUserPrompt(ctx: PromptContext): string {
       class: ctx.previous.class,
       palette: ctx.previous.palette,
       components: ctx.previous.components.map(c => `${c.id}: ${c.label} (${c.role}${c.parent ? ` on ${c.parent}` : ''})`),
+      ...(ctx.previous.projectile ? { projectile: ctx.previous.projectile.label } : {}),
     };
     parts.push(`Previous design (the player is iterating on it):\n${JSON.stringify(summary)}`);
   }
   if (ctx.locked.length) {
     parts.push(`LOCKED components (output each verbatim as a component line, then design the rest around them):\n${ctx.locked.map(c => JSON.stringify(c)).join('\n')}`);
   }
+  if (ctx.lockedProjectile) parts.push(`LOCKED projectile "${ctx.lockedProjectile.label}" (kept by the server: do not output a projectile line).`);
   if (ctx.rejected.length) parts.push(`REJECTED (never produce these again): ${ctx.rejected.map(r => JSON.stringify(r)).join(', ')}`);
   if (ctx.catalogLines.length) {
     parts.push(`Optional catalog parts (catalogPart.partId; supporting bits only):\n${ctx.catalogLines.join('\n')}`);

@@ -59,6 +59,7 @@ const P: Record<string, string> = {
   guard: '<path d="M3 12h18M12 8v8"/>',
   pommel: '<circle cx="12" cy="15" r="5"/><path d="M12 2v8"/>',
   deco: '<path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/>',
+  projectile: '<path d="M14 4h6v6l-9 9-6-6z"/><path d="M5 19l-2 2M8 16l-3 3"/>',
 };
 
 export type IconName = keyof typeof P | string;

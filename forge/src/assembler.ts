@@ -2,13 +2,17 @@
 // a final sanitized design. Shared by the LLM streamer and the mock.
 
 import {
+  firesProjectiles,
   matchesRejected,
+  projectileRejected,
   sanitizeComponent,
+  sanitizeProjectile,
   sanitizeDesign,
   FORGE_LIMITS,
   type Component,
   type ForgeDesign,
   type ForgeEvent,
+  type ProjectileDesign,
   type SanitizeOptions,
 } from '@ai-gaem/shared/forge';
 import { normalizeClass, isFireMode, CLASS_TEMPLATES, type FireMode, type WeaponClass } from '@ai-gaem/shared';
@@ -18,6 +22,8 @@ export type Emit = (ev: ForgeEvent) => void;
 export interface AssemblerOptions extends SanitizeOptions {
   variant: number;
   locked: Component[];
+  /** projectile kept verbatim (the model's projectile line is ignored) */
+  lockedProjectile?: ProjectileDesign;
   rejected: string[];
   previous?: ForgeDesign;
   classHint?: WeaponClass;
@@ -62,6 +68,7 @@ export class DesignAssembler {
   private meta: Record<string, unknown> | null = null;
   private stats: Record<string, unknown> | null = null;
   private components: Component[] = [];
+  private projectile: ProjectileDesign | undefined;
   private ids = new Set<string>();
   private lockedIds: Set<string>;
   private emittedLocked = false;
@@ -80,6 +87,7 @@ export class DesignAssembler {
     const t = typeof o.t === 'string' ? o.t : typeof o.type === 'string' ? o.type : o.shapes || o.catalogPart ? 'component' : '';
     if (t === 'meta') this.onMeta(o);
     else if (t === 'component') this.onComponent(o);
+    else if (t === 'projectile') this.onProjectile(o);
     else if (t === 'stats') {
       this.ensureMeta();
       const { t: _t, ...rest } = o;
@@ -127,6 +135,30 @@ export class DesignAssembler {
       this.components.push(c);
       this.emit({ type: 'component', variant: this.opts.variant, component: c });
     }
+    const lp = this.opts.lockedProjectile;
+    if (lp && firesProjectiles(this.meta?.fireMode as string)) {
+      this.projectile = lp;
+      this.emit({ type: 'projectile', variant: this.opts.variant, projectile: lp });
+    }
+  }
+
+  private onProjectile(o: Record<string, unknown>): void {
+    this.ensureMeta();
+    if (this.opts.lockedProjectile || this.projectile) return; // locked copy already emitted / one per design
+    if (!firesProjectiles(this.meta?.fireMode as string)) {
+      this.warnings.push(`projectile ignored (${String(this.meta?.fireMode)} weapons fire none)`);
+      return;
+    }
+    const { t: _t, ...rest } = o;
+    const p = sanitizeProjectile(rest, this.warnings);
+    if (!p) return;
+    delete p.locked;
+    if (this.opts.rejected.length && projectileRejected(p, this.opts.rejected)) {
+      this.warnings.push(`rejected projectile "${p.label}" skipped`);
+      return;
+    }
+    this.projectile = p;
+    this.emit({ type: 'projectile', variant: this.opts.variant, projectile: p });
   }
 
   private onComponent(o: Record<string, unknown>): void {
@@ -168,6 +200,7 @@ export class DesignAssembler {
       palette: this.metaRaw().palette ?? this.opts.previous?.palette,
       stats,
       components: this.components,
+      projectile: this.projectile,
     };
     if (!this.stats) this.warnings.push('model sent no stats; using defaults');
     const res = sanitizeDesign(raw, this.opts);

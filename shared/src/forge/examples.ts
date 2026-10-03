@@ -248,6 +248,98 @@ export const EXAMPLE_CROC_LAUNCHER = {
       shapes: [{ type: 'cone', r: 0.07, h: 0.22, seg: 8, pos: [0, 0, 0.11], rot: [90, 0, 0], scale: [1, 1, 0.6], material: M('primary') }],
     },
   ],
+  projectile: {
+    label: 'toothy croc rocket',
+    shapes: [
+      { type: 'cylinder', rTop: 0.05, rBottom: 0.05, h: 0.3, seg: 8, rot: [90, 0, 0], material: M('primary') },
+      { type: 'cone', r: 0.05, h: 0.12, seg: 8, pos: [0, 0, -0.21], rot: [-90, 0, 0], material: M('secondary') },
+      { type: 'cone', r: 0.008, h: 0.02, seg: 4, pos: [0.03, -0.03, -0.18], rot: [180, 0, 0], material: M('accent') },
+      { type: 'cone', r: 0.008, h: 0.02, seg: 4, pos: [-0.03, -0.03, -0.18], rot: [180, 0, 0], material: M('accent') },
+      { type: 'box', size: [0.18, 0.006, 0.08], pos: [0, 0, 0.12], material: M('secondary') },
+      { type: 'box', size: [0.006, 0.18, 0.08], pos: [0, 0, 0.12], material: M('secondary') },
+      { type: 'cone', r: 0.04, h: 0.12, seg: 6, pos: [0, 0, 0.21], rot: [90, 0, 0], material: M('glow', { emissive: 'glow', emissiveIntensity: 2, opacity: 0.8 }) },
+    ],
+    spin: { axis: 'z', rate: 1.5 },
+    trail: 'smoke',
+    impact: 'burst',
+  },
 };
 
-export const FORGE_EXAMPLES = [EXAMPLE_REVOLVER, EXAMPLE_FRYING_PAN, EXAMPLE_BUBBLE_GUN, EXAMPLE_CROC_LAUNCHER];
+/** Grenade launcher that lobs bananas: the projectile is a curved tube banana. */
+export const EXAMPLE_BANANA_LAUNCHER = {
+  name: 'Peel Lobber',
+  class: 'grenade_launcher',
+  fireMode: 'arc',
+  palette: { primary: '#ffd93b', secondary: '#6b4a2a', accent: '#fff4c2', glow: '#ffe066' },
+  fx: { muzzleFlashColor: '#fff4c2', trail: 'none' },
+  stats: { damage: 55, fireRate: 0.8, magSize: 4, reloadTime: 2.4, range: 45, spread: 1, projectileSpeed: 22, splashRadius: 3, gravityScale: 1, fuseTime: 1.5, knockback: 6 },
+  components: [
+    {
+      id: 'tube', label: 'giant banana tube', role: 'core',
+      transform: { pos: [0, 0.1, 0], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'cylinder', rTop: 0.06, rBottom: 0.065, h: 0.7, seg: 10, rot: [90, 0, 0], material: M('primary') },
+        { type: 'torus', r: 0.062, tube: 0.01, seg: 10, pos: [0, 0, -0.33], material: M('secondary') },
+      ],
+    },
+    {
+      id: 'grip', label: 'stubby grip', role: 'grip', parent: 'tube', attach: 'bottom',
+      transform: { pos: [0, 0, 0.08], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'box', size: [0.035, 0.12, 0.05], pos: [0, -0.06, 0], rot: [-12, 0, 0], material: M('secondary') }],
+    },
+    {
+      id: 'stem', label: 'banana stem stock', role: 'stock', parent: 'tube', attach: 'back',
+      transform: { pos: [0, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'cylinder', rTop: 0.02, rBottom: 0.035, h: 0.12, seg: 6, pos: [0, 0, 0.06], rot: [90, 0, 0], material: M('secondary') }],
+    },
+  ],
+  projectile: {
+    label: 'ripe banana',
+    shapes: [
+      { type: 'tube', r: 0.025, seg: 6, path: [[0, -0.025, 0.12], [0, 0.015, 0.04], [0, 0.025, -0.04], [0, -0.015, -0.12]], material: M('primary') },
+      { type: 'sphere', r: 0.012, wseg: 6, hseg: 4, pos: [0, -0.025, 0.125], material: M('secondary') },
+      { type: 'sphere', r: 0.012, wseg: 6, hseg: 4, pos: [0, -0.015, -0.125], material: M('secondary') },
+    ],
+    spin: { axis: 'x', rate: 1.5 },
+    impact: 'splat',
+  },
+};
+
+/** Throwable: the projectile is a simplified copy of the held fish. */
+export const EXAMPLE_THROWN_FISH = {
+  name: 'Flounder Fling',
+  class: 'throwable',
+  fireMode: 'arc',
+  palette: { primary: '#8fb3c9', secondary: '#4f6f85', accent: '#f2f2f2', glow: '#ffe066' },
+  fx: {},
+  stats: { damage: 40, fireRate: 1.2, magSize: 1, reloadTime: 1, range: 30, spread: 2, projectileSpeed: 20, gravityScale: 0.8, knockback: 8, headshotMultiplier: 1.8 },
+  components: [
+    {
+      id: 'body', label: 'slippery fish body', role: 'core',
+      transform: { pos: [0, 0.05, -0.12], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'sphere', r: 0.08, wseg: 10, hseg: 6, scale: [0.5, 1, 2.2], material: M('primary', { roughness: 0.3, metalness: 0.3 }) },
+        { type: 'sphere', r: 0.012, wseg: 6, hseg: 4, pos: [0.035, 0.03, -0.12], material: M('accent') },
+        { type: 'sphere', r: 0.012, wseg: 6, hseg: 4, pos: [-0.035, 0.03, -0.12], material: M('accent') },
+      ],
+    },
+    {
+      id: 'tail', label: 'flappy tail fin', role: 'deco', parent: 'body', attach: 'back',
+      transform: { pos: [0, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'extrude', depth: 0.01, rot: [0, 90, 0], outline: [[0, 0], [-0.08, 0.06], [-0.08, -0.06]], material: M('secondary') }],
+    },
+  ],
+  projectile: {
+    label: 'flying fish',
+    shapes: [
+      { type: 'sphere', r: 0.08, wseg: 10, hseg: 6, pos: [0, 0, -0.037], scale: [0.5, 1, 2.2], material: M('primary', { roughness: 0.3, metalness: 0.3 }) },
+      { type: 'extrude', depth: 0.01, pos: [0, 0, 0.133], rot: [0, 90, 0], outline: [[0, 0], [-0.08, 0.06], [-0.08, -0.06]], material: M('secondary') },
+      { type: 'sphere', r: 0.012, wseg: 6, hseg: 4, pos: [0.035, 0.03, -0.157], material: M('accent') },
+      { type: 'sphere', r: 0.012, wseg: 6, hseg: 4, pos: [-0.035, 0.03, -0.157], material: M('accent') },
+    ],
+    spin: { axis: 'x', rate: 2 },
+    impact: 'splat',
+  },
+};
+
+export const FORGE_EXAMPLES = [EXAMPLE_REVOLVER, EXAMPLE_FRYING_PAN, EXAMPLE_BUBBLE_GUN, EXAMPLE_CROC_LAUNCHER, EXAMPLE_BANANA_LAUNCHER, EXAMPLE_THROWN_FISH];

@@ -1084,6 +1084,7 @@ export const register_design = spacetimedb.reducer(
     if (design.components.length === 0) throw new SenderError('design has no usable components');
     // locked flags are editor state, not part of the stored weapon
     for (const c of design.components) delete c.locked;
+    if (design.projectile) delete design.projectile.locked;
     const w = designToWeapon(design);
     const row = insertWeapon(ctx, ctx.sender, w, prompt, false, JSON.stringify(design));
     if (!p.alive) ctx.db.player.identity.update({ ...p, weaponId: row.id, needsLoadout: false });
