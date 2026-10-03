@@ -4,6 +4,8 @@ import './parts'; // registers the built-in fallback kit
 import { getPart, isLocalPart, registerRegistry, type PartDef, type PartRegistryLike } from './partRegistry';
 import { onPartsLibrary, partsLibrary, type PartsLibrary } from './partsLibrary';
 import type { Weapon, WeaponPartRef } from './types';
+import type { MergedDesignUserData } from '@ai-gaem/shared/forge/build';
+import { acquireDesignModel } from './designModelCache';
 
 // The 2700+ part library (@ai-gaem/parts) is a lazily loaded chunk (see partsLibrary.ts). Once
 // it's in, it resolves through the registry too. Its parts use a different assembly convention
@@ -156,16 +158,23 @@ export function buildWeaponModel(weapon: Weapon): WeaponModel {
   return buildLegacyWeaponModel(weapon);
 }
 
-/** Forge design -> WeaponModel; muzzle = front of the muzzle / barrel components (else of the whole model) */
+/**
+ * Forge design -> WeaponModel; muzzle = front of the muzzle / barrel components (else of the whole
+ * model). In game the design is merged per material and shared through the design model cache:
+ * discard the model with releaseDesignModels() (and never dispose meshes flagged as shared).
+ */
 function buildFromDesign(lib: PartsLibrary, weapon: Weapon): WeaponModel {
-  const root = lib.buildDesign(weapon.design!);
+  const root = acquireDesignModel(lib, weapon.design!);
   root.name = `weapon:${weapon.name}`;
   root.updateMatrixWorld(true);
-  const comps = (root.userData.components ?? new Map()) as Map<string, THREE.Object3D>;
+  const roleBoxes = ((root.userData as Partial<MergedDesignUserData>).roleBoxes ?? {}) as MergedDesignUserData['roleBoxes'];
   const bb = new THREE.Box3();
   const pick = (roles: string[]) => {
     bb.makeEmpty();
-    for (const o of comps.values()) if (roles.includes(o.userData.role)) bb.union(new THREE.Box3().setFromObject(o));
+    for (const r of roles) {
+      const b = roleBoxes[r];
+      if (b) bb.union(new THREE.Box3(new THREE.Vector3(b[0], b[1], b[2]), new THREE.Vector3(b[3], b[4], b[5])));
+    }
     return !bb.isEmpty();
   };
   const melee = weapon.fireMode === 'melee';

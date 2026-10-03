@@ -220,9 +220,9 @@ export interface ForgeDesign {
 // ---------------------------------------------------------------------------
 
 export const FORGE_LIMITS = {
-  maxComponents: 24,
-  maxShapesPerComponent: 12,
-  maxTris: 4000,
+  maxComponents: 32,
+  maxShapesPerComponent: 16,
+  maxTris: 8000,
   /** whole-weapon bounding box, longest side */
   maxSizeRanged: 2.5,
   maxSizeMelee: 3,
@@ -250,5 +250,5 @@ export const FORGE_LIMITS = {
   /** revolutions / s */
   maxProjectileSpin: 6,
   /** register_design / service payload limit */
-  maxDesignJson: 48_000,
+  maxDesignJson: 96_000,
 } as const;

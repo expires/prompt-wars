@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { normalizeClass, type WeaponClass } from '@ai-gaem/shared';
 import { sanitizeComponent, sanitizeDesign, sanitizeProjectile, FORGE_LIMITS, type Component, type ForgeDesign, type ForgeEvent, type ProjectileDesign } from '@ai-gaem/shared/forge';
 import { DesignAssembler } from './assembler';
+import { classFromPrompt } from '@ai-gaem/shared/forge/refine';
 import { catalogContext, type PromptContext } from './prompt';
 import { generateMock } from './mock';
 import { generateWithLlm } from './llm';
@@ -32,7 +33,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ForgeConfig
     rateLimit: Number(env.FORGE_RATE_LIMIT ?? 20),
     rateWindowMs: Number(env.FORGE_RATE_WINDOW_MS ?? 10 * 60_000),
     timeoutMs: Number(env.FORGE_TIMEOUT_MS ?? 45_000),
-    maxBodyBytes: Number(env.FORGE_MAX_BODY ?? 96_000),
+    maxBodyBytes: Number(env.FORGE_MAX_BODY ?? 240_000),
     allowedOrigins: (env.FORGE_ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean),
     mockDelayMs: Number(env.FORGE_MOCK_DELAY_MS ?? 90),
     trustProxy: env.FORGE_TRUST_PROXY !== '0',
@@ -213,7 +214,8 @@ async function streamGeneration(req: IncomingMessage, res: ServerResponse, cfg: 
   const t0 = Date.now();
   emit({ type: 'start', variant: -1, variants: r.variants, model: mock ? 'mock' : cfg.model, mock });
 
-  const classHint = r.cls ?? r.previous?.class;
+  // the prompt's archetype ("revolver" -> pistol) beats catalog template guesses
+  const classHint = r.cls ?? r.previous?.class ?? classFromPrompt(r.prompt);
   const cat = catalogContext(r.prompt, classHint);
   const knownPartIds = getKnownIds();
   const hint: WeaponClass | undefined = classHint ?? cat.templates[0]?.class;
@@ -225,7 +227,9 @@ async function streamGeneration(req: IncomingMessage, res: ServerResponse, cfg: 
         classHint: hint,
         requestedClass: !!r.cls,
         templates: cat.templates,
-        catalogLines: cat.lines,
+        // catalog parts are not offered to the model any more: from-scratch shapes are seated and
+        // proportioned by the readability pass, catalog parts can't be (and clash in style)
+        catalogLines: [],
         locked: r.locked,
         lockedProjectile: r.lockedProjectile,
         rejected: r.rejected,
@@ -233,12 +237,13 @@ async function streamGeneration(req: IncomingMessage, res: ServerResponse, cfg: 
         variant,
         variants: r.variants,
       };
-      const asm = new DesignAssembler({ variant, locked: r.locked, lockedProjectile: r.lockedProjectile, rejected: r.rejected, previous: r.previous, classHint: hint, knownPartIds }, emit);
+      const asm = new DesignAssembler({ variant, locked: r.locked, lockedProjectile: r.lockedProjectile, rejected: r.rejected, previous: r.previous, classHint: hint, knownPartIds, prompt: r.prompt }, emit);
       try {
         if (mock) await generateMock({ signal: ac.signal, delayMs: cfg.mockDelayMs, seed: r.seed }, ctx, asm);
         else await generateWithLlm({ apiKey: cfg.apiKey, model: cfg.model, signal: ac.signal }, ctx, asm);
         if (asm.componentCount === 0) throw new Error('the forge produced no components');
         asm.finish();
+        if (asm.notes.length) console.log(`[forge] refine v${variant}: ${asm.notes.slice(0, 12).join(' | ')}`);
       } catch (e) {
         const msg = ac.signal.aborted ? `generation aborted (${String((ac.signal.reason as Error)?.message ?? 'timeout')})` : errorMessage(e);
         if (asm.componentCount > 0 && !ac.signal.aborted) {

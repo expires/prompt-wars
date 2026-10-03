@@ -1,7 +1,7 @@
 // Browser entry for the PNG renderer: window.renderDesigns(designs) draws each design in a side
 // view + a 3/4 view, with name / tri count labels. Bundled by scripts/render.ts.
 import * as THREE from 'three';
-import { buildDesign } from '@ai-gaem/shared/forge/build';
+import { applyForgeEnvironment, buildDesign, forgeEnvironment } from '@ai-gaem/shared/forge/build';
 import { boxSize, type ForgeDesign } from '@ai-gaem/shared/forge';
 
 declare global {
@@ -31,6 +31,7 @@ window.renderDesigns = (designs, cell = 420) => {
     sun.position.set(2, 3, 1.5);
     scene.add(sun);
     const g = buildDesign(d);
+    applyForgeEnvironment(g, forgeEnvironment(renderer));
     scene.add(g);
     const box = new THREE.Box3().setFromObject(g);
     const c = box.getCenter(new THREE.Vector3());

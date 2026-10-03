@@ -2,7 +2,7 @@
 // wheel zoom .6–1.6, reset), contact shadow + rotating forge-tick ring, per-component highlight /
 // dim / ghost (rejected) / lock glyphs, and the streaming "materialize" clip-plane sweep.
 import * as THREE from 'three';
-import { buildDesign, disposeDesignObject } from '@ai-gaem/shared/forge/build';
+import { applyForgeEnvironment, buildDesign, disposeDesignObject, forgeEnvironment } from '@ai-gaem/shared/forge/build';
 import { buildProjectileGroup } from '@ai-gaem/shared/forge/projectile3d';
 import { PROJECTILE_ID, presetProjectile, type ForgeDesign } from '@ai-gaem/shared';
 import { icon } from '../ui/icons';
@@ -82,6 +82,7 @@ function ringTexture(): THREE.CanvasTexture {
 export class Turntable {
   readonly canvas: HTMLCanvasElement;
   private readonly renderer: THREE.WebGLRenderer;
+  private readonly env: THREE.Texture;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(32, 1, 0.01, 50);
   /** spins (yaw) + tilts (pitch) */
@@ -146,6 +147,9 @@ export class Turntable {
     const fill = new THREE.DirectionalLight(0x9db4ff, 0.8);
     fill.position.set(-2, -1, 3);
     this.scene.add(hemi, key, rim, fill, this.spinner);
+    // PMREM studio environment (cached per renderer), set per design material so its
+    // metalness-tuned envMapIntensity applies: metals get something to reflect
+    this.env = forgeEnvironment(this.renderer);
     this.spinner.add(this.pivot);
 
     const shadowMat = new THREE.MeshBasicMaterial({ map: radialTexture('rgba(0,0,0,0.7)', 'rgba(0,0,0,0)'), transparent: true, depthWrite: false });
@@ -279,6 +283,7 @@ export class Turntable {
     let group: THREE.Group;
     try {
       group = buildDesign(design);
+      applyForgeEnvironment(group, this.env);
     } catch (err) {
       console.warn('[forge] preview build failed', err);
       return;
@@ -480,6 +485,7 @@ export class Turntable {
     let g: THREE.Group;
     try {
       g = buildDesign(design);
+      applyForgeEnvironment(g, this.env);
     } catch {
       return '';
     }
@@ -610,6 +616,7 @@ export class Turntable {
     this.ro.disconnect();
     if (this.model) this.disposeModel(this.model);
     if (this.fade) this.disposeModel(this.fade.obj);
+    this.env.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
     this.canvas.remove();

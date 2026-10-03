@@ -159,7 +159,10 @@ function sanitizeMaterial(raw: unknown): ShapeMaterial {
     }
   }
   const op = num(r.opacity);
-  if (op !== undefined && op < 1) m.opacity = fix(clamp(op, 0.15, 1));
+  if (op !== undefined && op < 1) {
+    const o = fix(clamp(op, 0.15, 1));
+    if (o < 1) m.opacity = o; // 0.99999 rounds to 1: omit (idempotent)
+  }
   if (r.flatShading === false) m.flatShading = false;
   return m;
 }

@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import type { DesignPalette, Shape, ShapeMaterial } from './types';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { SEG_DEFAULTS, tubeSegments } from './math';
 
 const DEG = Math.PI / 180;
@@ -73,12 +74,44 @@ export class MaterialCache {
         transparent: m.opacity !== undefined && m.opacity < 1,
         opacity: m.opacity ?? 1,
         depthWrite: !(m.opacity !== undefined && m.opacity < 1),
+        envMapIntensity: envIntensityFor(metal),
       });
       mat.name = key;
       this.map.set(key, mat);
     }
     return mat;
   }
+}
+
+/**
+ * Reflection strength for a Forge material: metals rely on the environment for their look (they
+ * have no diffuse), dielectrics only get a soft ambient lift so painted / plastic parts don't wash
+ * out. Only honoured when the env is set as material.envMap (see forgeEnvironment).
+ */
+export function envIntensityFor(metalness: number): number {
+  const m = Math.max(0, Math.min(1, metalness));
+  return 0.08 + 0.92 * m * m;
+}
+
+const envCache = new WeakMap<THREE.WebGLRenderer, THREE.Texture>();
+
+/**
+ * A cheap prefiltered (PMREM) studio environment for Forge weapons: three's RoomEnvironment,
+ * generated once per renderer and cached. Apply it per material (applyForgeEnvironment in ./build):
+ * with `scene.environment` three uses scene.environmentIntensity and ignores the per-material
+ * envMapIntensity tuning (non-metals would wash out).
+ */
+export function forgeEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture {
+  let tex = envCache.get(renderer);
+  if (!tex) {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const room = new RoomEnvironment();
+    tex = pmrem.fromScene(room, 0.04).texture;
+    room.dispose();
+    pmrem.dispose();
+    envCache.set(renderer, tex);
+  }
+  return tex;
 }
 
 export function setTransform(o: THREE.Object3D, pos: readonly number[], rot: readonly number[], scale: readonly number[]) {

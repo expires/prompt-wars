@@ -343,3 +343,265 @@ export const EXAMPLE_THROWN_FISH = {
 };
 
 export const FORGE_EXAMPLES = [EXAMPLE_REVOLVER, EXAMPLE_FRYING_PAN, EXAMPLE_BUBBLE_GUN, EXAMPLE_CROC_LAUNCHER, EXAMPLE_BANANA_LAUNCHER, EXAMPLE_THROWN_FISH];
+
+// ---------------------------------------------------------------------------
+// Examples written with shape macros (blade / pistolgrip / bevelbox / wedge). They are RAW model
+// output: run expandDesignMacros (or the forge assembler) before sanitizeDesign.
+// ---------------------------------------------------------------------------
+
+/** Karambit: short handle, claw blade curving down, finger ring at the back. */
+export const EXAMPLE_KARAMBIT = {
+  name: 'Talon Hook',
+  class: 'melee',
+  fireMode: 'melee',
+  palette: { primary: '#c9ced6', secondary: '#3e4b3a', accent: '#d98a2b', glow: '#ffd27a' },
+  fx: {},
+  stats: { damage: 30, fireRate: 2.6, spread: 70, knockback: 1.5, melee: { swing: 'slash', weight: 'light' } },
+  components: [
+    {
+      id: 'handle', label: 'ridged G10 handle', role: 'handle',
+      transform: { pos: [0, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'bevelbox', size: [0.024, 0.03, 0.105], bevel: 0.005, material: M('secondary', { roughness: 0.9 }) },
+        { type: 'cylinder', rTop: 0.004, rBottom: 0.004, h: 0.027, seg: 6, pos: [0, 0.002, -0.03], rot: [0, 0, 90], material: metal('accent') },
+        { type: 'cylinder', rTop: 0.004, rBottom: 0.004, h: 0.027, seg: 6, pos: [0, 0.002, 0.025], rot: [0, 0, 90], material: metal('accent') },
+      ],
+    },
+    {
+      id: 'blade', label: 'hooked claw blade', role: 'blade', parent: 'handle', attach: 'front',
+      transform: { pos: [0, 0.004, 0.004], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'blade', length: 0.08, width: 0.027, thickness: 0.005, curve: -0.9, tip: 'hook', material: metal('primary', { metalness: 0.85, roughness: 0.3 }) }],
+    },
+    {
+      id: 'ring', label: 'brass finger ring', role: 'pommel', parent: 'handle', attach: 'back',
+      transform: { pos: [0, 0, 0.02], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'torus', r: 0.02, tube: 0.0055, seg: 14, rot: [0, 90, 0], material: metal('accent') }],
+    },
+  ],
+};
+
+/** Katana: wrapped tsuka at the hand, round tsuba, long gently curved blade. */
+export const EXAMPLE_KATANA = {
+  name: 'Moonlit Edge',
+  class: 'melee',
+  fireMode: 'melee',
+  palette: { primary: '#d5dae0', secondary: '#2b2838', accent: '#e3d3a8', glow: '#ffffff' },
+  fx: {},
+  stats: { damage: 55, fireRate: 1.3, spread: 90, knockback: 3, melee: { swing: 'slash', weight: 'medium' } },
+  components: [
+    {
+      id: 'tsuka', label: 'silk-wrapped tsuka', role: 'handle',
+      transform: { pos: [0, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'bevelbox', size: [0.028, 0.034, 0.27], bevel: 0.006, material: M('secondary', { roughness: 0.95 }) },
+        ...[-0.1, -0.05, 0, 0.05, 0.1].map(z => ({ type: 'box', size: [0.03, 0.011, 0.011], pos: [0, 0.012, z], rot: [45, 0, 0], material: M('accent') })),
+      ],
+    },
+    {
+      id: 'tsuba', label: 'round brass tsuba', role: 'guard', parent: 'tsuka', attach: 'front',
+      transform: { pos: [0, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'cylinder', rTop: 0.04, rBottom: 0.04, h: 0.008, seg: 12, rot: [90, 0, 0], scale: [0.85, 1, 1], material: metal('#b8913a') },
+        { type: 'box', size: [0.014, 0.03, 0.02], pos: [0, 0.002, -0.012], material: metal('#b8913a') },
+      ],
+    },
+    {
+      id: 'blade', label: 'curved tamahagane blade', role: 'blade', parent: 'tsuba', attach: 'front',
+      transform: { pos: [0, 0.002, 0.003], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'blade', length: 0.7, width: 0.032, thickness: 0.007, curve: 0.04, tip: 'kissaki', material: metal('primary', { metalness: 0.6 }) }],
+    },
+    {
+      id: 'kashira', label: 'brass kashira cap', role: 'pommel', parent: 'tsuka', attach: 'back',
+      transform: { pos: [0, 0, 0.004], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'bevelbox', size: [0.031, 0.037, 0.016], bevel: 0.004, material: metal('#b8913a') }],
+    },
+  ],
+};
+
+/** Pump shotgun: gunmetal receiver, fat barrel over a tube mag, ribbed wooden pump, wooden stock. */
+export const EXAMPLE_PUMP_SHOTGUN = {
+  name: 'Porch Defender',
+  class: 'shotgun',
+  fireMode: 'hitscan',
+  palette: { primary: '#5a606b', secondary: '#8a5a32', accent: '#e0b04a', glow: '#ff9a3c' },
+  fx: { muzzleFlashColor: '#ffb347', trail: 'smoke' },
+  stats: { damage: 11, pellets: 9, fireRate: 1.1, magSize: 6, reloadTime: 2.6, range: 18, spread: 7, knockback: 4 },
+  components: [
+    {
+      id: 'receiver', label: 'gunmetal receiver', role: 'core',
+      transform: { pos: [0, 0.05, -0.03], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'bevelbox', size: [0.044, 0.07, 0.24], bevel: 0.006, material: M('primary', { metalness: 0.4 }) },
+        { type: 'box', size: [0.004, 0.022, 0.07], pos: [0.022, 0.012, -0.02], material: M('accent', { metalness: 0.5 }) },
+      ],
+    },
+    {
+      id: 'barrel', label: 'fat smoothbore barrel', role: 'barrel', parent: 'receiver', attach: 'front',
+      transform: { pos: [0, 0.016, 0.005], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'cylinder', rTop: 0.0125, rBottom: 0.0125, h: 0.5, seg: 16, pos: [0, 0, -0.25], rot: [90, 0, 0], material: M('primary', { metalness: 0.75, roughness: 0.35 }) },
+        { type: 'sphere', r: 0.005, wseg: 6, hseg: 4, pos: [0, 0.02, -0.49], material: M('accent') },
+      ],
+    },
+    {
+      id: 'tube', label: 'tube magazine', role: 'deco', parent: 'barrel', attach: 'bottom',
+      transform: { pos: [0, 0.002, 0.03], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'cylinder', rTop: 0.014, rBottom: 0.014, h: 0.42, seg: 8, pos: [0, -0.012, 0], rot: [90, 0, 0], material: M('#3e434b', { metalness: 0.3 }) }],
+    },
+    {
+      id: 'pump', label: 'ribbed walnut pump', role: 'under', parent: 'barrel', attach: 'bottom',
+      transform: { pos: [0, 0.006, 0.1], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'bevelbox', size: [0.05, 0.044, 0.16], bevel: 0.008, pos: [0, -0.018, 0], material: M('secondary', { roughness: 0.8 }) },
+        ...[-0.05, -0.017, 0.017, 0.05].map(z => ({ type: 'box', size: [0.054, 0.006, 0.008], pos: [0, -0.026, z], material: M('#5a3a20') })),
+      ],
+    },
+    {
+      id: 'grip', label: 'walnut pistol grip', role: 'grip', parent: 'receiver', attach: 'bottom',
+      transform: { pos: [0, 0.004, 0.08], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'pistolgrip', h: 0.1, w: 0.032, d: 0.045, angle: 20, material: M('secondary', { roughness: 0.8 }) }],
+    },
+    {
+      id: 'guard', label: 'trigger guard', role: 'deco', parent: 'receiver', attach: 'bottom',
+      transform: { pos: [0, 0, 0.035], rot: [0, 90, 180], scale: [1, 1, 1] },
+      shapes: [{ type: 'torus', r: 0.022, tube: 0.004, seg: 10, arc: 180, material: M('#3e434b', { metalness: 0.3 }) }],
+    },
+    {
+      id: 'stock', label: 'walnut buttstock', role: 'stock', parent: 'receiver', attach: 'back',
+      transform: { pos: [0, -0.005, -0.004], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        {
+          type: 'extrude', depth: 0.04, bevel: 0.004, rot: [0, 90, 0], material: M('secondary', { roughness: 0.8 }),
+          outline: [[0, 0.03], [0, -0.03], [-0.1, -0.055], [-0.29, -0.09], [-0.31, -0.09], [-0.31, 0.035], [-0.1, 0.03]],
+        },
+        { type: 'box', size: [0.044, 0.13, 0.014], pos: [0, -0.028, 0.312], material: M('#2a2a2e', { roughness: 1 }) },
+      ],
+    },
+  ],
+};
+
+/** Glock-style striker pistol: gunmetal slide, FDE polymer frame + rail, raked grip. Real 186 mm. */
+export const EXAMPLE_GLOCK = {
+  name: 'Striker 17',
+  class: 'pistol',
+  fireMode: 'hitscan',
+  palette: { primary: '#3b3f45', secondary: '#8a7a5c', accent: '#e8e8e0', glow: '#ffcf70' },
+  fx: { muzzleFlashColor: '#ffd27a', trail: 'none' },
+  stats: { damage: 26, fireRate: 4.5, magSize: 17, reloadTime: 1.5, range: 45, spread: 1, headshotMultiplier: 2 },
+  components: [
+    {
+      id: 'slide', label: 'nitride steel slide', role: 'core',
+      transform: { pos: [0, 0.03, -0.05], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'bevelbox', size: [0.0255, 0.028, 0.186], bevel: 0.003, material: M('primary', { metalness: 0.7, roughness: 0.45 }) },
+        { type: 'box', size: [0.002, 0.012, 0.036], pos: [0.0128, 0.004, -0.012], material: M('#1c1e21', { roughness: 0.6 }) },
+        ...[0.064, 0.071, 0.078, 0.085].map(z => ({ type: 'box', size: [0.0262, 0.02, 0.0018], pos: [0, 0, z], material: M('#26292d') })),
+        { type: 'box', size: [0.004, 0.005, 0.006], pos: [0, 0.0165, -0.086], material: M('primary') },
+        { type: 'sphere', r: 0.0013, wseg: 6, hseg: 4, pos: [0, 0.0175, -0.0893], material: M('accent', { emissive: 'accent', emissiveIntensity: 0.3 }) },
+        { type: 'box', size: [0.017, 0.006, 0.007], pos: [0, 0.0165, 0.086], material: M('primary') },
+      ],
+    },
+    {
+      id: 'muzzle', label: 'barrel crown', role: 'barrel', parent: 'slide', attach: 'front',
+      transform: { pos: [0, 0.003, 0.002], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'cylinder', rTop: 0.0075, rBottom: 0.0075, h: 0.004, seg: 16, rot: [90, 0, 0], material: M('#555a61', { metalness: 0.8, roughness: 0.35 }) },
+        { type: 'cylinder', rTop: 0.0045, rBottom: 0.0045, h: 0.0045, seg: 12, rot: [90, 0, 0], material: M('#141518') },
+      ],
+    },
+    {
+      id: 'frame', label: 'polymer frame with rail', role: 'deco', parent: 'slide', attach: 'bottom',
+      transform: { pos: [0, 0.001, -0.035], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'bevelbox', size: [0.024, 0.018, 0.115], bevel: 0.003, pos: [0, -0.009, 0], material: M('secondary', { roughness: 0.75 }) },
+        { type: 'rail', length: 0.04, width: 0.02, height: 0.006, pos: [0, -0.024, -0.03], rot: [180, 0, 0], material: M('secondary', { roughness: 0.75 }) },
+        { type: 'torus', r: 0.021, tube: 0.0035, seg: 12, arc: 180, pos: [0, -0.018, 0.035], rot: [0, 90, 180], material: M('secondary', { roughness: 0.75 }) },
+        { type: 'box', size: [0.006, 0.02, 0.005], pos: [0, -0.026, 0.038], rot: [-12, 0, 0], material: M('#2a2c30') },
+      ],
+    },
+    {
+      id: 'grip', label: 'stippled polymer grip', role: 'grip', parent: 'slide', attach: 'bottom',
+      transform: { pos: [0, 0.002, 0.06], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'pistolgrip', h: 0.105, w: 0.03, d: 0.05, angle: 22, material: M('secondary', { roughness: 0.9 }) },
+        { type: 'box', size: [0.031, 0.008, 0.05], pos: [0, -0.108, 0.043], rot: [-22, 0, 0], material: M('#2a2c30', { roughness: 0.8 }) },
+      ],
+    },
+  ],
+};
+
+/** AK-style rifle: stamped receiver, wooden furniture, curved steel mag, slant brake. Real 880 mm. */
+export const EXAMPLE_AK = {
+  name: 'Kalash Classic',
+  class: 'rifle',
+  fireMode: 'hitscan',
+  palette: { primary: '#4a4f57', secondary: '#8b4f2b', accent: '#c9c4b5', glow: '#ffb347' },
+  fx: { muzzleFlashColor: '#ffc46b', trail: 'smoke' },
+  stats: { damage: 30, fireRate: 10, magSize: 30, reloadTime: 2.4, range: 80, spread: 2.2, headshotMultiplier: 2 },
+  components: [
+    {
+      id: 'receiver', label: 'stamped steel receiver', role: 'core',
+      transform: { pos: [0, 0.035, -0.05], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'bevelbox', size: [0.045, 0.058, 0.27], bevel: 0.004, material: M('primary', { metalness: 0.75, roughness: 0.42 }) },
+        { type: 'cylinder', rTop: 0.021, rBottom: 0.021, h: 0.24, seg: 16, pos: [0, 0.027, 0.01], rot: [90, 0, 0], scale: [1, 0.45, 1], material: M('#575d66', { metalness: 0.75, roughness: 0.38 }) },
+        { type: 'cylinder', rTop: 0.005, rBottom: 0.005, h: 0.022, seg: 8, pos: [0.031, 0.016, -0.04], rot: [0, 0, 90], material: M('#575d66', { metalness: 0.8 }) },
+        { type: 'box', size: [0.003, 0.014, 0.075], pos: [0.0235, 0.008, 0.035], rot: [6, 0, 0], material: M('#3a3e45', { metalness: 0.7 }) },
+        { type: 'bevelbox', size: [0.022, 0.016, 0.04], bevel: 0.003, pos: [0, 0.035, -0.115], material: M('primary', { metalness: 0.75 }) },
+      ],
+    },
+    {
+      id: 'barrel', label: 'chrome-lined barrel', role: 'barrel', parent: 'receiver', attach: 'front',
+      transform: { pos: [0, 0.012, 0.004], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'cylinder', rTop: 0.0085, rBottom: 0.0095, h: 0.4, seg: 16, pos: [0, 0, -0.2], rot: [90, 0, 0], material: M('primary', { metalness: 0.8, roughness: 0.35 }) },
+        { type: 'cylinder', rTop: 0.007, rBottom: 0.007, h: 0.2, seg: 12, pos: [0, 0.022, -0.1], rot: [90, 0, 0], material: M('primary', { metalness: 0.8 }) },
+        { type: 'box', size: [0.004, 0.04, 0.014], pos: [0, 0.02, -0.36], material: M('primary', { metalness: 0.8 }) },
+        { type: 'torus', r: 0.012, tube: 0.0025, seg: 12, pos: [0, 0.036, -0.36], rot: [0, 90, 0], material: M('primary', { metalness: 0.8 }) },
+        { type: 'cylinder', rTop: 0.012, rBottom: 0.011, h: 0.035, seg: 16, pos: [0, 0, -0.415], rot: [90, 0, 0], material: M('#3a3e45', { metalness: 0.8, roughness: 0.4 }) },
+      ],
+    },
+    {
+      id: 'handguard', label: 'laminated wood handguard', role: 'under', parent: 'barrel', attach: 'bottom',
+      transform: { pos: [0, 0.016, 0.105], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'bevelbox', size: [0.046, 0.04, 0.19], bevel: 0.008, material: M('secondary', { roughness: 0.6 }) },
+        { type: 'bevelbox', size: [0.034, 0.024, 0.17], bevel: 0.007, pos: [0, 0.04, 0.005], material: M('secondary', { roughness: 0.6 }) },
+        { type: 'box', size: [0.047, 0.004, 0.012], pos: [0, -0.012, -0.095], material: M('primary', { metalness: 0.75 }) },
+      ],
+    },
+    {
+      id: 'mag', label: 'curved steel magazine', role: 'mag', parent: 'receiver', attach: 'bottom',
+      transform: { pos: [0, 0.006, -0.06], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        {
+          type: 'extrude', depth: 0.026, bevel: 0.002, rot: [0, 90, 0], material: M('#41464e', { metalness: 0.7, roughness: 0.45 }),
+          outline: [[0.028, 0], [0.036, -0.065], [0.058, -0.13], [0.09, -0.19], [0.03, -0.205], [-0.002, -0.14], [-0.022, -0.07], [-0.028, 0]],
+        },
+      ],
+    },
+    {
+      id: 'grip', label: 'wooden pistol grip', role: 'grip', parent: 'receiver', attach: 'bottom',
+      transform: { pos: [0, 0.002, 0.075], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [{ type: 'pistolgrip', h: 0.1, w: 0.03, d: 0.04, angle: 20, material: M('secondary', { roughness: 0.6 }) }],
+    },
+    {
+      id: 'trigger', label: 'trigger and guard', role: 'deco', parent: 'receiver', attach: 'bottom',
+      transform: { pos: [0, 0, 0.035], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'torus', r: 0.022, tube: 0.003, seg: 12, arc: 180, rot: [0, 90, 180], material: M('primary', { metalness: 0.75 }) },
+        { type: 'box', size: [0.005, 0.02, 0.005], pos: [0, -0.012, 0.004], rot: [-15, 0, 0], material: M('#2e3238') },
+      ],
+    },
+    {
+      id: 'stock', label: 'wooden buttstock', role: 'stock', parent: 'receiver', attach: 'back',
+      transform: { pos: [0, -0.004, -0.004], rot: [0, 0, 0], scale: [1, 1, 1] },
+      shapes: [
+        { type: 'extrude', depth: 0.038, bevel: 0.004, rot: [0, 90, 0], material: M('secondary', { roughness: 0.6 }), outline: [[0, 0.024], [0, -0.026], [-0.1, -0.05], [-0.25, -0.078], [-0.258, -0.074], [-0.258, -0.004], [-0.1, 0.012]] },
+        { type: 'box', size: [0.04, 0.078, 0.008], pos: [0, -0.041, 0.262], rot: [-6, 0, 0], material: M('primary', { metalness: 0.7 }) },
+      ],
+    },
+  ],
+};
+
+export const FORGE_MACRO_EXAMPLES = [EXAMPLE_KARAMBIT, EXAMPLE_KATANA, EXAMPLE_PUMP_SHOTGUN, EXAMPLE_GLOCK, EXAMPLE_AK];

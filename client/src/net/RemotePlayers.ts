@@ -6,6 +6,7 @@ import { CENTER_OFFSET } from '../player/PlayerController';
 import { Hitboxes } from '../player/hitboxes';
 import { buildWeaponModel } from '../weapons/buildWeaponModel';
 import { onPartsLibrary } from '../weapons/partsLibrary';
+import { releaseDesignModels } from '../weapons/designModelCache';
 import { THROW_TIME } from '../weapons/throwAnim';
 import { MELEE_PHASES, meleeMetaOf, meleeSwingDuration } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
@@ -256,6 +257,7 @@ export class RemotePlayers {
     r.weaponId = weaponId;
     const w = weaponId ? this.net.getWeapon?.(weaponId) : undefined;
     if (!w) return;
+    releaseDesignModels(r.model.hand);
     r.model.hand.clear();
     r.modelWeaponId = weaponId ?? '';
     const m = buildWeaponModel(w).root;
@@ -277,6 +279,9 @@ export class RemotePlayers {
     this.scene.remove(r.model.root);
     (r.nameTag.material as THREE.SpriteMaterial).map?.dispose();
     r.nameTag.material.dispose();
+    // shared (cached) design models must not be disposed with the body
+    releaseDesignModels(r.model.hand);
+    r.model.hand.clear();
     r.model.dispose();
     this.remotes.delete(id);
   }

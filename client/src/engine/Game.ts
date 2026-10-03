@@ -41,6 +41,7 @@ import { rarityOf } from '../ui/rarity';
 import { SpawnEditor } from '../ui/SpawnEditor';
 import { OfflineNetClient, PoseSender, RemotePlayers, type NetClient, type NetPlayer } from '../net';
 import { DamageNumbers } from '../ui/DamageNumbers';
+import { setDesignEnvRenderer } from '../weapons/designModelCache';
 
 export const MAX_HP = 100;
 /** room between the scan's own bounds and the invisible wall net */
@@ -145,6 +146,7 @@ export class Game {
   async start(container: HTMLElement, opts: GameOptions = {}) {
     this.opts = opts;
     this.rc = createRenderer(container);
+    setDesignEnvRenderer(this.rc.renderer);
     this.physics = await initPhysics();
     this.input = new Input(this.rc.renderer.domElement);
     this.hud = new Hud();

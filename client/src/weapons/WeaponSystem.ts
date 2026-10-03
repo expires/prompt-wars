@@ -10,6 +10,7 @@ import type { HitInfo, HitTarget, TargetRegistry } from './targets';
 import { resolveFireMode, type FireMode, type Weapon } from './types';
 import { effectiveSpread, weaponHandling, type Handling, type MoveState } from './handling';
 import { buildWeaponModel } from './buildWeaponModel';
+import { releaseDesignModels } from './designModelCache';
 import { THROW_TIME } from './throwAnim';
 import { projectileLookOf, type ProjectileLook } from './projectileLook';
 import { WALK_SPEED } from '../player/PlayerController';
@@ -459,6 +460,7 @@ export class WeaponSystem {
   private thrownMesh(w: Weapon): THREE.Object3D {
     const id = w.id ?? null;
     if (this.throwSrcId !== id || !this.throwSrc) {
+      releaseDesignModels(this.throwSrc);
       this.throwSrc = buildWeaponModel(w).root;
       this.throwSrcId = id;
     }

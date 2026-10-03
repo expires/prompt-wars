@@ -6,7 +6,19 @@ import * as THREE from 'three';
 import { assembleWeapon, getPart, type Template } from '@ai-gaem/parts';
 import { CLASS_TEMPLATES, inferElementFromText, templateToRawWeapon, type WeaponClass } from '@ai-gaem/shared';
 import { firesProjectiles } from '@ai-gaem/shared/forge';
-import { EXAMPLE_BANANA_LAUNCHER, EXAMPLE_THROWN_FISH } from '@ai-gaem/shared/forge/examples';
+import {
+  EXAMPLE_BANANA_LAUNCHER,
+  EXAMPLE_BUBBLE_GUN,
+  EXAMPLE_AK,
+  EXAMPLE_FRYING_PAN,
+  EXAMPLE_GLOCK,
+  EXAMPLE_KARAMBIT,
+  EXAMPLE_KATANA,
+  EXAMPLE_PUMP_SHOTGUN,
+  EXAMPLE_REVOLVER,
+  EXAMPLE_THROWN_FISH,
+} from '@ai-gaem/shared/forge/examples';
+import { archetypeFromText, type Archetype } from '@ai-gaem/shared/forge/refine';
 import type { DesignAssembler } from './assembler';
 import type { PromptContext } from './prompt';
 
@@ -165,6 +177,18 @@ function mockProjectile(cls: WeaponClass, prompt: string, rand: () => number): R
   };
 }
 
+/** Hand-built designs the mock streams when the prompt names their archetype (offline quality). */
+const EXAMPLE_BY_ARCHETYPE: Partial<Record<Archetype, Record<string, unknown>>> = {
+  karambit: EXAMPLE_KARAMBIT,
+  katana: EXAMPLE_KATANA,
+  shotgun: EXAMPLE_PUMP_SHOTGUN,
+  revolver: EXAMPLE_REVOLVER,
+  bubble_gun: EXAMPLE_BUBBLE_GUN,
+  pan: EXAMPLE_FRYING_PAN,
+  pistol: EXAMPLE_GLOCK,
+  rifle: EXAMPLE_AK,
+};
+
 const NAME_BITS = ['Mk II', 'Deluxe', 'Prototype', 'Custom', 'XL', 'Turbo', 'Mini', 'Supreme', 'Classic'];
 
 export async function generateMock(
@@ -183,6 +207,30 @@ export async function generateMock(
   const delay = () => (opts.delayMs > 0 ? sleep(opts.delayMs * (0.6 + rand() * 0.8)) : Promise.resolve());
 
   const throwable = ctx.classHint === 'throwable' || /\b(throw|toss|lob|hurl|chuck|fling|yeet)/i.test(ctx.prompt);
+  const arch = archetypeFromText(ctx.prompt);
+  const example = !throwable && arch ? EXAMPLE_BY_ARCHETYPE[arch] : undefined;
+  if (example) {
+    const rejected = (label: string) => ctx.rejected.some(r => r && label.toLowerCase().includes(r.toLowerCase()));
+    const ex = example as { name: string; class: string; fireMode: string; palette: Record<string, string>; fx: unknown; stats: Record<string, unknown>; components: Record<string, unknown>[]; projectile?: unknown };
+    const bit = NAME_BITS[Math.floor(rand() * NAME_BITS.length)];
+    await delay();
+    asm.push({ t: 'meta', name: ex.name.length + bit.length < 40 ? `${ex.name} ${bit}` : ex.name, class: ex.class, fireMode: ex.fireMode, palette: { ...ex.palette, accent: hsl(rand(), 0.75, 0.55) }, fx: ex.fx });
+    for (const c of ex.components) {
+      if (rejected(String(c.label))) continue;
+      await delay();
+      asm.push({ t: 'component', ...c });
+    }
+    if (ex.projectile) {
+      await delay();
+      asm.push({ t: 'projectile', ...(ex.projectile as Record<string, unknown>) });
+    }
+    await delay();
+    const stats = { ...ex.stats };
+    const element = inferElementFromText(ctx.prompt);
+    if (element) stats.element = element;
+    asm.push({ t: 'stats', ...stats });
+    return;
+  }
   const pool = ctx.templates.length && !throwable ? ctx.templates : [];
   const t = pool[Math.min(pool.length - 1, Math.floor(rand() * Math.min(pool.length, 3)))];
   const hue = rand();

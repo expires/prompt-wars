@@ -121,8 +121,18 @@ export function shapeLocalBox(s: Shape): Box3 {
       return sym(s.r, s.h / 2, s.r);
     case 'sphere':
       return sym(s.r, s.r, s.r);
-    case 'torus':
-      return sym(s.r + s.tube, s.r + s.tube, s.tube);
+    case 'torus': {
+      const R = s.r + s.tube;
+      const arc = s.arc ?? 360;
+      if (arc >= 360) return sym(R, R, s.tube);
+      // partial ring (THREE: from +X counter-clockwise by `arc`): box of the swept centre line + tube
+      const b = emptyBox();
+      const a1 = (arc * Math.PI) / 180;
+      const angles = [0, a1];
+      for (let k = 1; k * (Math.PI / 2) < a1; k++) angles.push(k * (Math.PI / 2));
+      for (const a of angles) expandByPoint(b, [s.r * Math.cos(a), s.r * Math.sin(a), 0]);
+      return { min: [b.min[0] - s.tube, b.min[1] - s.tube, -s.tube], max: [b.max[0] + s.tube, b.max[1] + s.tube, s.tube] };
+    }
     case 'capsule':
       return sym(s.r, s.h / 2 + s.r, s.r);
     case 'lathe': {

@@ -37,7 +37,7 @@ describe('forge service (mock)', () => {
   });
 
   it('streams start -> meta -> components -> stats -> done -> end, with a legal final design', async () => {
-    const { status, events } = await generate({ prompt: 'a frying pan that shoots baguettes', seed: 1, playerIdentity: 'aa01' });
+    const { status, events } = await generate({ prompt: 'a toaster that shoots baguettes', seed: 1, playerIdentity: 'aa01' });
     expect(status).toBe(200);
     const types = events.map(e => e.type);
     expect(types[0]).toBe('start');
@@ -128,7 +128,7 @@ describe('forge service (mock)', () => {
     server.limiter['hits'].clear();
     expect((await generate({})).status).toBe(400);
     expect((await generate([1, 2])).status).toBe(400);
-    const big = await generate({ prompt: 'x', junk: 'y'.repeat(200_000) });
+    const big = await generate({ prompt: 'x', junk: 'y'.repeat(300_000) });
     expect(big.status).toBe(413);
     const res = await fetch(`${base}/api/forge/generate`, { method: 'GET' });
     expect(res.status).toBe(405);

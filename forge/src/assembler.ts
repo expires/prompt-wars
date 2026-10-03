@@ -15,6 +15,8 @@ import {
   type ProjectileDesign,
   type SanitizeOptions,
 } from '@ai-gaem/shared/forge';
+import { expandMacros } from '@ai-gaem/shared/forge/macros';
+import { adjustRawMacros, refineContext, refineDesign, refineIncoming, refinePalette, type RefineContext } from '@ai-gaem/shared/forge/refine';
 import { normalizeClass, isFireMode, CLASS_TEMPLATES, type FireMode, type WeaponClass } from '@ai-gaem/shared';
 
 export type Emit = (ev: ForgeEvent) => void;
@@ -27,6 +29,10 @@ export interface AssemblerOptions extends SanitizeOptions {
   rejected: string[];
   previous?: ForgeDesign;
   classHint?: WeaponClass;
+  /** the player's request (archetype detection for the readability pass) */
+  prompt?: string;
+  /** skip refineDesign (tests / raw dumps) */
+  raw?: boolean;
 }
 
 /** Incremental NDJSON parser: feed text chunks, get complete JSON objects. Tolerates fences / prose lines. */
@@ -72,6 +78,9 @@ export class DesignAssembler {
   private ids = new Set<string>();
   private lockedIds: Set<string>;
   private emittedLocked = false;
+  private refine: RefineContext | null = null;
+  /** readability-pass notes (logged, not shown to players) */
+  readonly notes: string[] = [];
   readonly warnings: string[] = [];
 
   constructor(private opts: AssemblerOptions, private emit: Emit) {
@@ -111,6 +120,11 @@ export class DesignAssembler {
     this.meta = { ...rest, class: cls, fireMode };
     const preview = sanitizeDesign({ ...this.meta, components: [] }, this.opts).design;
     this.meta.name = preview.name;
+    if (!this.opts.raw) {
+      this.refine = refineContext(preview, { prompt: this.opts.prompt });
+      preview.palette = refinePalette(preview.palette);
+      this.meta.palette = preview.palette;
+    }
     this.emit({ type: 'meta', variant: this.opts.variant, name: preview.name, class: preview.class, fireMode: preview.fireMode, palette: preview.palette, fx: preview.fx });
     this.emitLocked();
   }
@@ -150,7 +164,7 @@ export class DesignAssembler {
       return;
     }
     const { t: _t, ...rest } = o;
-    const p = sanitizeProjectile(rest, this.warnings);
+    const p = sanitizeProjectile(expandMacros(rest), this.warnings);
     if (!p) return;
     delete p.locked;
     if (this.opts.rejected.length && projectileRejected(p, this.opts.rejected)) {
@@ -170,7 +184,7 @@ export class DesignAssembler {
       this.warnings.push('component limit reached; extra dropped');
       return;
     }
-    const c = sanitizeComponent(rest, this.opts, this.warnings);
+    let c = sanitizeComponent(expandMacros(this.refine ? adjustRawMacros(rest, this.refine.archetype) : rest), this.opts, this.warnings);
     if (!c) return;
     if (this.opts.rejected.length && matchesRejected(c, this.opts.rejected)) {
       this.warnings.push(`rejected component "${c.label}" skipped`);
@@ -186,6 +200,13 @@ export class DesignAssembler {
     c.id = cid;
     if (c.parent !== undefined && !this.ids.has(c.parent)) delete c.parent;
     if (c.parent === undefined) delete c.attach;
+    if (this.refine && this.meta?.palette) {
+      try {
+        c = refineIncoming(this.components, c, this.meta.palette as never, this.refine, this.notes);
+      } catch (e) {
+        this.notes.push(`refine failed: ${String(e)}`);
+      }
+    }
     this.ids.add(cid);
     this.components.push(c);
     this.emit({ type: 'component', variant: this.opts.variant, component: c });
@@ -204,9 +225,19 @@ export class DesignAssembler {
     };
     if (!this.stats) this.warnings.push('model sent no stats; using defaults');
     const res = sanitizeDesign(raw, this.opts);
+    let design = res.design;
+    if (this.refine) {
+      try {
+        const r = refineDesign(design, { ...this.opts, prompt: this.opts.prompt, archetype: this.refine.archetype });
+        design = r.design;
+        this.notes.push(...r.notes);
+      } catch (e) {
+        this.notes.push(`refine failed: ${String(e)}`);
+      }
+    }
     const warnings = [...this.warnings, ...res.warnings];
-    this.emit({ type: 'done', variant: this.opts.variant, design: res.design, warnings });
-    return res.design;
+    this.emit({ type: 'done', variant: this.opts.variant, design, warnings });
+    return design;
   }
 }
 

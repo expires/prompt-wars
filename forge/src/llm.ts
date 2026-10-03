@@ -21,7 +21,11 @@ export async function generateWithLlm(
   asm: DesignAssembler,
 ): Promise<void> {
   const anthropic = getClient(opts.apiKey);
-  const parser = new NdjsonParser(o => asm.push(o), line => asm.warnings.push(`unparsed model line: ${line.slice(0, 80)}`));
+  const debug = process.env.FORGE_DEBUG_RAW === '1';
+  const parser = new NdjsonParser(o => {
+    if (debug) console.log(`[forge raw] ${JSON.stringify(o).slice(0, 600)}`);
+    asm.push(o);
+  }, line => asm.warnings.push(`unparsed model line: ${line.slice(0, 80)}`));
   const stream = anthropic.messages.stream(
     {
       model: opts.model,
