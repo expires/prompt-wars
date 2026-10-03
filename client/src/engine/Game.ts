@@ -16,9 +16,11 @@ import { settings } from '../settings';
 import { TargetDummies } from '../player/TargetDummies';
 import { TargetRegistry } from '../weapons/targets';
 import { WeaponSystem } from '../weapons/WeaponSystem';
-import { getDefaultWeapons, generateWeaponStub } from '../weapons/defaultWeapons';
+import { getDefaultWeapons, generateWeaponStub, loadMeleeSamples } from '../weapons/defaultWeapons';
 import { meleeMaterial } from '../weapons/MeleeSystem';
 import type { Weapon } from '../weapons/types';
+import { loadPartsLibrary } from '../weapons/partsLibrary';
+import { loadTemplates, warmTemplates } from '../weapons/templatesLibrary';
 import { Hud, esc } from '../ui/Hud';
 import { SpawnEditor } from '../ui/SpawnEditor';
 import { OfflineNetClient, PoseSender, RemotePlayers, type NetClient, type NetPlayer } from '../net';
@@ -235,7 +237,19 @@ export class Game {
     // ---- net ----
     this.hud.setScoreboard(online ? 'Connecting…' : null);
     await this.net.connect();
-    if (!online) for (const w of getDefaultWeapons()) w.id = await this.net.registerWeapon(w);
+    if (!online) {
+      for (const w of getDefaultWeapons()) w.id = await this.net.registerWeapon(w);
+      // the melee samples come from the (lazily loaded) template library: append them when ready
+      void loadPartsLibrary()
+        .then(() => loadMeleeSamples())
+        .then(async (melee) => {
+          for (const w of melee) {
+            w.id = await this.net.registerWeapon(w);
+            getDefaultWeapons().push(w);
+          }
+        })
+        .catch((err) => console.warn('[weapons] melee samples unavailable', err));
+    }
     this.remotes = new RemotePlayers(this.net, this.physics, this.rc.scene, this.targets);
     this.net.onKill?.((e) => {
       const killer = e.killerId === this.net.localId ? 'You' : e.killerName;
@@ -328,6 +342,12 @@ export class Game {
 
     this.ready = true;
     requestAnimationFrame(this.frame);
+
+    // Playable now. Fetch the part library (real weapon models replace the placeholders), then
+    // prefetch the template generator chunk at idle priority (needed when generating a weapon).
+    void loadPartsLibrary()
+      .then(() => idle(() => void loadTemplates().catch(() => {})))
+      .catch((err) => console.warn('[parts] library failed to load', err));
   }
 
   // ------------------------------------------------------------------ networked state
@@ -505,6 +525,8 @@ export class Game {
     this.input.exitLock();
     this.hud.showClickToPlay(false);
     this.hud.showDeath(true, message);
+    // the death screen offers weapon generation: get the template library ready
+    void warmTemplates().catch((err) => console.warn('[templates] failed to load', err));
   }
 
   /** local respawn. `pickSpawn` = choose a local spawn point (offline); networked mode teleports first. */
@@ -828,4 +850,11 @@ function isVec3(v: unknown): v is [number, number, number] {
 
 function createTestMapOr(game: Game, loaded: GameMap | null): GameMap {
   return loaded ?? createTestMap(game.physics, game.rc.scene);
+}
+
+/** run when the browser is idle (falls back to a timeout) */
+function idle(cb: () => void) {
+  const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (ric) ric(cb, { timeout: 5000 });
+  else setTimeout(cb, 1000);
 }

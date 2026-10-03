@@ -1,5 +1,5 @@
 import type * as THREE from 'three';
-import type RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 
 export type Vec3 = [number, number, number];
 

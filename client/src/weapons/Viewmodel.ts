@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildWeaponModel, type WeaponModel } from './buildWeaponModel';
+import { onPartsLibrary } from './partsLibrary';
 import type { Weapon } from './types';
 import type { MeleeView } from './MeleeSystem';
 import { BLOCK_POSE, MELEE_SPRINT_POSE, SHIELD_BLOCK_POSE, blendPose, chargePose, swingPose, type VmPose } from './meleeAnim';
@@ -37,6 +38,7 @@ export class Viewmodel {
   private readonly anchor = new THREE.Group();
   private readonly pivot = new THREE.Group();
   private model?: WeaponModel;
+  private weapon?: Weapon;
   private holder?: THREE.Group;
   private readonly flash: THREE.Mesh;
   private recoil = 0;
@@ -76,9 +78,15 @@ export class Viewmodel {
     });
     this.flash = new THREE.Mesh(flashGeo, flashMat);
     this.flash.visible = false;
+    // swap the placeholder model for the real one once the part library has loaded
+    onPartsLibrary(() => {
+      if (this.model?.placeholder && this.weapon) this.setWeapon(this.weapon, true);
+    });
   }
 
-  setWeapon(weapon: Weapon) {
+  /** `keepAnim`: rebuild the model without replaying the draw animation */
+  setWeapon(weapon: Weapon, keepAnim = false) {
+    this.weapon = weapon;
     this.flash.removeFromParent();
     if (this.holder) {
       this.pivot.remove(this.holder);
@@ -91,7 +99,7 @@ export class Viewmodel {
     holder.add(orient);
     const melee = weapon.fireMode === 'melee';
     this.melee = melee;
-    this.equipT = 0;
+    if (!keepAnim) this.equipT = 0;
     if (melee) {
       // melee convention: blade/head grows toward -Z from the origin, handle toward +Z.
       // Tilt it so the blade points up and forward, with the handle in the hand.

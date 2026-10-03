@@ -1,20 +1,15 @@
 import * as THREE from 'three';
-import {
-  assembleWeapon,
-  getPart as getLibraryPart,
-  RECIPES,
-  type PartDef as LibraryPartDef,
-  type Recipe,
-  type RecipePart,
-} from '@ai-gaem/parts';
+import type { PartDef as LibraryPartDef, Recipe, RecipePart } from '@ai-gaem/parts';
 import './parts'; // registers the built-in fallback kit
 import { getPart, isLocalPart, registerRegistry, type PartDef, type PartRegistryLike } from './partRegistry';
+import { onPartsLibrary, partsLibrary, type PartsLibrary } from './partsLibrary';
 import type { Weapon, WeaponPartRef } from './types';
 
-// The 1000+ part library (@ai-gaem/parts) resolves through the registry too. Its parts use a
-// different assembly convention (socket dirs, aliases), so library weapons are assembled with
-// its own assembleWeapon(); the built-in kit keeps the legacy builder below.
-registerRegistry({ getPart: getLibraryPart } as unknown as PartRegistryLike);
+// The 2700+ part library (@ai-gaem/parts) is a lazily loaded chunk (see partsLibrary.ts). Once
+// it's in, it resolves through the registry too. Its parts use a different assembly convention
+// (socket dirs, aliases), so library weapons are assembled with its own assembleWeapon(); the
+// built-in kit keeps the legacy builder below. Until then weapons render as a placeholder.
+onPartsLibrary(() => registerRegistry({ getPart: partsLibrary()!.getPart } as unknown as PartRegistryLike));
 
 export interface WeaponModel {
   root: THREE.Group;
@@ -22,6 +17,8 @@ export interface WeaponModel {
   muzzle: THREE.Object3D;
   /** ids that were skipped because they were unknown or had no socket */
   skipped: string[];
+  /** a stand-in from the built-in kit: the part library hasn't loaded yet (rebuild once it has) */
+  placeholder?: boolean;
 }
 
 interface FreeSocket {
@@ -82,6 +79,8 @@ function hashString(s: string) {
 
 /** A part recipe for weapons with no (known) parts: deterministic per weapon name + class. */
 export function recipeFor(weapon: Pick<Weapon, 'name' | 'class'>): Recipe | undefined {
+  const RECIPES = partsLibrary()?.RECIPES;
+  if (!RECIPES) return undefined;
   const list = RECIPES.filter((r) => r.class === weapon.class);
   const pool = list.length ? list : RECIPES;
   if (!pool.length) return undefined;
@@ -95,7 +94,8 @@ function paletteColor(weapon: Weapon, c: string | undefined): string | undefined
 }
 
 /** Library weapon: core part first, then everything else via @ai-gaem/parts assembleWeapon. */
-function buildFromLibrary(weapon: Weapon, parts: (WeaponPartRef | RecipePart)[]): WeaponModel {
+function buildFromLibrary(lib: PartsLibrary, weapon: Weapon, parts: (WeaponPartRef | RecipePart)[]): WeaponModel {
+  const { assembleWeapon, getPart: getLibraryPart } = lib;
   const refs = parts.filter((p) => getLibraryPart(p.partId));
   const coreIdx = refs.findIndex((p) => (getLibraryPart(p.partId) as LibraryPartDef).category === 'core');
   if (coreIdx > 0) refs.unshift(...refs.splice(coreIdx, 1));
@@ -137,11 +137,29 @@ function buildFromLibrary(weapon: Weapon, parts: (WeaponPartRef | RecipePart)[])
  */
 export function buildWeaponModel(weapon: Weapon): WeaponModel {
   const parts = weapon.parts ?? [];
-  if (parts.some((p) => !isLocalPart(p.partId) && getLibraryPart(p.partId))) return buildFromLibrary(weapon, parts);
+  const lib = partsLibrary();
+  if (!lib) {
+    // library not loaded yet: weapons made only of built-in kit parts are final, anything else
+    // gets a class-appropriate stand-in until the library arrives
+    if (parts.length && parts.every((p) => isLocalPart(p.partId))) return buildLegacyWeaponModel(weapon);
+    return { ...buildLegacyWeaponModel({ ...weapon, parts: placeholderParts(weapon.class) }), placeholder: true };
+  }
+  if (parts.some((p) => !isLocalPart(p.partId) && lib.getPart(p.partId))) return buildFromLibrary(lib, weapon, parts);
   if (parts.some((p) => isLocalPart(p.partId))) return buildLegacyWeaponModel(weapon);
   const recipe = recipeFor(weapon);
-  if (recipe) return buildFromLibrary(weapon, recipe.parts);
+  if (recipe) return buildFromLibrary(lib, weapon, recipe.parts);
   return buildLegacyWeaponModel(weapon);
+}
+
+/** built-in kit stand-in shown while the part library loads */
+function placeholderParts(cls: string): WeaponPartRef[] {
+  if (cls === 'melee') return [{ partId: 'handle_melee' }, { partId: 'blade_sword' }];
+  const parts: WeaponPartRef[] = [{ partId: defaultCoreFor(cls) }, { partId: 'grip_pistol' }];
+  if (cls === 'pistol' || cls === 'blowgun' || cls === 'bubble_gun') parts.push({ partId: 'barrel_short' });
+  else if (cls === 'rocket_launcher' || cls === 'grenade_launcher') parts.push({ partId: 'rocket_tube' });
+  else if (cls === 'shotgun') parts.push({ partId: 'barrel_double' }, { partId: 'stock_rifle' });
+  else parts.push({ partId: 'barrel_long' }, { partId: 'stock_rifle' }, { partId: 'mag_straight' });
+  return parts;
 }
 
 /**

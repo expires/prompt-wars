@@ -5,6 +5,7 @@ import {
   activeMap,
 } from '@ai-gaem/shared';
 import { Game } from './engine/Game';
+import { loadRapier } from './engine/physics';
 import { resolveMapUrl } from './map/assetUrl';
 import { OfflineNetClient, SpacetimeNetClient, type NetClient } from './net';
 import { installTestHook } from './testHook';
@@ -43,6 +44,11 @@ function createNet(): { net: NetClient; label: string } {
   return { net, label: `${uri.replace(/^wss?:\/\//, '')} / ${dbName}` };
 }
 
+type BootUi = { done(): void; error(t: string): void };
+const boot = (window as Window & { __boot?: BootUi }).__boot;
+// start the physics chunk + wasm download right away (its wasm is also preloaded from index.html)
+void loadRapier().catch(() => {});
+
 const { net, label } = createNet();
 const e2e = params.get('e2e') === '1';
 const game = new Game();
@@ -56,8 +62,10 @@ game
     e2e,
     shell: params.get('shell') === '1',
   })
+  .then(() => boot?.done())
   .catch((err) => {
     console.error(err);
+    boot?.error(String(err));
     (window as unknown as { __gameError: string }).__gameError = String(err);
     document.body.insertAdjacentHTML(
       'beforeend',
