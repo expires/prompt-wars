@@ -108,6 +108,7 @@ function getState(game: Game) {
     trackpadMode: settings.current.trackpadMode,
     settings: { ...settings.current },
     pad: ready ? { connected: game.input.pad.connected, move: game.input.pad.move, look: game.input.pad.look, playing: game.input.padPlaying } : null,
+    touch: game.touch ? { visible: game.touch.visible, playing: game.input?.touchPlaying ?? false } : null,
     toastVisible: ready ? game.hud.toastVisible : false,
     serverBlocking: (ready && game.net.getPose?.(game.net.localId)?.blocking) || false,
     crouching: p?.crouched ?? false,

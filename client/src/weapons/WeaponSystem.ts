@@ -337,9 +337,11 @@ export class WeaponSystem {
       if (h.kickPitch > 0) this.events.onRecoil?.(h.kickPitch * k * (0.85 + Math.random() * 0.3), (Math.random() * 2 - 1) * h.kickYaw * k);
       this.bloom = Math.min(h.bloomMax, this.bloom + h.bloomPerShot);
     }
+    // viewmodel kick scales with per-shot damage on top of the class feel (heavy hitters shove harder)
+    const dmgKick = Math.min(1.45, Math.max(0.75, 0.7 + (w.damage * Math.max(1, w.pellets)) / 90));
     switch (this.fireMode) {
       case 'hitscan':
-        this.viewmodel.kick(h.vmKick);
+        this.viewmodel.kick(h.vmKick * dmgKick);
         this.effects.muzzleLight(muzzle);
         for (let i = 0; i < Math.max(1, w.pellets); i++) this.fireHitscan(eye, muzzle, spread);
         // one report per target per shot, with the number of pellets that connected. Head zone
@@ -353,7 +355,7 @@ export class WeaponSystem {
         break;
       case 'projectile':
       case 'arc':
-        this.viewmodel.kick(Math.max(0.6, h.vmKick));
+        this.viewmodel.kick(Math.max(0.6, h.vmKick) * dmgKick);
         this.effects.muzzleLight(muzzle);
         if (w.class === 'throwable') this.throwT = THROW_TIME;
         for (let i = 0; i < Math.max(1, w.pellets); i++) this.spawnProjectile(eye, muzzle, this.fireMode === 'arc', w, undefined, false, spread);

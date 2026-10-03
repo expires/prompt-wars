@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { settings } from '../settings';
+import { reducedMotionActive } from '../ui/hud/applyUiSettings';
 import { SPRINT_SPEED } from './PlayerController';
 
 const DEG = Math.PI / 180;
@@ -14,6 +15,15 @@ const PUNCH_DAMPING = 19;
 /** landing dip spring */
 const DIP_STIFFNESS = 90;
 const DIP_DAMPING = 13;
+/** FOV punch spring (fire kick): fast and well damped */
+const FOV_PUNCH_STIFFNESS = 260;
+const FOV_PUNCH_DAMPING = 26;
+
+/** shake / FOV punch multiplier: the screen shake setting, 0 with reduced motion */
+function motionScale(): number {
+  if (reducedMotionActive()) return 0;
+  return settings.current.screenShake ?? 1;
+}
 
 export interface CameraFeelState {
   speed: number;
@@ -59,8 +69,19 @@ export class CameraRig {
 
   /** camera shake (degrees of jitter), decays over ~0.25 s; melee strikes scale it by weight */
   shake(amountDeg: number) {
-    amountDeg *= settings.current.screenShake ?? 1;
-    this.shakeAmt = Math.max(this.shakeAmt, amountDeg * DEG);
+    amountDeg *= motionScale();
+    if (amountDeg <= 0) return;
+    this.shakeAmt = Math.max(this.shakeAmt, Math.min(3, amountDeg) * DEG);
+  }
+
+  /** transient FOV punch (degrees, + = wider) on top of the FOV target, springs back in ~0.15 s */
+  private fovPunch = 0;
+  private fovPunchVel = 0;
+
+  punchFov(deg: number) {
+    deg *= motionScale();
+    if (deg === 0) return;
+    this.fovPunchVel += Math.max(-4, Math.min(4, deg)) * Math.sqrt(FOV_PUNCH_STIFFNESS) * Math.E;
   }
 
   resetPunch() {
@@ -97,6 +118,7 @@ export class CameraRig {
       [this.punchPitch, this.punchPitchVel] = spring(this.punchPitch, this.punchPitchVel, PUNCH_STIFFNESS, PUNCH_DAMPING);
       [this.punchYaw, this.punchYawVel] = spring(this.punchYaw, this.punchYawVel, PUNCH_STIFFNESS, PUNCH_DAMPING);
       [this.dip, this.dipVel] = spring(this.dip, this.dipVel, DIP_STIFFNESS, DIP_DAMPING);
+      [this.fovPunch, this.fovPunchVel] = spring(this.fovPunch, this.fovPunchVel, FOV_PUNCH_STIFFNESS, FOV_PUNCH_DAMPING);
     }
 
     this.shakeT += dt;
@@ -108,6 +130,11 @@ export class CameraRig {
     const fovTarget = (base + sprintKick * (1 - s.ads)) * zoom;
     this.fov += (fovTarget - this.fov) * (1 - Math.exp(-dt * FOV_LERP_RATE));
     this.fovScale = this.fov / base;
+  }
+
+  /** rendered FOV: the eased FOV plus the punch (the punch never touches sensitivity) */
+  private get renderFov() {
+    return this.fov + this.fovPunch;
   }
 
   /** apply offsets to a camera already placed at the eye by PlayerController.updateCamera */
@@ -131,8 +158,9 @@ export class CameraRig {
       camera.rotation.y += Math.sin(this.shakeT * 53 + 1.3) * this.shakeAmt * 0.7;
       camera.rotation.z += Math.sin(this.shakeT * 37 + 0.4) * this.shakeAmt * 0.5;
     }
-    if (Math.abs(camera.fov - this.fov) > 1e-3) {
-      camera.fov = this.fov;
+    const fov = this.renderFov;
+    if (Math.abs(camera.fov - fov) > 1e-3) {
+      camera.fov = fov;
       camera.updateProjectionMatrix();
     }
   }

@@ -11,6 +11,7 @@ import {
   type MapDef,
 } from '@ai-gaem/shared';
 import { playerStatus } from '../weapons/elementFx';
+import { reducedMotionActive } from '../ui/hud/applyUiSettings';
 import { createRenderer, type RenderContext } from './renderer';
 import { initPhysics, FIXED_DT, type PhysicsContext } from './physics';
 import { Input } from './input';
@@ -41,6 +42,7 @@ import { rarityOf } from '../ui/rarity';
 import { SpawnEditor } from '../ui/SpawnEditor';
 import { OfflineNetClient, PoseSender, RemotePlayers, type NetClient, type NetPlayer } from '../net';
 import { DamageNumbers } from '../ui/DamageNumbers';
+import { TouchControls, touchDevice } from '../ui/TouchControls';
 import { setDesignEnvRenderer } from '../weapons/designModelCache';
 
 export const MAX_HP = 100;
@@ -113,6 +115,8 @@ export class Game {
   private adsToggled = false;
   poseSender!: PoseSender;
   damageNumbers!: DamageNumbers;
+  /** on-screen controls (phones / tablets, or `?touch=1`) */
+  touch?: TouchControls;
   /** test hook: scripted circular movement (smoothness test) */
   autoMove: { cx: number; cz: number; r: number; speed: number; y: number; a: number } | null = null;
 
@@ -155,6 +159,16 @@ export class Game {
     this.physics = await initPhysics();
     this.input = new Input(this.rc.renderer.domElement);
     this.hud = new Hud();
+    if (touchDevice()) {
+      document.documentElement.classList.add('is-touch');
+      const touch = new TouchControls();
+      touch.onLook = (dx, dy) => this.input.addLook(dx, dy);
+      touch.onMenu = () => {
+        if (this.alive && !this.flow.blocking) this.flow.openPause();
+      };
+      this.touch = touch;
+      this.input.touch = touch;
+    }
     this.flow = new GameFlow(this);
     this.hud.setVisible(false);
 
@@ -237,10 +251,17 @@ export class Game {
       this.targets,
       this.player.collider,
       {
-        onHit: (_t, _dmg, killed, zone) => {
+        onHit: (t, dmg, killed, zone) => {
           const head = zone === 1;
           this.lastHitHead = head;
           this.hud.hitMarker(killed, head);
+          // offline (dummies / bots) there is no server confirmation: number the local estimate
+          if (!this.net.authoritative && t.kind !== 'prop') {
+            const at = t.getCenter(new THREE.Vector3());
+            at.y += 0.7;
+            this.damageNumbers.add(t.id, dmg, at, { headshot: head, killed, element: this.weapons.weapon.element ?? null });
+            if (killed) this.hitStop();
+          }
           if (head) this.sfx.headshotDing();
           else this.sfx.hitTick();
           if (killed) this.sfx.killChime();
@@ -275,10 +296,20 @@ export class Game {
           this.props.blast(point, 2.4, meta.weight === 'heavy' ? 5 : 2.5);
         },
         onShotEnd: () => this.net.flushShot?.(),
-        onFire: (w) => this.sfx.gunshot(w.class),
+        onFire: (w) => {
+          this.sfx.gunshot(w.class);
+          // FOV punch scaled by per-shot damage (an SMG barely breathes, a sniper / launcher thumps)
+          if (w.fireMode !== 'melee' && w.fireMode !== 'stream') {
+            const perShot = w.damage * Math.max(1, w.pellets) + (w.splashRadius > 0 ? 25 : 0);
+            this.rig.punchFov(Math.min(2.6, 0.15 + perShot * 0.022) * (1 - 0.6 * this.ads));
+          }
+        },
         onRecoil: (p, y) => this.rig.kick(p, y),
         onExplosion: (pos) => {
           this.sfx.explosion(pos);
+          // shake falls off with distance (none past ~14 m)
+          const d = pos.distanceTo(this.rc.camera.position);
+          if (d < 14) this.rig.shake(2.4 * (1 - d / 14) ** 1.5);
           this.props.blast(pos, 4.5, 9);
         },
         onReload: () => {
@@ -342,12 +373,13 @@ export class Game {
     // (the optimistic hitmarker shows on the local raycast and never knows about kills online)
     this.net.onHitConfirmed?.((e) => {
       const at = e.point ? new THREE.Vector3(...e.point) : (this.remotes.headOf(e.targetId) ?? new THREE.Vector3());
-      this.damageNumbers.add(e.targetId, e.damage, at, { headshot: e.headshot, killed: e.killed });
+      this.damageNumbers.add(e.targetId, e.damage, at, { headshot: e.headshot, killed: e.killed, dot: e.dot, element: elementFromCode(e.element) });
       if (e.blocked) this.sfx.blockClang(at);
       if (e.killed) {
         this.hud.hitMarker(true, e.headshot);
         this.hud.killConfirm(e.headshot);
         this.sfx.killChime();
+        this.hitStop();
       }
     });
 
@@ -360,7 +392,11 @@ export class Game {
       this.net.onLocalHit?.((e) => {
         if (e.knock.some((k) => k !== 0)) this.player.applyImpulse(new THREE.Vector3(...e.knock));
         if (e.blocked) this.sfx.blockClang();
-        if (!e.dot) this.hud.damageFlash();
+        if (!e.dot) {
+          this.hud.damageFlash();
+          // short shake on taking damage, scaled by the hit (DoT ticks don't shake)
+          this.rig.shake(Math.min(1.6, 0.25 + e.damage / 30));
+        }
         this.lastHitOnMe = { shooterId: e.shooterId, damage: e.damage, headshot: e.headshot };
         const from = this.remotes.get(e.shooterId)?.position;
         if (from && e.shooterId !== this.net.localId) {
@@ -631,6 +667,15 @@ export class Game {
 
   private lastHitHead = false;
 
+  /** kill hit-stop: seconds left of the visual slow-down (viewmodel, damage numbers; never the sim) */
+  private hitStopT = 0;
+
+  /** ~50 ms "hit-stop" on a kill: visual time dilation + a one-frame contrast pop */
+  hitStop(seconds = 0.05) {
+    if (reducedMotionActive()) return;
+    this.hitStopT = Math.max(this.hitStopT, seconds);
+  }
+
   /** gamepad aim slowdown: look speed x0.55 while the crosshair is over a remote player */
   private aimSlowdown(pad: { connected: boolean; look: [number, number] }): number {
     if (!pad.connected || !settings.current.gamepadAimSlowdown || (pad.look[0] === 0 && pad.look[1] === 0) || !this.ready) return 1;
@@ -751,6 +796,13 @@ export class Game {
     this.updatePerfWindow(now, dt);
     const online = this.net.authoritative;
 
+    // touch: the on-screen controls are live while alive with no menu up
+    if (this.touch) {
+      const on = this.ready && this.alive && !this.flow.blocking;
+      input.touchPlaying = on;
+      this.touch.setVisible(on);
+    }
+
     // gamepad: Start toggles pad play (no pointer lock needed) / the pause menu
     const pad = input.pollGamepad(settings.current.gamepadDeadzone);
     if (pad.connected && this.alive) {
@@ -837,10 +889,13 @@ export class Game {
       } else this.damageLocal(MAX_HP, 'Fell out of the world');
     }
 
+    // visual-only time dilation during a kill hit-stop (simulation / network above use real dt)
+    const vdt = this.hitStopT > 0 ? dt * 0.12 : dt;
+    this.hitStopT = Math.max(0, this.hitStopT - dt);
     // camera-space strafe velocity (viewmodel inertia)
     const strafe = player.velocity.x * Math.cos(player.yaw) - player.velocity.z * Math.sin(player.yaw);
     this.weapons.viewmodel.addSway(md.dx, md.dy);
-    this.weapons.viewmodel.update(dt, {
+    this.weapons.viewmodel.update(vdt, {
       speed,
       grounded: player.grounded,
       ads: this.ads,
@@ -877,7 +932,7 @@ export class Game {
     this.dummies?.update(dt, this.rc.camera);
     this.props.update(dt);
     this.remotes.update(dt, now);
-    this.damageNumbers.update(dt, cam, (id) => this.remotes.headOf(id));
+    this.damageNumbers.update(vdt, cam, (id) => this.remotes.headOf(id));
     this.hud.update(dt);
 
     this.flow.update();

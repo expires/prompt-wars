@@ -1,0 +1,138 @@
+/* Touch controls (TouchControls.ts) + phone tweaks for the menus. Real px: thumbs don't scale with the HUD. */
+.touch {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  font-family: var(--font-label);
+}
+.touch > * { pointer-events: auto; }
+.touch-look { position: absolute; top: 0; right: 0; bottom: 0; left: 42%; }
+.touch-move { position: absolute; left: 0; top: 30%; bottom: 0; width: 42%; }
+.touch-move__hint {
+  position: absolute;
+  left: calc(56px + env(safe-area-inset-left));
+  bottom: calc(110px + env(safe-area-inset-bottom));
+  font: 600 11px/1 var(--font-label);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(245, 243, 238, 0.35);
+  pointer-events: none;
+}
+.touch-stick {
+  position: fixed;
+  width: 128px;
+  height: 128px;
+  margin: -64px 0 0 -64px;
+  border-radius: 50%;
+  background: rgba(11, 13, 18, 0.35);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+.touch-stick > i {
+  position: absolute;
+  left: 39px;
+  top: 39px;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: rgba(255, 210, 63, 0.85);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.5);
+}
+
+.touch-btn {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--fg);
+  background: rgba(11, 13, 18, 0.5);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.25);
+  font: 600 11px/1 var(--font-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.touch-btn .ui-icon { width: 22px; height: 22px; }
+.touch-btn.is-down { background: rgba(255, 210, 63, 0.35); }
+.touch-btn.is-on { background: rgba(255, 210, 63, 0.85); color: var(--accent-ink); box-shadow: none; }
+
+.touch-btn--fire {
+  right: calc(28px + env(safe-area-inset-right));
+  bottom: calc(40px + env(safe-area-inset-bottom));
+  width: 92px;
+  height: 92px;
+  background: rgba(255, 70, 85, 0.35);
+  box-shadow: inset 0 0 0 3px rgba(255, 70, 85, 0.85);
+  font-size: 13px;
+}
+.touch-btn--fire .ui-icon { width: 30px; height: 30px; }
+.touch-btn--fire.is-down { background: rgba(255, 70, 85, 0.7); }
+.touch-btn--aim { right: calc(132px + env(safe-area-inset-right)); bottom: calc(108px + env(safe-area-inset-bottom)); width: 60px; height: 60px; }
+.touch-btn--jump { right: calc(136px + env(safe-area-inset-right)); bottom: calc(28px + env(safe-area-inset-bottom)); width: 64px; height: 64px; }
+.touch-btn--crouch { right: calc(40px + env(safe-area-inset-right)); bottom: calc(146px + env(safe-area-inset-bottom)); width: 60px; height: 60px; font-size: 10px; }
+.touch-btn--reload { right: calc(210px + env(safe-area-inset-right)); bottom: calc(52px + env(safe-area-inset-bottom)); width: 52px; height: 52px; }
+.touch-btn--menu {
+  top: calc(12px + env(safe-area-inset-top));
+  left: 50%;
+  margin-left: -22px;
+  width: 44px;
+  height: 44px;
+  border-radius: 0;
+  clip-path: var(--clip-cut);
+}
+
+/* portrait phones: tighter cluster */
+@media (max-width: 520px) {
+  .touch-btn--fire { width: 80px; height: 80px; right: calc(18px + env(safe-area-inset-right)); bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .touch-btn--jump { right: calc(110px + env(safe-area-inset-right)); bottom: calc(84px + env(safe-area-inset-bottom)); width: 58px; height: 58px; }
+  .touch-btn--aim { right: calc(104px + env(safe-area-inset-right)); bottom: calc(158px + env(safe-area-inset-bottom)); width: 54px; height: 54px; }
+  .touch-btn--crouch { right: calc(24px + env(safe-area-inset-right)); bottom: calc(190px + env(safe-area-inset-bottom)); width: 54px; height: 54px; }
+  .touch-btn--reload { right: calc(176px + env(safe-area-inset-right)); bottom: calc(96px + env(safe-area-inset-bottom)); width: 48px; height: 48px; }
+}
+
+/* the game canvas never scrolls / zooms the page on touch */
+html.is-touch, html.is-touch body { overscroll-behavior: none; touch-action: manipulation; }
+html.is-touch canvas { touch-action: none; }
+
+/* ---------------------------------------------------------------- phone menus */
+@media (max-width: 560px) {
+  .landing { padding: 20px 16px calc(24px + env(safe-area-inset-bottom)) !important; gap: 20px !important; align-content: start; }
+  .landing-left { gap: 16px; max-width: none; }
+  .landing-logo { font-size: 64px; }
+  .landing-callsign .ui-input { width: 100%; min-width: 0; }
+  .landing-callsign { width: 100%; }
+  .landing-play { width: 100%; min-height: 60px; }
+  .landing-hint { margin: -6px 0 0; }
+  .landing-right { width: 100%; min-width: 0; }
+  .landing-quick-row .ui-chip { flex: 1 1 calc(33% - 8px); justify-content: center; }
+}
+/* touch devices: keyboard / mouse help is noise */
+html.is-touch .landing-controls { display: none; }
+html.is-touch .pause-item .ui-kbd { display: none; }
+
+/* touch HUD: the ammo plate moves to the bottom centre (the right thumb cluster owns the corner) */
+html.is-touch .hud-ammo { right: auto; left: 50%; transform: translateX(-50%); }
+/* portrait phones: size the HUD against a 1080-wide reference so the plates aren't squeezed */
+@media (orientation: portrait) {
+  html.is-touch .hud { --u: calc(100vw / 1080 * var(--hud-scale)); }
+  /* stack the ammo plate above the health plate (side by side they overlap at phone width) */
+  html.is-touch .hud-ammo { left: var(--m); transform: none; bottom: calc(var(--m) + 150 * var(--u)); }
+  .touch-move__hint { display: none; }
+}
+/* short landscape phones: the pause rail must fit 390 px of height */
+@media (max-height: 500px) {
+  .pause-rail { padding: 16px 20px; gap: 6px; overflow-y: auto; }
+  .pause-title { font-size: 36px; }
+  .pause-sub { margin-bottom: 10px; }
+  .pause-item { min-height: 44px; }
+}

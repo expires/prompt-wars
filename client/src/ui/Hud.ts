@@ -1,6 +1,7 @@
 // In-game HUD ("Arcade Tactical", docs/ui-spec.md §HUD). Plain DOM, sized in --u units
 // (1920×1080 reference, anchored to a centred 16:9 frame); the crosshair is in real px.
 import './hud.css';
+import './juice.css';
 import { settings } from '../settings';
 import { el, esc } from './dom';
 import { icon } from './icons';
@@ -126,6 +127,8 @@ export class Hud {
   // damage
   private readonly arcs = new DamageArcs();
   private readonly hitFlash = el('div', 'hud-hitflash');
+  /** kill hit-stop flash (brief contrast pop) */
+  private readonly hitStopFx = el('div', 'hud-hitstop');
   /** screen-edge vignettes for elemental status (orange flames / frost) */
   private readonly burnFx = el('div', 'hud-burn');
   private readonly chillFx = el('div', 'hud-chill');
@@ -223,7 +226,7 @@ export class Hud {
     topLeft.append(this.netEl, this.debugEl);
 
     this.frame.append(health, ammo, topLeft, this.killfeed.root, this.scoreboard.root, this.spawnEditorEl);
-    this.root.append(this.scope, this.lowHp, this.burnFx, this.chillFx, this.poisonFx, this.hitFlash, this.numbersLayer, this.center, this.frame);
+    this.root.append(this.scope, this.lowHp, this.burnFx, this.chillFx, this.poisonFx, this.hitFlash, this.hitStopFx, this.numbersLayer, this.center, this.frame);
     parent.append(this.root, this.toasts.root);
 
     this.setHealth(100);
@@ -409,7 +412,8 @@ export class Hud {
     c.remove('show');
     void this.hitmarker.offsetWidth; // restart the pop animation
     c.add('show');
-    this.hitTimer = kill ? 0.3 : headshot ? 0.22 : 0.1;
+    // short and snappy (50–100 ms reads as a hit without hiding the target); kills linger
+    this.hitTimer = kill ? 0.26 : headshot ? 0.1 : 0.07;
   }
 
   /** server-confirmed kill: X + expanding ring over the crosshair */
@@ -419,6 +423,10 @@ export class Hud {
     void this.killX.offsetWidth;
     this.killX.classList.add('show');
     this.killTimer = 0.6;
+    // hit-stop frame: a ~50 ms flash over the world (visual only)
+    this.hitStopFx.classList.remove('is-on');
+    void this.hitStopFx.offsetWidth;
+    this.hitStopFx.classList.add('is-on');
   }
 
   get killConfirmVisible() {

@@ -2,7 +2,7 @@
 // the Weapon Forge editor (lazy chunk). Owns the menus; Game owns the simulation.
 import { type ForgeDesign } from '@ai-gaem/shared';
 import type { Game } from './Game';
-import { Landing } from '../ui/menus/Landing';
+import { Landing, randomCallsign } from '../ui/menus/Landing';
 import { PauseMenu } from '../ui/menus/PauseMenu';
 import { DeathScreen, type DeathInfo } from '../ui/menus/DeathScreen';
 import { confirmDialog } from '../ui/menus/Confirm';
@@ -34,16 +34,24 @@ export class GameFlow {
   private redeploying = false;
   private forgeLoading = false;
   private readonly params = new URLSearchParams(location.search);
+  /** suggested callsign for a first visit (phones join from a link: no typing needed) */
+  private readonly autoName = randomCallsign();
 
   constructor(private readonly game: Game) {
     this.callsign = this.params.get('name') ?? this.storedCallsign() ?? '';
     this.landing.handlers = {
-      onPlay: (cs) => void this.play(cs),
+      onPlay: (cs) => {
+        this.touchFullscreen();
+        void this.play(cs);
+      },
       onForge: (cs) => {
         this.applyCallsign(cs);
         void this.openForge({ mode: this.needsLoadout ? 'first' : 'pause' }, 'landing');
       },
-      onQuickPick: (id, _cls, cs) => void this.quickPick(id, cs),
+      onQuickPick: (id, _cls, cs) => {
+        this.touchFullscreen();
+        void this.quickPick(id, cs);
+      },
     };
     this.pause.handlers = {
       onResume: () => this.resume(),
@@ -124,7 +132,7 @@ export class GameFlow {
     const me = this.game.me;
     const connected = (this.game.net as { connected?: boolean }).connected !== false;
     return {
-      callsign: this.callsign || me?.name || '',
+      callsign: this.callsign || (me?.name && !/^Player-/.test(me.name) ? me.name : '') || this.autoName,
       needsLoadout: this.needsLoadout,
       weapon: this.needsLoadout ? null : this.currentWeapon(),
       presets: this.online ? (this.game.net.presetIds?.() ?? []) : offlinePresets(),
@@ -246,6 +254,8 @@ export class GameFlow {
    */
   private async tryLock() {
     const input = this.game.input;
+    // touch devices play with the on-screen controls: no pointer lock
+    if (input.touch) return;
     if (await input.requestLock()) return;
     await new Promise((r) => setTimeout(r, 1100));
     if (input.locked || this.pause.visible || this.blocking || !this.game.alive) return;
@@ -602,6 +612,20 @@ export class GameFlow {
     if (w) this.game.hud.toast(`Equipped <b>${esc(w.name)}</b>`, { type: 'forge', ms: 3000 });
     // the forge closes itself after onEquip resolves; lock once it's gone
     setTimeout(() => this.lockAndPlay(), 200);
+  }
+
+  /** phones: go fullscreen (and landscape where allowed) from the PLAY tap; ignored when refused */
+  private touchFullscreen() {
+    if (!this.game.input.touch || document.fullscreenElement) return;
+    const de = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+    try {
+      const p = de.requestFullscreen?.({ navigationUI: 'hide' }) ?? de.webkitRequestFullscreen?.();
+      void Promise.resolve(p)
+        .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> })?.lock?.('landscape'))
+        .catch(() => {});
+    } catch {
+      /* not supported (iPhone Safari) */
+    }
   }
 
   private async waitFor(pred: () => boolean, ms: number) {

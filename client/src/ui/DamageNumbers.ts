@@ -13,6 +13,9 @@ interface Entry {
   /** world anchor (last impact), used when the target is gone */
   anchor: THREE.Vector3;
   rise: number;
+  dot: boolean;
+  /** horizontal screen drift (px over the lifetime) so stacked numbers don't overlap */
+  drift: number;
 }
 
 /**
@@ -25,14 +28,30 @@ export class DamageNumbers {
 
   constructor(private readonly parent: HTMLElement) {}
 
-  add(targetId: string, damage: number, at: THREE.Vector3, opts: { headshot?: boolean; killed?: boolean } = {}) {
-    let e = this.entries.find((x) => x.targetId === targetId && x.age < AGGREGATE_S);
-    if (!e) {
+  /**
+   * `element` colours the number (fire / ice / poison / shock); headshots are crit amber, kills red.
+   * DoT ticks aggregate separately (smaller numbers) so they don't swallow the direct hit.
+   */
+  add(
+    targetId: string,
+    damage: number,
+    at: THREE.Vector3,
+    opts: { headshot?: boolean; killed?: boolean; element?: string | null; dot?: boolean } = {},
+  ) {
+    const dot = !!opts.dot;
+    let e = this.entries.find((x) => x.targetId === targetId && x.age < AGGREGATE_S && x.dot === dot);
+    if (e) {
+      // re-trigger a small pop on every added hit
+      e.el.classList.remove('bump');
+      void e.el.offsetWidth;
+      e.el.classList.add('bump');
+    } else {
       const el = document.createElement('div');
       el.className = 'dmg-num';
       el.dataset.testid = 'dmg-num';
       this.parent.append(el);
-      e = { el, targetId, total: 0, age: 0, anchor: at.clone(), rise: 0 };
+      if (dot) el.classList.add('dot');
+      e = { el, targetId, total: 0, age: 0, anchor: at.clone(), rise: 0, dot, drift: (Math.random() - 0.5) * 40 };
       this.entries.push(e);
     }
     e.total += damage;
@@ -41,6 +60,7 @@ export class DamageNumbers {
     e.el.textContent = String(Math.round(e.total));
     if (opts.headshot) e.el.classList.add('headshot');
     if (opts.killed) e.el.classList.add('kill');
+    if (opts.element && !e.el.classList.contains(`el-${opts.element}`)) e.el.classList.add(`el-${opts.element}`);
   }
 
   /** `anchorOf(id)` = live world position to float above (e.g. the target's head), if known */
@@ -62,7 +82,7 @@ export class DamageNumbers {
       const visible = this.v.z < 1;
       e.el.style.display = visible ? '' : 'none';
       if (!visible) continue;
-      const x = (this.v.x * 0.5 + 0.5) * w;
+      const x = (this.v.x * 0.5 + 0.5) * w + e.drift * (e.age / LIFETIME_S) + (e.dot ? 26 : 0);
       const y = (-this.v.y * 0.5 + 0.5) * h;
       e.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%)`;
       e.el.style.opacity = String(Math.min(1, (LIFETIME_S - e.age) / 0.3));

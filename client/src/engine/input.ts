@@ -1,5 +1,6 @@
 import { GamepadPoller, emptyPad, type PadState } from './gamepad';
 import { settings } from '../settings';
+import type { TouchFrame } from '../ui/TouchControls';
 
 /** Keyboard + mouse state with pointer lock, plus a polled gamepad. */
 export class Input {
@@ -8,6 +9,10 @@ export class Input {
   pad: PadState = emptyPad();
   /** playing with the gamepad without pointer lock (Start / A on the pause screen) */
   padPlaying = false;
+  /** playing with the on-screen touch controls (phones / tablets: no pointer lock) */
+  touchPlaying = false;
+  /** touch controls source (merged into `pad` every poll while touchPlaying) */
+  touch: { frame(): TouchFrame } | null = null;
   /** event timestamp (performance.now() clock) of the last mouse movement while locked (trackpad hint heuristic) */
   lastMouseMoveAt = 0;
   /** total mousemove events received while locked (F3 overlay derives events/s from it) */
@@ -93,12 +98,24 @@ export class Input {
   /** poll the gamepad once per frame (before reading `pad`) */
   pollGamepad(deadzone: number): PadState {
     this.pad = this.poller.poll(deadzone);
+    if (this.touch) {
+      // always drain the touch presses (no stale jump when play resumes)
+      const t = this.touch.frame();
+      if (this.touchPlaying) mergeTouch(this.pad, t);
+    }
     return this.pad;
+  }
+
+  /** touch-drag look: accumulated like mouse movement (applied once per frame) */
+  addLook(dx: number, dy: number) {
+    if (!this.touchPlaying) return;
+    this.mouseDX += dx;
+    this.mouseDY += dy;
   }
 
   /** player input is live: pointer locked, or playing on a gamepad */
   get active() {
-    return this.locked || this.padPlaying;
+    return this.locked || this.padPlaying || this.touchPlaying;
   }
 
   /** any of the movement keys held */
@@ -194,6 +211,18 @@ export class Input {
     this.mouseClicked = false;
     this.rightClicked = false;
   }
+}
+
+/** fold the touch controls into the gamepad state (a real pad keeps priority on the sticks) */
+function mergeTouch(pad: PadState, t: TouchFrame) {
+  if (pad.move[0] === 0 && pad.move[1] === 0) pad.move = t.move;
+  pad.fire ||= t.fire;
+  pad.ads ||= t.ads;
+  pad.crouch ||= t.crouch;
+  pad.jumpPressed ||= t.jumpPressed;
+  pad.crouchPressed ||= t.crouchPressed;
+  pad.reloadPressed ||= t.reloadPressed;
+  if (t.fire || t.jumpPressed || t.move[0] !== 0 || t.move[1] !== 0) pad.active = true;
 }
 
 function isTyping(e: KeyboardEvent) {

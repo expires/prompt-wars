@@ -171,30 +171,40 @@ export class Sfx {
     this.tone(c, dest, t, 90, 25, 0.6, 1);
   }
 
+  /** body hit: short dry tick (pitch jitter so rapid fire doesn't drone) */
   hitTick() {
     const c = this.ready();
     if (!c) return;
     const dest = this.out(c, 0.35)!;
-    this.tone(c, dest, c.currentTime, 1900, 1700, 0.05, 0.6, 'triangle');
+    const t = c.currentTime;
+    const f = 1800 + Math.random() * 220;
+    this.tone(c, dest, t, f, f * 0.85, 0.045, 0.6, 'triangle');
+    this.noiseBurst(c, dest, t, 'highpass', 4000, 0.7, 0.018, 0.25, 0.001);
   }
 
+  /** headshot: bright metallic "tink" (inharmonic partials + a hard transient), clearly not the body tick */
   headshotDing() {
     const c = this.ready();
     if (!c) return;
-    const dest = this.out(c, 0.4)!;
+    const dest = this.out(c, 0.42)!;
     const t = c.currentTime;
-    this.tone(c, dest, t, 1320, 1320, 0.45, 0.7);
-    this.tone(c, dest, t, 2640, 2640, 0.3, 0.3);
-    this.tone(c, dest, t, 3960, 3960, 0.15, 0.12);
+    this.noiseBurst(c, dest, t, 'bandpass', 6500, 3, 0.03, 0.7, 0.001);
+    this.tone(c, dest, t, 2350, 2350, 0.32, 0.65);
+    this.tone(c, dest, t, 2350 * 2.76, 2350 * 2.76, 0.16, 0.22);
+    this.tone(c, dest, t, 2350 * 5.4, 2350 * 5.4, 0.07, 0.1);
   }
 
+  /** kill: low punch + rising two-note confirm */
   killChime() {
     const c = this.ready();
     if (!c) return;
-    const dest = this.out(c, 0.35)!;
+    const dest = this.out(c, 0.38)!;
     const t = c.currentTime;
-    this.tone(c, dest, t, 880, 880, 0.18, 0.5, 'triangle');
-    this.tone(c, dest, t + 0.09, 1320, 1320, 0.3, 0.5, 'triangle');
+    this.tone(c, dest, t, 160, 55, 0.16, 0.9);
+    this.noiseBurst(c, dest, t, 'lowpass', 900, 1, 0.08, 0.5, 0.002);
+    this.tone(c, dest, t + 0.03, 880, 880, 0.14, 0.45, 'square');
+    this.tone(c, dest, t + 0.11, 1320, 1320, 0.32, 0.45, 'triangle');
+    this.tone(c, dest, t + 0.11, 1980, 1980, 0.2, 0.15);
   }
 
   footstep(speed: number, crouched: boolean, pos?: THREE.Vector3) {

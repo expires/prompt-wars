@@ -1,0 +1,21 @@
+/* Hit feedback extras (juice pass): element-coloured damage numbers, kill hit-stop flash. */
+
+/* damage numbers by element (fire orange, ice cyan, poison green, shock yellow); headshot = crit amber wins */
+.dmg-num.el-fire { color: var(--el-fire); }
+.dmg-num.el-ice { color: #3fe0ff; }
+.dmg-num.el-poison { color: var(--el-poison); }
+.dmg-num.el-shock { color: var(--el-shock); }
+.dmg-num.headshot { color: var(--crit); }
+.dmg-num.kill { color: var(--kill); }
+.dmg-num.dot { font-size: max(16px, calc(24 * var(--u))); opacity: 0.85; }
+.dmg-num.bump { animation: dn-bump 110ms var(--ease-pop); }
+@keyframes dn-bump { from { scale: 1.25; } to { scale: 1; } }
+
+/* kill hit-stop: one ~50 ms contrast pop over the world (the sim never pauses) */
+.hud-hitstop { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+.hud-hitstop.is-on { animation: hud-hitstop 90ms steps(1, end); }
+@keyframes hud-hitstop {
+  0% { opacity: 1; background: radial-gradient(ellipse 60% 55% at 50% 50%, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0) 55%, rgba(0, 0, 0, 0.28) 100%); backdrop-filter: contrast(1.25) saturate(1.35); }
+  60% { opacity: 0; }
+}
+html.reduced-motion .hud-hitstop.is-on { animation: none; }
