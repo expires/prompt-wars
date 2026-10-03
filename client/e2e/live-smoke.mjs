@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+// Live smoke: http://187.7.27.171 (Maincloud + live forge): landing -> forge (1 LIVE generation) -> equip -> deployed.
+import { chromium } from '@playwright/test';
+const base = process.argv[2] ?? 'http://187.7.27.171';
+const prompt = process.argv[3] ?? 'a retro ray gun with tail fins';
+const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const page = await (await browser.newContext({ viewport: { width: 1600, height: 900 } })).newPage();
+page.on('pageerror', (e) => console.log('pageerror', e.message));
+const st = () => page.evaluate(() => window.__game.getState());
+await page.goto(`${base}/?e2e=1&fresh=1&name=Smoke${Math.floor(Math.random() * 900 + 100)}`);
+await page.waitForFunction(() => { const s = window.__game?.getState(); return s?.ready && s.connected; }, null, { timeout: 90000 });
+await page.waitForSelector('[data-testid=landing]:not([hidden])', { timeout: 20000 });
+console.log('landing ok, needsLoadout', (await st()).needsLoadout);
+await page.screenshot({ path: 'e2e/screenshots/live-1-landing.png' });
+await page.click('[data-testid=landing-play]');
+await page.waitForSelector('[data-testid=forge-editor]');
+await page.fill('[data-testid=forge-prompt]', prompt);
+await page.click('[data-testid=forge-reforge]');
+await page.waitForFunction(() => (window.__game.getState().forge?.drafts[0]?.components ?? 0) >= 3, null, { timeout: 90000 });
+await page.screenshot({ path: 'e2e/screenshots/live-2-forge-streaming.png' });
+await page.waitForFunction(() => { const f = window.__game.getState().forge; return f && !f.busy && (f.design || f.error); }, null, { timeout: 120000 });
+const f = (await st()).forge;
+if (!f.design) throw new Error('forge error: ' + f.error);
+await page.waitForTimeout(1200);
+await page.screenshot({ path: 'e2e/screenshots/live-3-forge-done.png' });
+console.log('forged', f.design.name, f.design.components.length, 'parts');
+await page.click('[data-testid=forge-equip]');
+await page.waitForFunction(() => { const s = window.__game.getState(); return s.alive && s.weaponDesign && s.screen === 'none'; }, null, { timeout: 30000 });
+await page.waitForTimeout(1500);
+await page.screenshot({ path: 'e2e/screenshots/live-4-deployed.png' });
+const s = await st();
+console.log('DEPLOYED', s.weaponName, 'server weapon', s.serverWeaponId, 'alive', s.alive);
+await browser.close();

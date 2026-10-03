@@ -10,7 +10,8 @@ ROOT=/var/www/ai-gaem
 cd "$(dirname "$0")/.."
 pnpm --filter client build
 rsync -az client/dist/assets/ "$HOST:$ROOT/assets/"
-rsync -az --delete --exclude assets/ client/dist/ "$HOST:$ROOT/"
+# venue scans (gitignored, uploaded separately) live in maps/: never delete them
+rsync -az --delete --exclude assets/ --exclude 'maps/*.glb' --exclude 'maps/*.meta.json' client/dist/ "$HOST:$ROOT/"
 # prune assets that are no longer referenced and older than 14 days
 ssh "$HOST" "find $ROOT/assets -type f -mtime +14 -delete" || true
 echo "Deployed to http://${HOST#*@}/"
