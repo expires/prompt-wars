@@ -5,6 +5,7 @@ import { initPhysics, FIXED_DT, type PhysicsContext } from './physics';
 import { Input } from './input';
 import { createTestMap } from '../map/testMap';
 import { findGroundSpawns, loadMap } from '../map/loadMap';
+import { bakeSpawns } from '../map/bakeSpawns';
 import type { GameMap, Vec3 } from '../map/types';
 import { getSpawnPoints, pickRandomSpawn, type SpawnPoint } from '../map/spawns';
 import { PlayerController, EYE_HEIGHT } from '../player/PlayerController';
@@ -110,6 +111,11 @@ export class Game {
       }
     } else if (mapFailed && online) {
       this.hud.showWarning('Venue map failed to load — playing test map; spawns may be wrong');
+    }
+
+    // ---- dev tool: bake multi-floor spawns for a scanned map ----
+    if (!online && this.map.id !== 'testmap' && new URLSearchParams(location.search).get('bakeSpawns') === '1') {
+      this.debugBakeSpawns();
     }
 
     // ---- spawn + player (networked: moved to the server's spawn once connected) ----
@@ -329,6 +335,23 @@ export class Game {
     } catch (err) {
       console.warn('[game] map load failed, using test map', err);
       return null;
+    }
+  }
+
+  /** dev tool (`?bakeSpawns=1`): bake spawn candidates for this map and mark them in the scene */
+  private debugBakeSpawns() {
+    const baked = bakeSpawns(this.map, this.physics);
+    console.log(`[bakeSpawns] ${baked.length} candidate${baked.length === 1 ? '' : 's'} for "${this.map.id}"`);
+    console.log(`[bakeSpawns] paste into MAPS.${this.map.id}.spawns:`);
+    console.log(JSON.stringify(baked, null, 2));
+
+    const geo = new THREE.SphereGeometry(0.2, 10, 6);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x37ff9b, depthTest: false, transparent: true, opacity: 0.9 });
+    for (const s of baked) {
+      const marker = new THREE.Mesh(geo, mat);
+      marker.position.set(s.x, s.y + 0.9, s.z);
+      marker.renderOrder = 999;
+      this.rc.scene.add(marker);
     }
   }
 
