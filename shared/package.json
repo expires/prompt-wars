@@ -9,11 +9,14 @@
     ".": "./src/index.ts",
     "./forge": "./src/forge/index.ts",
     "./forge/build": "./src/forge/build.ts",
+    "./forge/geometry": "./src/forge/geometry.ts",
     "./forge/projectile3d": "./src/forge/projectile3d.ts",
     "./forge/examples": "./src/forge/examples.ts",
     "./tauron-remake": "./src/tauronRemake/index.ts",
     "./forge/refine": "./src/forge/refine.ts",
-    "./forge/macros": "./src/forge/macros.ts"
+    "./forge/macros": "./src/forge/macros.ts",
+    "./outfit/build": "./src/outfit/build.ts",
+    "./outfit/examples": "./src/outfit/examples.ts"
   },
   "scripts": {
     "test": "vitest run",

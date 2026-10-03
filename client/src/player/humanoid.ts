@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MELEE_PHASES, type MeleeSwing } from '@ai-gaem/shared';
+import { DEFAULT_BODY, MELEE_PHASES, boneLayout, type BoneName, type MeleeSwing, type OutfitBody } from '@ai-gaem/shared';
 
 /** right-arm rotation (x, y, z), hand push (z, metres) and torso twist (y) for one key */
 type ArmKey = [number, number, number, number, number];
@@ -55,6 +55,21 @@ export class Humanoid {
   private readonly shinR: THREE.Object3D;
   private readonly armL: THREE.Object3D;
   private readonly armR: THREE.Object3D;
+  /** rigid segments outfit pieces attach to (bone frames, see @ai-gaem/shared socketFrame) */
+  readonly bones: Record<BoneName, THREE.Object3D>;
+  private readonly meshes: {
+    torso: THREE.Mesh;
+    head: THREE.Mesh;
+    visor: THREE.Mesh;
+    thighs: THREE.Mesh[];
+    shins: THREE.Mesh[];
+    feet: THREE.Mesh[];
+    arms: THREE.Mesh[];
+  };
+  /** current body proportions */
+  body: OutfitBody = { ...DEFAULT_BODY };
+  /** attached outfit groups (per bone) */
+  private outfitParts: THREE.Object3D[] = [];
   /** current one-shot action (melee swing / gun recoil), if any */
   action: HumanoidAction | null = null;
   /** holding a melee block */
@@ -88,13 +103,18 @@ export class Humanoid {
     this.hips.position.set(0, 0.9, 0);
     this.root.add(this.hips);
     // legs: thigh pivots at the hip, shin at the knee (bends when crouching)
+    const thighs: THREE.Mesh[] = [];
+    const shins: THREE.Mesh[] = [];
+    const feet: THREE.Mesh[] = [];
+    const arms: THREE.Mesh[] = [];
     const leg = (x: number) => {
       const pivot = new THREE.Group();
       pivot.position.set(x, 0, 0);
-      mk(new THREE.BoxGeometry(0.2, 0.46, 0.22), this.limbMat, 0, -0.225, 0, pivot);
+      thighs.push(mk(new THREE.BoxGeometry(0.2, 0.46, 0.22), this.limbMat, 0, -0.225, 0, pivot));
       const knee = new THREE.Group();
       knee.position.set(0, -0.45, 0);
-      mk(new THREE.BoxGeometry(0.18, 0.45, 0.2), this.limbMat, 0, -0.215, 0, knee);
+      shins.push(mk(new THREE.BoxGeometry(0.18, 0.45, 0.2), this.limbMat, 0, -0.215, 0, knee));
+      feet.push(mk(new THREE.BoxGeometry(0.17, 0.07, 0.26), this.limbMat, 0, -0.405, -0.05, knee));
       pivot.add(knee);
       this.hips.add(pivot);
       return [pivot, knee] as const;
@@ -102,22 +122,24 @@ export class Humanoid {
     [this.legL, this.shinL] = leg(-0.13);
     [this.legR, this.shinR] = leg(0.13);
 
-    mk(new THREE.BoxGeometry(0.5, 0.6, 0.28), this.bodyMat, 0, 0.3, 0, this.hips); // torso
+    const torso = mk(new THREE.BoxGeometry(0.5, 0.6, 0.28), this.bodyMat, 0, 0.3, 0, this.hips); // torso
 
     this.upper.position.set(0, 0.55, 0);
     this.hips.add(this.upper);
-    mk(new THREE.BoxGeometry(0.28, 0.3, 0.28), skin, 0, 0.22, 0, this.upper); // head
-    mk(new THREE.BoxGeometry(0.24, 0.08, 0.02), visor, 0, 0.25, -0.145, this.upper); // visor (shows facing)
+    const head = mk(new THREE.BoxGeometry(0.28, 0.3, 0.28), skin, 0, 0.21, 0, this.upper); // head
+    const visorMesh = mk(new THREE.BoxGeometry(0.24, 0.08, 0.02), visor, 0, 0.24, -0.145, this.upper); // visor (shows facing)
 
     const arm = (x: number) => {
       const pivot = new THREE.Group();
       pivot.position.set(x, 0, 0);
-      mk(new THREE.BoxGeometry(0.14, 0.14, 0.55), this.limbMat, 0, -0.08, -0.25, pivot); // arms forward (aiming)
+      arms.push(mk(new THREE.BoxGeometry(0.14, 0.14, 0.55), this.limbMat, 0, -0.08, -0.25, pivot)); // arms forward (aiming)
       this.upper.add(pivot);
       return pivot;
     };
     this.armL = arm(-0.3);
     this.armR = arm(0.3);
+    this.meshes = { torso, head, visor: visorMesh, thighs, shins, feet, arms };
+    this.bones = { hips: this.hips, upper: this.upper, armL: this.armL, armR: this.armR, thighL: this.legL, thighR: this.legR, shinL: this.shinL, shinR: this.shinR };
     // the hand (weapon) hangs off the right arm so swings carry the weapon
     this.hand.position.set(-0.08, -0.1, -0.45);
     this.armR.add(this.hand);
@@ -128,14 +150,85 @@ export class Humanoid {
     this.applyColors();
   }
 
+  /**
+   * Body proportions (outfit): overall size scales the whole character, build widens torso / legs
+   * (and arms half as much), head scales the head, limbs the arm length. Matches the hitbox maths
+   * in @ai-gaem/shared (headCenter / bodyRadius) and the socket frames outfit pieces sit on.
+   */
+  setBody(b: OutfitBody) {
+    this.body = { ...b };
+    const L = boneLayout(b);
+    this.root.scale.setScalar(b.size);
+    const m = this.meshes;
+    m.torso.scale.set(b.build, 1, b.build);
+    for (const t of m.thighs) t.scale.set(b.build, 1, b.build);
+    for (const t of m.shins) t.scale.set(b.build, 1, b.build);
+    for (const t of m.feet) t.scale.set(b.build, 1, b.build);
+    this.legL.position.x = -L.thighX;
+    this.legR.position.x = L.thighX;
+    this.armL.position.x = -L.armX;
+    this.armR.position.x = L.armX;
+    for (const a of m.arms) {
+      a.scale.set(L.armGirth, L.armGirth, b.limbs);
+      a.position.z = -0.25 * b.limbs;
+    }
+    this.hand.position.z = -0.45 * b.limbs;
+    m.head.scale.setScalar(b.head);
+    m.head.position.y = 0.06 + 0.15 * b.head;
+    m.visor.scale.setScalar(b.head);
+    m.visor.position.set(0, 0.06 + 0.18 * b.head, -0.145 * b.head);
+  }
+
+  /** outfit colours: suit (torso), undersuit (limbs), skin; null restores the player colour look */
+  private look: { suit: THREE.Color; limbs: THREE.Color } | null = null;
+
+  setLook(look: { suit: string; limbs: string; skin: string } | null) {
+    if (look) {
+      this.look = { suit: new THREE.Color(look.suit), limbs: new THREE.Color(look.limbs) };
+      this.skinMat.color.set(look.skin);
+    } else {
+      this.look = null;
+      this.skinMat.color.set(0xe0b89a);
+    }
+    this.applyColors();
+  }
+
+  /** Attach outfit groups (bone frame) to their bones; returns nothing, see detachOutfit. */
+  attachOutfit(parts: Partial<Record<BoneName, THREE.Object3D>>, opts: { hideVisor?: boolean } = {}) {
+    this.detachOutfit();
+    for (const [bone, obj] of Object.entries(parts) as [BoneName, THREE.Object3D][]) {
+      if (!obj) continue;
+      this.bones[bone].add(obj);
+      this.outfitParts.push(obj);
+    }
+    this.meshes.visor.visible = !opts.hideVisor;
+  }
+
+  /** Detach (not dispose) the outfit groups; returns them for the caller to release. */
+  detachOutfit(): THREE.Object3D[] {
+    const out = this.outfitParts;
+    for (const o of out) o.parent?.remove(o);
+    this.outfitParts = [];
+    this.meshes.visor.visible = true;
+    return out;
+  }
+
+  /** outfit groups currently attached (tests) */
+  get outfitObjects(): readonly THREE.Object3D[] {
+    return this.outfitParts;
+  }
+
   private readonly baseColor = new THREE.Color();
   private tint: THREE.Color | null = null;
   private tintK = 0;
 
   private applyColors() {
-    this.bodyMat.color.copy(this.baseColor);
+    this.bodyMat.color.copy(this.look ? this.look.suit : this.baseColor);
     if (this.tint) this.bodyMat.color.lerp(this.tint, 0.75);
-    this.limbMat.color.copy(this.bodyMat.color).multiplyScalar(0.6);
+    if (this.look) {
+      this.limbMat.color.copy(this.look.limbs);
+      if (this.tint) this.limbMat.color.lerp(this.tint, 0.75);
+    } else this.limbMat.color.copy(this.bodyMat.color).multiplyScalar(0.6);
   }
 
   /** elemental status look (burning orange / chilled blue ...): body recoloured + glow; null clears it */
@@ -280,8 +373,8 @@ export class Humanoid {
   dispose() {
     this.root.traverse((o) => {
       const m = o as THREE.Mesh;
-      // never touch cached design-model / projectile geometry if something is still attached
-      if (m.isMesh && !m.userData?.sharedDesignModel && !m.userData?.sharedProjectile) m.geometry.dispose();
+      // never touch cached design-model / projectile / outfit geometry if something is still attached
+      if (m.isMesh && !m.userData?.sharedDesignModel && !m.userData?.sharedProjectile && !m.userData?.sharedOutfit) m.geometry.dispose();
     });
     this.bodyMat.dispose();
     this.limbMat.dispose();

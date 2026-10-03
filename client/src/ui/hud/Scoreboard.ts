@@ -16,6 +16,8 @@ export interface ScoreRow {
   alive: boolean;
   /** weapon prompt (tooltip) */
   prompt?: string;
+  /** body size class + max HP (Closet outfit), e.g. "L 125" */
+  size?: string;
 }
 
 export class Scoreboard {
@@ -58,7 +60,7 @@ export class Scoreboard {
             return (
               `<div class="hud-sb__row${r.you ? ' is-you' : ''}${r.alive ? '' : ' is-dead'}">` +
               `<span class="hud-sb__rank ui-num">${i + 1}</span>` +
-              `<span class="hud-sb__name">${r.alive ? '' : icon('skull', 'ui-icon hud-sb__dead')}<span class="hud-sb__nm">${esc(r.name)}</span>${r.you ? '<span class="hud-sb__you">You</span>' : ''}</span>` +
+              `<span class="hud-sb__name">${r.alive ? '' : icon('skull', 'ui-icon hud-sb__dead')}<span class="hud-sb__nm">${esc(r.name)}</span>${r.you ? '<span class="hud-sb__you">You</span>' : ''}${r.size ? `<span class="hud-sb__size" title="size · max HP">${esc(r.size)}</span>` : ''}</span>` +
               `<span class="hud-sb__wpn tier-${tier}"${r.prompt ? ` title="${esc(`“${r.prompt}”`)}"` : ''}><i class="hud-sb__dia" aria-hidden="true"></i><span class="hud-sb__wn">${esc(r.weapon)}</span></span>` +
               `<span class="r ui-num hud-sb__k">${r.kills}</span>` +
               `<span class="r ui-num hud-sb__d">${r.deaths}</span>` +

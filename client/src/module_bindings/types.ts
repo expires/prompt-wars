@@ -72,6 +72,22 @@ export const HitReport = __t.object("HitReport", {
 });
 export type HitReport = __Infer<typeof HitReport>;
 
+export const Outfit = __t.object("Outfit", {
+  id: __t.u64(),
+  owner: __t.identity(),
+  name: __t.string(),
+  json: __t.string(),
+  prompt: __t.string(),
+  isPreset: __t.bool(),
+  scale: __t.f32(),
+  build: __t.f32(),
+  head: __t.f32(),
+  maxHp: __t.f32(),
+  speedMult: __t.f32(),
+  createdAt: __t.timestamp(),
+});
+export type Outfit = __Infer<typeof Outfit>;
+
 export const Pickup = __t.object("Pickup", {
   id: __t.u32(),
   kind: __t.string(),
@@ -132,6 +148,8 @@ export const Player = __t.object("Player", {
   needsLoadout: __t.bool(),
   dotElement: __t.u8(),
   slowElement: __t.u8(),
+  outfitId: __t.u64(),
+  maxHp: __t.f32(),
 });
 export type Player = __Infer<typeof Player>;
 

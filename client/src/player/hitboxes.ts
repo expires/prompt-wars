@@ -1,29 +1,26 @@
 import type RAPIER from '@dimforge/rapier3d';
 import {
-  HEAD_CENTER_CROUCHED,
-  HEAD_CENTER_STANDING,
-  HEAD_RADIUS,
+  DEFAULT_DIMS,
   HIT_ZONE_BODY,
   HIT_ZONE_HEAD,
-  PLAYER_CROUCH_HEIGHT,
-  PLAYER_HEIGHT,
+  bodyRadius,
+  headCenter,
+  headRadius,
+  type BodyDims,
 } from '@ai-gaem/shared';
 import type { PhysicsContext } from '../engine/physics';
 import type { HitTarget, TargetRegistry } from '../weapons/targets';
 
-const BODY_RADIUS = 0.3;
-/** body capsule top (feet-relative) when standing: just under the head sphere */
-const BODY_TOP_STANDING = HEAD_CENTER_STANDING - HEAD_RADIUS;
-const CROUCH_DROP = PLAYER_HEIGHT - PLAYER_CROUCH_HEIGHT;
-
 /**
  * Head sphere + body capsule attached to a rigid body whose origin is at the player's feet.
- * `setCrouch(t)` (0 standing .. 1 crouched) lowers the head and shortens the body.
+ * `setCrouch(t)` (0 standing .. 1 crouched) lowers the head and shortens the body; `setDims`
+ * scales both with the player's body (outfit size / build / head), matching the server's checks.
  */
 export class Hitboxes {
   readonly body: RAPIER.Collider;
   readonly head: RAPIER.Collider;
   private crouchT = -1;
+  private dims: BodyDims = DEFAULT_DIMS;
 
   constructor(
     private readonly physics: PhysicsContext,
@@ -32,27 +29,44 @@ export class Hitboxes {
     target: HitTarget,
   ) {
     const { RAPIER, world } = physics;
-    this.body = world.createCollider(RAPIER.ColliderDesc.capsule(0.45, BODY_RADIUS), rigidBody);
+    this.body = world.createCollider(RAPIER.ColliderDesc.capsule(0.45, bodyRadius(DEFAULT_DIMS)), rigidBody);
     // solid (not a sensor): weapon raycasts skip sensors
-    this.head = world.createCollider(RAPIER.ColliderDesc.ball(HEAD_RADIUS), rigidBody);
+    this.head = world.createCollider(RAPIER.ColliderDesc.ball(headRadius(DEFAULT_DIMS)), rigidBody);
     registry.add(this.body, target, HIT_ZONE_BODY);
     registry.add(this.head, target, HIT_ZONE_HEAD);
     this.setCrouch(0);
   }
 
-  /** head centre above the feet for crouch blend t */
-  static headHeight(t: number) {
-    return HEAD_CENTER_STANDING + (HEAD_CENTER_CROUCHED - HEAD_CENTER_STANDING) * t;
+  /** head centre above the feet for crouch blend t (standard body unless `dims` given) */
+  static headHeight(t: number, dims: BodyDims = DEFAULT_DIMS) {
+    return headCenter(dims, t);
+  }
+
+  get bodyDims(): BodyDims {
+    return this.dims;
+  }
+
+  setDims(d: BodyDims) {
+    if (d.scale === this.dims.scale && d.build === this.dims.build && d.head === this.dims.head) return;
+    this.dims = { scale: d.scale, build: d.build, head: d.head };
+    this.body.setRadius(bodyRadius(this.dims));
+    this.head.setRadius(headRadius(this.dims));
+    const t = this.crouchT;
+    this.crouchT = -1;
+    this.setCrouch(Math.max(0, t));
   }
 
   setCrouch(t: number) {
     if (Math.abs(t - this.crouchT) < 1e-4) return;
     this.crouchT = t;
-    const top = BODY_TOP_STANDING - CROUCH_DROP * t;
-    const half = Math.max(0.05, (top - 2 * BODY_RADIUS) / 2);
+    const d = this.dims;
+    const r = bodyRadius(d);
+    // body capsule top: just under the head sphere
+    const top = headCenter(d, t) - headRadius(d);
+    const half = Math.max(0.05, (top - 2 * r) / 2);
     this.body.setHalfHeight(half);
     this.body.setTranslationWrtParent({ x: 0, y: top / 2, z: 0 });
-    this.head.setTranslationWrtParent({ x: 0, y: Hitboxes.headHeight(t), z: 0 });
+    this.head.setTranslationWrtParent({ x: 0, y: headCenter(d, t), z: 0 });
   }
 
   setEnabled(on: boolean) {

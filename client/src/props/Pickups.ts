@@ -200,7 +200,7 @@ export class PickupSystem {
   }
 
   /** animate, and collect a pack the local player stands on (only when it would heal) */
-  update(dt: number, local: { feet: THREE.Vector3; hp: number; alive: boolean }) {
+  update(dt: number, local: { feet: THREE.Vector3; hp: number; alive: boolean; maxHp?: number }) {
     if (!this.enabled || this.views.size === 0) return;
     this.t += dt;
     const now = performance.now();
@@ -236,7 +236,7 @@ export class PickupSystem {
 
       if (!v.available || !local.alive) continue;
       if (!pickupInReach(local.feet, v.pos, PICKUP_TOUCH_RADIUS)) continue;
-      const amount = v.kind === 'health' ? healAmount(local.hp) : 0;
+      const amount = v.kind === 'health' ? healAmount(local.hp, local.maxHp) : 0;
       if (amount <= 0 || now - v.lastTry < RETRY_MS) continue;
       v.lastTry = now;
       if (this.net.authoritative) {

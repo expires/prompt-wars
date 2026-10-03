@@ -192,6 +192,11 @@ Weapons are designed from scratch by an LLM in the **Forge DSL** (`shared/src/fo
   and **Forged by X · N uses** for everyone else. The forge service also keeps an in-memory LRU of
   plain prompts (`FORGE_CACHE_MAX`, default 500, 0 = off) and replays hits without a model call or
   rate-limit cost. `?nocache=1` skips the client-side lookup.
+- Closet (outfits, see `docs/characters.md`): `POST /api/forge/outfit` streams an Outfit DSL
+  (body proportions + armour pieces on humanoid sockets; same limiter / cache as weapons).
+  `register_outfit(outfitJson, prompt)` / `equip_outfit(outfitId)` (only while dead) store and wear
+  it; the server derives max HP (70..140), hitbox scale and move speed from the sanitized body.
+  Pieces are cosmetic. Opened from the landing, Esc menu, death screen and after the first forge.
 - Death screen, kill feed chip and Tab scoreboard show the killer weapon's original prompt.
 - Profanity filter (`@ai-gaem/shared` `censorText`, English + Polish basics, leetspeak / diacritics /
   repeated letters folded, whole words only so "Scunthorpe" / "assassin" pass): offending words

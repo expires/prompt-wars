@@ -40,4 +40,6 @@ export default __t.row({
   needsLoadout: __t.bool().name("needs_loadout"),
   dotElement: __t.u8().name("dot_element"),
   slowElement: __t.u8().name("slow_element"),
+  outfitId: __t.u64().name("outfit_id"),
+  maxHp: __t.f32().name("max_hp"),
 });

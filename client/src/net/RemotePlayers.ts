@@ -2,13 +2,13 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d';
 import type { PhysicsContext } from '../engine/physics';
 import { Humanoid } from '../player/humanoid';
-import { CENTER_OFFSET } from '../player/PlayerController';
 import { Hitboxes } from '../player/hitboxes';
 import { buildWeaponModel } from '../weapons/buildWeaponModel';
 import { onPartsLibrary } from '../weapons/partsLibrary';
 import { disposeWeaponModel } from '../weapons/designModelCache';
 import { THROW_TIME } from '../weapons/throwAnim';
-import { MELEE_PHASES, meleeMetaOf, meleeSwingDuration } from '@ai-gaem/shared';
+import { DEFAULT_BODY, DEFAULT_DIMS, MELEE_PHASES, crouchDrop, headCenter, meleeMetaOf, meleeSwingDuration, standHeight, type BodyDims } from '@ai-gaem/shared';
+import { acquireOutfitParts, releaseOutfitParts } from '../player/outfitModelCache';
 import type { Weapon } from '../weapons/types';
 import type { HitTarget, TargetRegistry } from '../weapons/targets';
 import type { NetClient, NetPlayer, PoseSnapshot } from './NetClient';
@@ -37,6 +37,10 @@ interface Remote {
   recoils: number;
   nameTag: THREE.Sprite;
   tagText: string;
+  /** outfit currently worn ('0' = default body, '' = not applied yet) */
+  outfitApplied: string;
+  /** hitbox body (server-derived outfit stats) */
+  dims: BodyDims;
 }
 
 /**
@@ -49,6 +53,7 @@ export class RemotePlayers {
   private unsub: () => void;
   private unsubWeapons?: () => void;
   private unsubPose?: () => void;
+  private unsubOutfits?: () => void;
   private readonly unsubParts: () => void;
   /** per-frame hook (tests: trace rendered positions) */
   onFrame?: (now: number) => void;
@@ -67,6 +72,10 @@ export class RemotePlayers {
     // weapon rows may arrive after the player row: retry missing models
     this.unsubWeapons = net.onWeaponsChanged?.(() => {
       for (const r of this.remotes.values()) if (r.modelWeaponId !== (r.weaponId ?? '')) this.setWeapon(r, r.weaponId);
+    });
+    // outfit rows may arrive after the player row too
+    this.unsubOutfits = net.onOutfitsChanged?.(() => {
+      for (const r of this.remotes.values()) this.applyOutfit(r);
     });
     // models built before the part library loaded are placeholders: rebuild them
     this.unsubParts = onPartsLibrary(() => {
@@ -90,6 +99,8 @@ export class RemotePlayers {
         /** elemental status (burning / chilled / ...) and the body glow shown for it */
         status: PlayerStatus;
         tint: number;
+        /** worn outfit ('0' default), its hitbox body and attached part groups */
+        outfit: { id: string; dims: BodyDims; parts: number; size: number };
         /** third-person animation state */
         anim: { action: string; swing: string; combo: number; charge: number; u: number; blocking: boolean; armX: number; armY: number; twist: number; melees: number; recoils: number };
       }
@@ -105,6 +116,7 @@ export class RemotePlayers {
       head: this.headOf(id)!,
       status: playerStatus(r.state),
       tint: r.model.statusTint,
+      outfit: { id: r.outfitApplied, dims: r.dims, parts: r.model.outfitObjects.length, size: r.model.body.size },
       anim: {
         action: r.model.action?.kind ?? 'none',
         swing: r.model.action?.swing ?? '',
@@ -152,14 +164,14 @@ export class RemotePlayers {
   centerOf(id: string, out = new THREE.Vector3()): THREE.Vector3 | undefined {
     const r = this.remotes.get(id);
     if (!r) return undefined;
-    return out.copy(r.model.root.position).setY(r.model.root.position.y + CENTER_OFFSET - 0.3 * r.crouchT);
+    return out.copy(r.model.root.position).setY(r.model.root.position.y + centerHeight(r.dims, r.crouchT));
   }
 
   /** interpolated head-hitbox centre (for aiming / tests) */
   headOf(id: string, out = new THREE.Vector3()): THREE.Vector3 | undefined {
     const r = this.remotes.get(id);
     if (!r) return undefined;
-    return out.copy(r.model.root.position).setY(r.model.root.position.y + Hitboxes.headHeight(r.crouchT));
+    return out.copy(r.model.root.position).setY(r.model.root.position.y + headCenter(r.dims, r.crouchT));
   }
 
   /** player rows (name, hp, alive, weapon, ...): no movement data, never pushes snapshots */
@@ -177,10 +189,11 @@ export class RemotePlayers {
       r.hitboxes.setEnabled(p.alive);
       if (p.color) r.model.setColor(p.color);
       if (p.weaponId !== r.weaponId || r.modelWeaponId !== (p.weaponId ?? '')) this.setWeapon(r, p.weaponId);
-      const tag = `${p.name}  ${Math.max(0, Math.round(p.hp))}`;
+      this.applyOutfit(r);
+      const tag = `${p.name}  ${Math.max(0, Math.round(p.hp))}/${p.maxHp ?? 100}`;
       if (tag !== r.tagText) {
         r.tagText = tag;
-        drawNameTag(r.nameTag, p.name, p.hp);
+        drawNameTag(r.nameTag, p.name, p.hp, p.maxHp ?? 100);
       }
     }
     for (const id of [...this.remotes.keys()]) if (!seen.has(id)) this.removeRemote(id);
@@ -230,6 +243,8 @@ export class RemotePlayers {
       interp: new RemoteInterpolator({ pos: p.pos, yaw: p.yaw, pitch: p.pitch, crouching: p.crouching }),
       state: p,
       modelWeaponId: '',
+      outfitApplied: '',
+      dims: DEFAULT_DIMS,
       nameTag,
       tagText: '',
       melees: 0,
@@ -238,7 +253,7 @@ export class RemotePlayers {
       target: {
         id: p.id,
         kind: 'player',
-        getCenter: (out) => out.copy(model.root.position).setY(model.root.position.y + CENTER_OFFSET - 0.3 * r.crouchT),
+        getCenter: (out) => out.copy(model.root.position).setY(model.root.position.y + centerHeight(r.dims, r.crouchT)),
         alive: () => r.state.alive,
         applyDamage: (_amount, weaponId, info) => {
           this.net.reportHit(p.id, weaponId, info);
@@ -251,6 +266,35 @@ export class RemotePlayers {
     const pose = this.net.getPose?.(p.id);
     if (pose) r.interp.push(pose);
     return r;
+  }
+
+  /**
+   * Wear the player's outfit: body proportions + look + pieces (shared cached model) and the
+   * matching hitbox (server-derived dims). Waits (default body) until the outfit row arrives.
+   */
+  private applyOutfit(r: Remote) {
+    const id = r.state.outfitId && r.state.outfitId !== '0' ? r.state.outfitId : '0';
+    const o = id !== '0' ? this.net.getOutfit?.(id) : undefined;
+    const want = o ? o.id : '0';
+    if (want === r.outfitApplied) return;
+    if (id !== '0' && !o && r.outfitApplied !== '') return; // keep the current look until it arrives
+    releaseOutfitParts(r.model.detachOutfit());
+    r.outfitApplied = want;
+    if (o) {
+      r.model.setBody(o.outfit.body);
+      r.model.setLook({ suit: o.outfit.palette.primary, limbs: o.outfit.palette.secondary, skin: o.outfit.skin });
+      const covers = o.outfit.pieces.some((p) => p.socket === 'head' || p.socket === 'face');
+      r.model.attachOutfit(acquireOutfitParts(o.outfit), { hideVisor: covers });
+      r.dims = o.dims;
+    } else {
+      r.model.setBody(DEFAULT_BODY);
+      r.model.setLook(null);
+      r.dims = DEFAULT_DIMS;
+    }
+    r.hitboxes.setDims(r.dims);
+    // name tag: constant world size above the (scaled) head
+    const s = r.model.body.size;
+    r.nameTag.scale.set(1.6 / s, 0.4 / s, 1);
   }
 
   private setWeapon(r: Remote, weaponId?: string) {
@@ -285,8 +329,9 @@ export class RemotePlayers {
     this.scene.remove(r.model.root);
     (r.nameTag.material as THREE.SpriteMaterial).map?.dispose();
     r.nameTag.material.dispose();
-    // weapon first: shared (cached) design models must not be disposed with the body
+    // weapon + outfit first: shared (cached) models must not be disposed with the body
     this.clearHand(r);
+    releaseOutfitParts(r.model.detachOutfit());
     r.model.dispose();
     this.remotes.delete(id);
   }
@@ -302,7 +347,7 @@ export class RemotePlayers {
       if (tint) {
         const flicker = tint === 'fire' ? 0.55 + 0.25 * Math.sin(this.statusTime * 23 + r.melees) * Math.sin(this.statusTime * 7.3) : tint === 'shock' ? (Math.random() < 0.5 ? 0.9 : 0.2) : 0.55;
         r.model.setStatusTint(ELEMENT_LOOK[tint].tint, flicker);
-        if (this.fx && r.model.root.visible) emitStatusParticles(this.fx, status, r.model.root.position, 1.8 - 0.6 * r.crouchT, dt);
+        if (this.fx && r.model.root.visible) emitStatusParticles(this.fx, status, r.model.root.position, standHeight(r.dims) - crouchDrop(r.dims) * r.crouchT, dt);
       } else r.model.setStatusTint(null);
       const st = r.interp.update(now);
       if (!st) continue;
@@ -312,7 +357,8 @@ export class RemotePlayers {
       r.crouchT = ct > r.crouchT ? Math.min(ct, r.crouchT + dt * CROUCH_RATE) : Math.max(ct, r.crouchT - dt * CROUCH_RATE);
       r.model.setCrouch(r.crouchT);
       r.hitboxes.setCrouch(r.crouchT);
-      r.nameTag.position.y = 2.15 - 0.6 * r.crouchT;
+      // local to the (size-scaled) root
+      r.nameTag.position.y = 2.15 - 0.6 * r.crouchT + 0.3 * (r.model.body.head - 1);
       r.model.root.position.set(x, y, z);
       r.model.root.rotation.y = st.yaw;
       r.model.setPitch(st.pitch);
@@ -328,6 +374,7 @@ export class RemotePlayers {
     this.unsub();
     this.unsubWeapons?.();
     this.unsubPose?.();
+    this.unsubOutfits?.();
     this.unsubParts();
     for (const id of [...this.remotes.keys()]) this.removeRemote(id);
   }
@@ -346,7 +393,12 @@ function createNameTag(): THREE.Sprite {
   return sprite;
 }
 
-function drawNameTag(sprite: THREE.Sprite, name: string, hp: number) {
+/** body centre above the feet (aim assist / splash), crouch blend t */
+function centerHeight(d: BodyDims, t: number) {
+  return standHeight(d) / 2 - (crouchDrop(d) / 2) * t;
+}
+
+function drawNameTag(sprite: THREE.Sprite, name: string, hp: number, maxHp = 100) {
   const tex = (sprite.material as THREE.SpriteMaterial).map as THREE.CanvasTexture;
   const canvas = tex.image as HTMLCanvasElement;
   const g = canvas.getContext('2d')!;
@@ -359,7 +411,7 @@ function drawNameTag(sprite: THREE.Sprite, name: string, hp: number) {
   g.fillStyle = '#fff';
   g.fillText(name.slice(0, 18), 128, 24);
   // hp bar
-  const f = Math.max(0, Math.min(1, hp / 100));
+  const f = Math.max(0, Math.min(1, hp / (maxHp || 100)));
   g.fillStyle = 'rgba(0,0,0,0.6)';
   g.fillRect(28, 50, 200, 8);
   g.fillStyle = f > 0.5 ? '#4ade80' : f > 0.25 ? '#fbbf24' : '#ef4444';

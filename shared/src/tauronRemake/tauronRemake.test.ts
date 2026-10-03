@@ -38,6 +38,7 @@ import {
   layout,
 } from './layout';
 import { TAURON_REMAKE_PICKUPS, TAURON_REMAKE_SPAWNS } from './spawns';
+import { BODY_LIMITS, standHeight } from '../outfit/balance';
 
 // ------------------------------------------------------------------ tiny BVH raycaster
 
@@ -315,14 +316,14 @@ describe('tauron-remake routes are climbable (autostep 0.4 m)', () => {
    * Rapier's autostep lifts the whole 1.8 m capsule (radius 0.35) by up to 0.4 m: every ceiling
    * within the capsule's footprint must clear the highest step under it + 2.25 m.
    */
-  const autostepBlocked = (j: number, pr: { d: number; y: number }[]) => {
+  const autostepBlocked = (j: number, pr: { d: number; y: number }[], clearance = 2.25) => {
     const bad: string[] = [];
     for (const p of pr) {
       const near = pr.filter((o) => Math.abs(o.d - p.d) <= 0.36);
       const top = Math.max(...near.map((o) => o.y));
       const q = columnPoint(j, 0.5, p.d);
       const up = solid.ray([q.x, p.y + 0.05, q.z], [0, 1, 0], 10);
-      if (up && p.y + 0.05 + up.t < top + 2.25) bad.push(`d=${p.d.toFixed(2)} ceiling ${(p.y + 0.05 + up.t).toFixed(2)} < ${(top + 2.25).toFixed(2)}`);
+      if (up && p.y + 0.05 + up.t < top + clearance) bad.push(`d=${p.d.toFixed(2)} ceiling ${(p.y + 0.05 + up.t).toFixed(2)} < ${(top + clearance).toFixed(2)}`);
     }
     return bad.slice(0, 5);
   };
@@ -391,6 +392,23 @@ describe('tauron-remake routes are climbable (autostep 0.4 m)', () => {
     expect(pr[pr.length - 1]!.y).toBeCloseTo(LEVEL_B, 3);
     expect(maxRiser(pr)).toBeLessThanOrEqual(0.4);
     expect(autostepBlocked(col.index, pr)).toEqual([]);
+  });
+
+  it('the biggest Closet body (size cap) still fits every climbable route', () => {
+    // standing capsule of the largest allowed body + the 0.4 m autostep lift + 5 cm slack
+    const clearance = standHeight({ scale: BODY_LIMITS.size[1], build: 1, head: 1 }) + 0.45;
+    const tun = layout().columns.find((c) => c.a === 'tunnel' && c.part === 'E')!;
+    const prT = profile(tun.index, -2, TUN_STAIR_D1 + 0.5, (d) => (d < TUN_STAIR_D0 ? 2.5 : 0.25 + (d - TUN_STAIR_D0) * 0.85 + 1.5));
+    expect(autostepBlocked(tun.index, prT, clearance)).toEqual([]);
+    const cst = layout().columns.find((c) => c.b === 'cstair' && c.part === 'N')!;
+    const prC = profile(cst.index, CST_D0 - 0.6, CST_D1 + 0.5, (d) => (d < CST_D0 ? 13.5 : 12.96));
+    expect(autostepBlocked(cst.index, prC, clearance)).toEqual([]);
+    const aisle = layout().columns.find((c) => isStairColumn(c) && c.part === 'N')!;
+    const prA = profile(aisle.index, ACCESS_D0 - 1, A_END + 1, () => 12);
+    expect(autostepBlocked(aisle.index, prA, clearance)).toEqual([]);
+    const vom = layout().columns.find((c) => c.b === 'vom' && c.a === 'aisle' && c.part === 'S')!;
+    const prV = profile(vom.index, A_END + 0.2, CONC_D1 - 1, () => 12);
+    expect(autostepBlocked(vom.index, prV, clearance)).toEqual([]);
   });
 
   it('tier A rows sit where the layout says', () => {

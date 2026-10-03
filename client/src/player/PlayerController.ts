@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d';
-import { PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@ai-gaem/shared';
+import { DEFAULT_DIMS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT, crouchHeight, eyeHeight, standHeight, type BodyDims } from '@ai-gaem/shared';
 import type { PhysicsContext } from '../engine/physics';
 import { GRAVITY } from '../engine/physics';
 import type { Input } from '../engine/input';
@@ -70,10 +70,16 @@ const SLIDE_COOLDOWN = 0.9;
  */
 export class PlayerController {
   readonly body: RAPIER.RigidBody;
+  /** body proportions (Closet outfit): capsule heights + eye heights follow its size */
+  private standHalf = CAPSULE_HALF_HEIGHT;
+  private crouchHalf = CROUCH_HALF_HEIGHT;
+  private eyeStand = EYE_HEIGHT;
+  private eyeCrouch = CROUCH_EYE_HEIGHT;
+  dims: BodyDims = DEFAULT_DIMS;
   readonly collider: RAPIER.Collider;
   private readonly cc: RAPIER.KinematicCharacterController;
   private readonly physics: PhysicsContext;
-  private readonly standShape: RAPIER.Capsule;
+  private standShape: RAPIER.Capsule;
 
   yaw = 0;
   pitch = 0;
@@ -96,7 +102,7 @@ export class PlayerController {
   /** test hook / scripted override for the crouch input (null = use keys) */
   forceCrouch: boolean | null = null;
   /** smoothed eye height above the feet (crouch transitions) */
-  eyeHeight = EYE_HEIGHT;
+  eyeHeight = this.eyeStand;
   /** autorun (T): move forward without holding W; W or S cancels */
   autoRun = false;
   /** extra movement multiplier (blocking with a melee weapon) */
@@ -131,9 +137,9 @@ export class PlayerController {
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(spawn.x, spawn.y + CENTER_OFFSET, spawn.z),
     );
-    this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS), this.body);
+    this.collider = world.createCollider(RAPIER.ColliderDesc.capsule(this.standHalf, CAPSULE_RADIUS), this.body);
     // slightly thinner than the real capsule so standing up next to a wall isn't refused
-    this.standShape = new RAPIER.Capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS - 0.03);
+    this.standShape = new RAPIER.Capsule(this.standHalf, CAPSULE_RADIUS - 0.03);
 
     this.cc = world.createCharacterController(0.02);
     this.cc.setUp({ x: 0, y: 1, z: 0 });
@@ -149,9 +155,29 @@ export class PlayerController {
     this.prevFeet.copy(spawn);
   }
 
+  /**
+   * Resize for a body (outfit size): standing / crouched capsule heights and eye heights scale with
+   * it (radius stays CAPSULE_RADIUS so every corridor still fits). Feet stay planted.
+   */
+  setBody(d: BodyDims) {
+    if (d.scale === this.dims.scale && d.head === this.dims.head && d.build === this.dims.build) return;
+    this.dims = { ...d };
+    this.standHalf = Math.max(0.05, standHeight(d) / 2 - CAPSULE_RADIUS);
+    this.crouchHalf = Math.max(0.05, crouchHeight(d) / 2 - CAPSULE_RADIUS);
+    this.eyeStand = eyeHeight(d, 0);
+    this.eyeCrouch = eyeHeight(d, 1);
+    this.standShape = new this.physics.RAPIER.Capsule(this.standHalf, CAPSULE_RADIUS - 0.03);
+    this.collider.setHalfHeight(this.halfHeight);
+    const cy = this.curFeet.y + this.halfHeight + CAPSULE_RADIUS;
+    const t = this.body.translation();
+    this.body.setTranslation({ x: t.x, y: cy, z: t.z }, true);
+    this.body.setNextKinematicTranslation({ x: t.x, y: cy, z: t.z });
+    this.eyeHeight = this.crouched ? this.eyeCrouch : this.eyeStand;
+  }
+
   /** current capsule half height */
   get halfHeight() {
-    return this.crouched ? CROUCH_HALF_HEIGHT : CAPSULE_HALF_HEIGHT;
+    return this.crouched ? this.crouchHalf : this.standHalf;
   }
 
   /**
@@ -400,7 +426,7 @@ export class PlayerController {
    * refused while something is in the way (ceiling, vent).
    */
   private setCrouched(on: boolean): boolean {
-    const dh = CAPSULE_HALF_HEIGHT - CROUCH_HALF_HEIGHT;
+    const dh = this.standHalf - this.crouchHalf;
     const t = this.body.translation();
     let cy: number;
     if (on) {
@@ -414,7 +440,7 @@ export class PlayerController {
       else return false;
     }
     this.crouched = on;
-    this.collider.setHalfHeight(on ? CROUCH_HALF_HEIGHT : CAPSULE_HALF_HEIGHT);
+    this.collider.setHalfHeight(on ? this.crouchHalf : this.standHalf);
     const pos = { x: t.x, y: cy, z: t.z };
     this.body.setTranslation(pos, true);
     this.body.setNextKinematicTranslation(pos);
@@ -445,13 +471,13 @@ export class PlayerController {
   ceilingBlocked(): boolean {
     if (!this.crouched) return false;
     const t = this.body.translation();
-    const dh = CAPSULE_HALF_HEIGHT - CROUCH_HALF_HEIGHT;
+    const dh = this.standHalf - this.crouchHalf;
     return !this.canStandAt(t.x, t.y + dh, t.z);
   }
 
   /** Place the camera at the interpolated eye position. alpha = accumulator / dt. */
   updateCamera(camera: THREE.Camera, alpha: number, dt = 0) {
-    const target = this.crouched ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
+    const target = this.crouched ? this.eyeCrouch : this.eyeStand;
     if (dt > 0) this.eyeHeight += (target - this.eyeHeight) * (1 - Math.exp(-EYE_LERP_RATE * dt));
     camera.position.lerpVectors(this.prevFeet, this.curFeet, alpha);
     camera.position.y += this.eyeHeight;
@@ -485,7 +511,7 @@ export class PlayerController {
     this.prevFeet.copy(feet);
     this.velocity.set(0, 0, 0);
     this.sliding = false;
-    this.eyeHeight = this.crouched ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
+    this.eyeHeight = this.crouched ? this.eyeCrouch : this.eyeStand;
     if (yaw !== undefined) this.yaw = yaw;
     this.pitch = 0;
   }

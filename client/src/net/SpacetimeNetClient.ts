@@ -1,4 +1,4 @@
-import { POSE_FLAG_BLOCK, POSE_FLAG_CROUCH, POSE_FLAG_GROUNDED, POSE_FLAG_TELEPORT, clampWeapon, unpackPose, type ForgeDesign, type PackedPose } from '@ai-gaem/shared';
+import { POSE_FLAG_BLOCK, POSE_FLAG_CROUCH, POSE_FLAG_GROUNDED, POSE_FLAG_TELEPORT, clampWeapon, outfitForStorage, sanitizeOutfit, unpackPose, type ForgeDesign, type OutfitDesign, type PackedPose } from '@ai-gaem/shared';
 import { templatesJsonFor } from '../weapons/templates';
 import type { Identity } from 'spacetimedb';
 import { DbConnection, tables } from '../module_bindings';
@@ -15,6 +15,7 @@ import type {
   LocalHitEvent,
   LocalPose,
   NetClient,
+  NetOutfit,
   NetPickup,
   NetPlayer,
   NetStats,
@@ -48,6 +49,22 @@ interface PlayerRow {
   dotUntil?: { toMillis(): bigint };
   dotElement?: number;
   slowElement?: number;
+  outfitId?: bigint;
+  maxHp?: number;
+}
+
+interface OutfitRow {
+  id: bigint;
+  owner: Identity;
+  name: string;
+  json: string;
+  prompt: string;
+  isPreset: boolean;
+  scale: number;
+  build: number;
+  head: number;
+  maxHp: number;
+  speedMult: number;
 }
 
 /** public `pose` row: quantized (see @ai-gaem/shared packPose / unpackPose) */
@@ -148,6 +165,9 @@ export class SpacetimeNetClient implements NetClient {
   private readonly weapons = new Map<string, Weapon>();
   private readonly forged = new Map<string, ForgedInfo>();
   private readonly requestedWeapons = new Set<string>();
+  private readonly outfits = new Map<string, NetOutfit>();
+  private readonly requestedOutfits = new Set<string>();
+  private outfitCbs: Listener<void>[] = [];
   /** online players: slot -> identity hex */
   private readonly slotToId = new Map<number, string>();
   private readonly idToSlot = new Map<string, number>();
@@ -227,6 +247,7 @@ export class SpacetimeNetClient implements NetClient {
     this.idToSlot.clear();
     this.poses.clear();
     this.requestedWeapons.clear();
+    this.requestedOutfits.clear();
     let settled = false;
     let built: DbConnection | undefined;
     const done = (err?: unknown) => {
@@ -286,6 +307,7 @@ export class SpacetimeNetClient implements NetClient {
             if (conn !== this.conn) return;
             this.connected = true;
             for (const w of conn.db.weapon.iter()) this.cacheWeapon(w as WeaponRow);
+            for (const o of conn.db.outfit.iter()) this.cacheOutfit(o as OutfitRow);
             for (const r of conn.db.player.iter()) this.trackPlayer(r as PlayerRow);
             for (const r of conn.db.pose.iter()) this.onPoseRow(r as PoseRow);
             for (const r of conn.db.forgedPrompt.iter()) this.cacheForged(r as ForgedRow);
@@ -306,6 +328,9 @@ export class SpacetimeNetClient implements NetClient {
             tables.weapon.where((w) => w.isPreset.eq(true)),
             // our own weapons (register_design results show up here right away)
             tables.weapon.where((w) => w.ownerIdentity.eq(identity)),
+            // Closet: preset + own outfits (others' arrive on demand when someone wears them)
+            tables.outfit.where((o) => o.isPreset.eq(true)),
+            tables.outfit.where((o) => o.owner.eq(identity)),
           ]);
         // the player row is inserted / updated (slot) by the server's client_connected; wait for it
         conn.db.player.onInsert(() => tryReady());
@@ -408,6 +433,43 @@ export class SpacetimeNetClient implements NetClient {
       }
     }
     this.ensureWeapon(String(row.weaponId));
+    if (row.outfitId) this.ensureOutfit(String(row.outfitId));
+  }
+
+  /** subscribe to an outfit row that isn't a preset / ours (worn by someone) */
+  private ensureOutfit(id: string) {
+    if (!this.conn || id === '0' || this.outfits.has(id) || this.requestedOutfits.has(id)) return;
+    this.requestedOutfits.add(id);
+    const oid = BigInt(id);
+    this.conn
+      .subscriptionBuilder()
+      .onApplied(() => {
+        const row = this.conn?.db.outfit.id.find(oid) as OutfitRow | undefined;
+        if (row) this.cacheOutfit(row);
+      })
+      .onError(() => this.requestedOutfits.delete(id))
+      .subscribe(tables.outfit.where((o) => o.id.eq(oid)));
+  }
+
+  private cacheOutfit(row: OutfitRow) {
+    try {
+      const outfit = sanitizeOutfit(JSON.parse(row.json)).outfit;
+      const o: NetOutfit = {
+        id: String(row.id),
+        name: row.name,
+        owner: row.owner.toHexString(),
+        isPreset: row.isPreset,
+        outfit,
+        prompt: row.prompt,
+        maxHp: row.maxHp,
+        speedMult: row.speedMult,
+        dims: { scale: row.scale, build: row.build, head: row.head },
+      };
+      this.outfits.set(o.id, o);
+      this.outfitCbs.forEach((cb) => cb());
+    } catch (err) {
+      console.warn('[net] bad outfit row', row.id, err);
+    }
   }
 
   /** subscribe to a weapon row that isn't a preset (equipped by someone) */
@@ -460,6 +522,8 @@ export class SpacetimeNetClient implements NetClient {
       this.pickupTakenCbs.forEach((cb) => cb(ev));
     });
 
+    db.outfit.onInsert((_ctx, row) => this.cacheOutfit(row as OutfitRow));
+    db.outfit.onUpdate((_ctx, _old, row) => this.cacheOutfit(row as OutfitRow));
     db.weapon.onInsert((_ctx, row) => this.cacheWeapon(row as WeaponRow));
     db.weapon.onUpdate((_ctx, _old, row) => this.cacheWeapon(row as WeaponRow));
 
@@ -614,6 +678,8 @@ export class SpacetimeNetClient implements NetClient {
       dotElement: r.dotElement ?? 0,
       crouching: pose?.crouching ?? false,
       needsLoadout: !!r.needsLoadout,
+      outfitId: String(r.outfitId ?? 0n),
+      maxHp: r.maxHp && r.maxHp > 0 ? r.maxHp : 100,
     };
   }
 
@@ -825,6 +891,57 @@ export class SpacetimeNetClient implements NetClient {
       await new Promise((r) => setTimeout(r, 40));
     }
     return null;
+  }
+
+  /** our own outfit ids, newest last */
+  private ownOutfitIds(): bigint[] {
+    const ids: bigint[] = [];
+    if (!this.conn || !this.identity) return ids;
+    for (const o of this.conn.db.outfit.iter() as Iterable<OutfitRow>) {
+      if (!o.isPreset && o.owner.isEqual(this.identity)) ids.push(o.id);
+    }
+    return ids.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  }
+
+  async registerOutfit(outfit: OutfitDesign, prompt: string): Promise<string | null> {
+    if (!this.conn) throw new Error('not connected');
+    this.callCounts.register_outfit = (this.callCounts.register_outfit ?? 0) + 1;
+    const before = new Set(this.ownOutfitIds().map(String));
+    await this.conn.reducers.registerOutfit({ outfitJson: JSON.stringify(outfitForStorage(outfit)), prompt: prompt.slice(0, 400) });
+    const t0 = performance.now();
+    while (performance.now() - t0 < 5000) {
+      const fresh = this.ownOutfitIds().map(String).filter((id) => !before.has(id));
+      if (fresh.length) {
+        const id = fresh[fresh.length - 1];
+        const row = this.conn.db.outfit.id.find(BigInt(id)) as OutfitRow | undefined;
+        if (row) this.cacheOutfit(row);
+        return id;
+      }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return null;
+  }
+
+  equipOutfit(outfitId: string): Promise<void> {
+    if (!this.conn) return Promise.reject(new Error('not connected'));
+    this.callCounts.equip_outfit = (this.callCounts.equip_outfit ?? 0) + 1;
+    return this.conn.reducers.equipOutfit({ outfitId: BigInt(outfitId) });
+  }
+
+  getOutfit(id: string): NetOutfit | undefined {
+    if (!id || id === '0') return undefined;
+    const o = this.outfits.get(id);
+    if (!o) this.ensureOutfit(id);
+    return o;
+  }
+
+  outfitPresets(): NetOutfit[] {
+    return [...this.outfits.values()].filter((o) => o.isPreset).sort((a, b) => a.maxHp - b.maxHp);
+  }
+
+  onOutfitsChanged(cb: Listener<void>) {
+    this.outfitCbs.push(cb);
+    return () => (this.outfitCbs = this.outfitCbs.filter((c) => c !== cb));
   }
 
   requestRedeploy(): Promise<void> {

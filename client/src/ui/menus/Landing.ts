@@ -17,12 +17,16 @@ export interface LandingState {
   /** the player is alive in the world already (PLAY just resumes) */
   alive: boolean;
   busy?: boolean;
+  /** current outfit stats ("HP 120 · Speed −5% · Size L") */
+  outfitLine?: string;
 }
 
 export interface LandingHandlers {
   onPlay(callsign: string): void;
   onForge(callsign: string): void;
   onQuickPick(presetId: string, cls: string, callsign: string): void;
+  /** open the Closet (outfit) */
+  onCloset?(callsign: string): void;
 }
 
 const QUICK = ['pistol', 'rifle', 'shotgun', 'sniper', 'smg', 'melee'];
@@ -77,6 +81,7 @@ export class Landing {
         <div class="ui-micro"><span>Loadout</span></div>
         <div data-k="card" data-testid="landing-loadout"></div>
         <button class="ui-btn ui-btn--forge landing-forge" data-k="forge" data-testid="landing-forge"><span class="spark">${icon('spark')}</span><span>Forge weapon</span></button>
+        <button class="ui-btn ui-btn--secondary landing-closet" data-k="closet" data-testid="landing-closet">${icon('shield')}<span>Closet</span><span class="ui-micro" data-k="outfitNote"></span></button>
         <div class="landing-quick">
           <span class="ui-micro">Or pick a preset</span>
           <div class="landing-quick-row" data-k="quick"></div>
@@ -101,6 +106,7 @@ export class Landing {
     });
     this.play.addEventListener('click', () => this.handlers?.onPlay(this.callsign()));
     this.forgeBtn.addEventListener('click', () => this.handlers?.onForge(this.callsign()));
+    q('closet').addEventListener('click', () => this.handlers?.onCloset?.(this.callsign()));
     this.quick.addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('[data-preset]');
       if (b) this.handlers?.onQuickPick(b.dataset.preset!, b.dataset.cls!, this.callsign());
@@ -131,6 +137,9 @@ export class Landing {
     label.textContent = s.needsLoadout ? 'Play' : s.alive ? 'Resume' : 'Deploy';
     this.play.disabled = !!s.busy;
     this.forgeBtn.disabled = !!s.busy;
+    const cb = this.root.querySelector<HTMLButtonElement>('[data-k="closet"]')!;
+    cb.disabled = !!s.busy || s.needsLoadout;
+    this.root.querySelector('[data-k="outfitNote"]')!.textContent = s.outfitLine ?? '';
     this.hint.innerHTML = s.needsLoadout
       ? '<b>Forge a weapon</b> to start.'
       : `Deploying with <b>${esc(s.weapon?.name ?? 'your weapon')}</b>`;

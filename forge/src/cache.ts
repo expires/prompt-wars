@@ -6,8 +6,8 @@
 import { normalizePrompt } from '@ai-gaem/shared';
 import type { ForgeDesign } from '@ai-gaem/shared/forge';
 
-export interface CachedDesign {
-  design: ForgeDesign;
+export interface CachedDesign<T = ForgeDesign> {
+  design: T;
   warnings: string[];
   at: number;
 }
@@ -17,8 +17,8 @@ export function promptCacheKey(prompt: string, cls?: string): string {
   return norm ? `${cls ?? ''}|${norm}` : '';
 }
 
-export class DesignCache {
-  private map = new Map<string, CachedDesign>();
+export class DesignCache<T = ForgeDesign> {
+  private map = new Map<string, CachedDesign<T>>();
   hits = 0;
   misses = 0;
   constructor(private max = 500, private ttlMs = 24 * 3600_000, private now: () => number = Date.now) {}
@@ -27,7 +27,7 @@ export class DesignCache {
     return this.map.size;
   }
 
-  get(key: string): CachedDesign | undefined {
+  get(key: string): CachedDesign<T> | undefined {
     if (!key || this.max <= 0) return undefined;
     const v = this.map.get(key);
     if (!v || this.now() - v.at > this.ttlMs) {
@@ -42,7 +42,7 @@ export class DesignCache {
     return v;
   }
 
-  set(key: string, design: ForgeDesign, warnings: string[] = []): void {
+  set(key: string, design: T, warnings: string[] = []): void {
     if (!key || this.max <= 0) return;
     this.map.delete(key);
     this.map.set(key, { design: structuredClone(design), warnings: [...warnings], at: this.now() });

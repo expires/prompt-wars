@@ -619,3 +619,17 @@
 .forge-el--ice .ui-num { color: var(--el-ice); }
 .forge-el--poison .ui-num { color: var(--el-poison); }
 .forge-el--shock .ui-num { color: var(--el-shock); }
+
+/* ---------------------------------------------------------------- Closet (outfits) */
+.closet .closet-line { font: 600 14px/1 var(--font-label); letter-spacing: 0.06em; color: var(--accent); text-transform: uppercase; }
+.closet-bignums { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin: 8px 0 14px; }
+.closet-bignums > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: rgba(255, 255, 255, 0.04); clip-path: var(--clip-cut); }
+.closet-bignums .ui-num { font-size: 28px; color: var(--fg); }
+.closet-bignums [data-v='hp'] { color: var(--hp-hi); }
+.closet-slider { display: grid; grid-template-columns: 70px minmax(0, 1fr) 48px; align-items: center; gap: 10px; height: 34px; }
+.closet-slider input[type='range'] { width: 100%; accent-color: var(--accent); }
+.closet-slider .ui-num { font-size: 16px; text-align: right; }
+.closet-note { color: var(--fg-dim); font: 500 13px/1.3 var(--font-body); }
+.closet-tile { grid-template-columns: minmax(0, 1fr); width: 230px; height: 72px; cursor: pointer; }
+.closet-tile.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+.closet-tile .forge-tile-diff { white-space: nowrap; }

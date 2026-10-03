@@ -7,7 +7,9 @@ import { DesignAssembler } from './assembler';
 import { classFromPrompt } from '@ai-gaem/shared/forge/refine';
 import { catalogContext, type PromptContext } from './prompt';
 import { generateMock } from './mock';
-import { generateWithLlm } from './llm';
+import { generateOutfitWithLlm, generateWithLlm } from './llm';
+import { OutfitAssembler, generateOutfitMock, outfitLogLine, type OutfitPromptContext } from './outfit';
+import { OUTFIT_LIMITS, normalizePrompt, sanitizeOutfit, sanitizePiece, type OutfitDesign, type OutfitEvent, type OutfitPiece } from '@ai-gaem/shared';
 import { RateLimiter } from './ratelimit';
 import { DesignCache, promptCacheKey } from './cache';
 import { TelemetryLog, parseTelemetry, telemetryConfigFromEnv, type TelemetryConfig } from './telemetry';
@@ -144,15 +146,60 @@ export function parseGenerateRequest(body: unknown): ParsedRequest {
   return { prompt: prompt || previous!.name, cls, locked, lockedProjectile, rejected, previous, variants, identity, seed };
 }
 
+export interface ParsedOutfitRequest {
+  prompt: string;
+  locked: OutfitPiece[];
+  rejected: string[];
+  previous?: OutfitDesign;
+  variants: number;
+  identity: string;
+  seed?: number;
+}
+
+export function parseOutfitRequest(body: unknown): ParsedOutfitRequest {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'body must be a JSON object');
+  const b = body as Record<string, unknown>;
+  const prompt = typeof b.prompt === 'string' ? censorText(b.prompt.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 400)) : '';
+  if (!prompt && !b.previous) throw new HttpError(400, 'prompt is required');
+  const locked: OutfitPiece[] = [];
+  const seen = new Set<string>();
+  const addLocked = (raw: unknown) => {
+    const p = sanitizePiece(raw);
+    if (p && p.id && !seen.has(p.id) && locked.length < OUTFIT_LIMITS.maxPieces) {
+      seen.add(p.id);
+      p.locked = true;
+      locked.push(p);
+    }
+  };
+  if (Array.isArray(b.locked)) for (const c of b.locked.slice(0, OUTFIT_LIMITS.maxPieces)) addLocked(c);
+  const previous = b.previous ? sanitizeOutfit(b.previous).outfit : undefined;
+  if (previous) for (const p of previous.pieces) if (p.locked) addLocked(p);
+  const rejected = Array.isArray(b.rejected)
+    ? b.rejected.filter((x): x is string => typeof x === 'string').map(x => x.trim().slice(0, 48)).filter(Boolean).slice(0, 32)
+    : [];
+  const variants = Math.max(1, Math.min(3, Math.floor(Number(b.variants ?? 1)) || 1));
+  const identity = typeof b.playerIdentity === 'string' ? b.playerIdentity.replace(/[^0-9a-fA-F]/g, '').slice(0, 64).toLowerCase() : '';
+  const seed = typeof b.seed === 'number' && Number.isFinite(b.seed) ? Math.floor(b.seed) : undefined;
+  return { prompt: prompt || previous!.name, locked, rejected, previous, variants, identity, seed };
+}
+
+export function outfitCacheKeyFor(r: ParsedOutfitRequest): string {
+  if (r.previous || r.locked.length || r.rejected.length || r.variants !== 1 || r.seed !== undefined) return '';
+  const norm = normalizePrompt(r.prompt);
+  return norm ? `outfit|${norm}` : '';
+}
+
 /** A plain prompt (nothing to keep / avoid, one variant, not a seeded mock run) can use the cache. */
 export function cacheKeyFor(r: ParsedRequest): string {
   if (r.previous || r.locked.length || r.lockedProjectile || r.rejected.length || r.variants !== 1 || r.seed !== undefined) return '';
   return promptCacheKey(r.prompt, r.cls);
 }
 
-export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & { limiter: RateLimiter; cache: DesignCache } {
+export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & { limiter: RateLimiter; cache: DesignCache; outfitCache: DesignCache<OutfitDesign> } {
+  // one limiter for weapons AND outfits: a player's prompt budget is shared
   const limiter = new RateLimiter(cfg.rateLimit, cfg.rateWindowMs);
   const cache = new DesignCache(cfg.cacheMax);
+  const outfitCache = new DesignCache<OutfitDesign>(cfg.cacheMax);
   const telemetry = new TelemetryLog(cfg.telemetry ?? telemetryConfigFromEnv({}));
   // telemetry: 60 requests / 10 min per IP (the client batches and dedupes; this caps abuse)
   const telemetryLimiter = new RateLimiter(60, 10 * 60_000);
@@ -201,6 +248,29 @@ export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & 
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, written }));
       }
+      if (path === '/api/forge/outfit') {
+        if (req.method !== 'POST') throw new HttpError(405, 'use POST', { allow: 'POST' });
+        const ctype = String(req.headers['content-type'] ?? '');
+        if (!ctype.includes('application/json')) throw new HttpError(415, 'content-type must be application/json');
+        const text = await readBody(req, cfg.maxBodyBytes);
+        let body: unknown;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          throw new HttpError(400, 'invalid JSON');
+        }
+        const r = parseOutfitRequest(body);
+        const key = outfitCacheKeyFor(r);
+        const hit = key ? outfitCache.get(key) : undefined;
+        if (hit) return replayCachedOutfit(res, hit.design, hit.warnings, r.prompt);
+        const ip = clientIp(req, cfg.trustProxy);
+        const rl = limiter.take([`ip:${ip}`, ...(r.identity ? [`id:${r.identity}`] : [])], r.variants);
+        if (!rl.ok) throw new HttpError(429, `rate limit: ${cfg.rateLimit} generations per ${Math.round(cfg.rateWindowMs / 60000)} min`, { 'retry-after': String(rl.retryAfter) });
+        await streamOutfit(res, cfg, r, mock, (o, w) => {
+          if (key) outfitCache.set(key, o, w);
+        });
+        return;
+      }
       if (path !== '/api/forge/generate') throw new HttpError(404, 'not found');
       if (req.method !== 'POST') throw new HttpError(405, 'use POST', { allow: 'POST' });
       const ctype = String(req.headers['content-type'] ?? '');
@@ -235,9 +305,10 @@ export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & 
     }
   };
 
-  const server = createServer((req, res) => void handler(req, res)) as Server & { limiter: RateLimiter; cache: DesignCache };
+  const server = createServer((req, res) => void handler(req, res)) as Server & { limiter: RateLimiter; cache: DesignCache; outfitCache: DesignCache<OutfitDesign> };
   server.limiter = limiter;
   server.cache = cache;
+  server.outfitCache = outfitCache;
   server.requestTimeout = cfg.timeoutMs + 15_000;
   return server;
 }
@@ -264,6 +335,58 @@ function replayCached(res: ServerResponse, design: ForgeDesign, warnings: string
   ];
   res.end(lines.map(ev => JSON.stringify(ev)).join('\n') + '\n');
   console.log(`[forge] cache hit "${prompt.slice(0, 60)}"`);
+}
+
+function replayCachedOutfit(res: ServerResponse, outfit: OutfitDesign, warnings: string[], prompt: string) {
+  ndjsonHead(res);
+  const lines: OutfitEvent[] = [
+    { type: 'start', variant: -1, variants: 1, model: 'cache', mock: false, cached: true },
+    { type: 'meta', variant: 0, name: outfit.name, theme: outfit.theme, body: outfit.body, skin: outfit.skin, palette: outfit.palette },
+    ...outfit.pieces.map((piece): OutfitEvent => ({ type: 'piece', variant: 0, piece })),
+    { type: 'done', variant: 0, outfit, warnings },
+    { type: 'end', variant: -1 },
+  ];
+  res.end(lines.map(ev => JSON.stringify(ev)).join('\n') + '\n');
+  console.log(`[closet] cache hit "${prompt.slice(0, 60)}"`);
+}
+
+async function streamOutfit(res: ServerResponse, cfg: ForgeConfig, r: ParsedOutfitRequest, mock: boolean, onDone?: (o: OutfitDesign, warnings: string[]) => void) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error('timeout')), cfg.timeoutMs);
+  res.on('close', () => {
+    if (!res.writableFinished) ac.abort(new Error('client closed'));
+  });
+  ndjsonHead(res);
+  res.flushHeaders();
+  const emit = (ev: OutfitEvent) => {
+    if (!res.writableEnded) res.write(`${JSON.stringify(ev)}\n`);
+  };
+  const t0 = Date.now();
+  emit({ type: 'start', variant: -1, variants: r.variants, model: mock ? 'mock' : cfg.model, mock });
+  await Promise.all(
+    Array.from({ length: r.variants }, async (_, variant) => {
+      const ctx: OutfitPromptContext = { prompt: r.prompt, locked: r.locked, rejected: r.rejected, previous: r.previous, variant, variants: r.variants };
+      const asm = new OutfitAssembler({ variant, locked: r.locked, rejected: r.rejected, previous: r.previous }, emit);
+      try {
+        if (mock) await generateOutfitMock({ signal: ac.signal, delayMs: cfg.mockDelayMs, seed: r.seed }, ctx, asm);
+        else await generateOutfitWithLlm({ apiKey: cfg.apiKey, model: cfg.model, signal: ac.signal }, ctx, asm);
+        if (asm.pieceCount === 0) throw new Error('the closet produced no pieces');
+        const o = asm.finish();
+        if (!ac.signal.aborted && asm.warnings.length === 0) onDone?.(o, []);
+        console.log(`[closet] v${variant}: ${outfitLogLine(o)}`);
+      } catch (e) {
+        const msg = ac.signal.aborted ? `generation aborted (${String((ac.signal.reason as Error)?.message ?? 'timeout')})` : errorMessage(e);
+        if (asm.pieceCount > 0 && !ac.signal.aborted) {
+          asm.warnings.push(msg);
+          asm.finish();
+        } else emit({ type: 'error', variant, message: msg });
+      }
+    }),
+  );
+  clearTimeout(timer);
+  emit({ type: 'end', variant: -1 });
+  res.end();
+  console.log(`[closet] ${mock ? 'mock' : cfg.model} v=${r.variants} ${Date.now() - t0}ms "${r.prompt.slice(0, 60)}"`);
 }
 
 async function streamGeneration(req: IncomingMessage, res: ServerResponse, cfg: ForgeConfig, r: ParsedRequest, mock: boolean, onDone?: (design: ForgeDesign, warnings: string[]) => void) {

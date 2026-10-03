@@ -29,6 +29,8 @@ export interface DeathHandlers {
   onRemix(weapon: Weapon): void;
   /** open the weapon slot machine */
   onOpenSlot(): void;
+  /** open the Closet (outfit) */
+  onOpenCloset?(): void;
 }
 
 const CHIPS = ['cactus shotgun', 'noodle sword', 'retro ray gun', 'bubble launcher', 'toaster cannon'];
@@ -80,6 +82,7 @@ export class DeathScreen {
           <button class="ui-btn ui-btn--forge" data-k="quick" data-testid="generate-weapon"><span class="spark">${icon('spark', 'ui-icon ui-icon--sm')}</span><span data-k="quickLabel">Quick forge</span></button>
           <button class="ui-btn ui-btn--secondary" data-k="open" data-testid="death-open-forge"><span>Open forge</span>${icon('chevron', 'ui-icon ui-icon--sm')}</button>
           <button class="ui-btn ui-btn--secondary" data-k="slot" data-testid="death-slot">Slot machine</button>
+          <button class="ui-btn ui-btn--secondary" data-k="closet" data-testid="death-closet">${icon('shield', 'ui-icon ui-icon--sm')}<span>Closet</span></button>
         </div>
         <div class="death-status" data-k="status" data-testid="gen-status" aria-live="polite"></div>
       </section>`;
@@ -100,6 +103,7 @@ export class DeathScreen {
     });
     this.$.open.addEventListener('click', () => this.handlers?.onOpenForge(this.input.value));
     this.$.slot.addEventListener('click', () => this.handlers?.onOpenSlot());
+    this.$.closet.addEventListener('click', () => this.handlers?.onOpenCloset?.());
     this.$.remix.addEventListener('click', () => {
       if (this.info.killerWeapon) this.handlers?.onRemix(this.info.killerWeapon);
     });

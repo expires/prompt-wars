@@ -12,3 +12,4 @@ export * from './templates';
 export * from './forge';
 export * from './profanity';
 export * from './promptCache';
+export * from './outfit';

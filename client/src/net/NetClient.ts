@@ -1,4 +1,4 @@
-import type { ForgeDesign } from '@ai-gaem/shared';
+import type { BodyDims, ForgeDesign, OutfitDesign } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
 
 export type Vec3 = [number, number, number];
@@ -32,6 +32,24 @@ export interface NetPlayer {
   crouching?: boolean;
   /** new player who hasn't picked / forged a weapon yet (can't deploy) */
   needsLoadout?: boolean;
+  /** equipped Closet outfit ('0' / undefined = default body) */
+  outfitId?: string;
+  /** max HP of the body (100 default) */
+  maxHp?: number;
+}
+
+/** A stored Closet outfit (`outfit` table): body stats are server-derived. */
+export interface NetOutfit {
+  id: string;
+  name: string;
+  /** identity hex of the owner */
+  owner?: string;
+  isPreset: boolean;
+  outfit: OutfitDesign;
+  prompt?: string;
+  maxHp: number;
+  speedMult: number;
+  dims: BodyDims;
 }
 
 export interface KillEvent {
@@ -273,4 +291,14 @@ export interface NetClient {
   getLocal?(): NetPlayer | undefined;
   /** look up weapon definitions by id (for remote player models) */
   getWeapon?(id: string): Weapon | undefined;
+  /** Closet: store an outfit (register_outfit; worn right away while dead); resolves to its id */
+  registerOutfit?(outfit: OutfitDesign, prompt: string): Promise<string | null>;
+  /** wear a stored outfit (own / preset; '0' = default body). Server: only while dead */
+  equipOutfit?(outfitId: string): Promise<void>;
+  /** outfit by id (subscribes on demand; undefined until it arrives) */
+  getOutfit?(id: string): NetOutfit | undefined;
+  /** preset outfits (Scout / Soldier / Tank) */
+  outfitPresets?(): NetOutfit[];
+  /** fires when an outfit row arrives / changes */
+  onOutfitsChanged?(cb: () => void): () => void;
 }

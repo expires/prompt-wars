@@ -12,6 +12,8 @@ export interface PauseHandlers {
   onResume(): void;
   onRedeploy(): void;
   onForge(): void;
+  /** open the Closet (outfit) */
+  onCloset?(): void;
   onLeave(): void;
 }
 
@@ -40,6 +42,7 @@ export class PauseMenu {
         <button class="pause-item primary" data-k="resume" data-testid="pause-resume">${icon('play')}<span class="grow">Resume</span><span class="ui-kbd"><span>Esc</span></span></button>
         <button class="pause-item" data-k="redeploy" data-testid="pause-redeploy">${icon('redeploy')}<span class="grow">Redeploy</span><span class="note">change loadout</span></button>
         <button class="pause-item pause-item--forge" data-k="forge" data-testid="pause-forge">${icon('spark')}<span class="grow">Forge weapon</span><span class="note">next deploy</span></button>
+        <button class="pause-item" data-k="closet" data-testid="pause-closet">${icon('shield')}<span class="grow">Closet</span><span class="note">outfit · size</span></button>
         <button class="pause-item" data-k="settings" data-testid="pause-settings" aria-expanded="false">${icon('gear')}<span class="grow">Settings</span>${icon('chevron', 'ui-icon ui-icon--sm')}</button>
         <div class="pause-spacer"></div>
         <button class="pause-item leave" data-k="leave" data-testid="pause-leave">${icon('exit')}<span class="grow">Leave</span></button>
@@ -63,6 +66,7 @@ export class PauseMenu {
     q('resume').addEventListener('click', () => this.handlers?.onResume());
     q('redeploy').addEventListener('click', () => this.handlers?.onRedeploy());
     q('forge').addEventListener('click', () => this.handlers?.onForge());
+    q('closet').addEventListener('click', () => this.handlers?.onCloset?.());
     q('leave').addEventListener('click', () => this.handlers?.onLeave());
     this.settingsBtn.addEventListener('click', () => this.showSettings(!!this.settingsHost.hidden));
     // keyboard / gamepad style navigation in the rail

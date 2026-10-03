@@ -104,6 +104,8 @@ export class Turntable {
   /** floating projectile preview beside the weapon */
   private proj: { holder: THREE.Object3D; inner: THREE.Object3D; baseY: number; axis: THREE.Vector3; rate: number; t: number } | null = null;
 
+  /** framing: camera distance factor (1 = the bounding sphere just fits) */
+  fit = 0.82;
   private yaw = -0.6;
   private pitch = 0.18;
   private zoom = 1;
@@ -289,8 +291,56 @@ export class Turntable {
       return;
     }
     const ud = group.userData as { components?: Map<string, THREE.Object3D> };
-    for (const [id, g] of ud.components ?? []) {
+    const parts = new Map<string, THREE.Object3D[]>();
+    for (const [id, g] of ud.components ?? []) parts.set(id, [g]);
+    this.addComps(parts);
+    this.addProjectile(design, group);
+    this.mount(group, opts);
+  }
+
+  /**
+   * Show a pre-built model (Closet: mannequin + outfit pieces). `parts`: piece id -> its groups
+   * (userData.componentId; content = first child), used for highlight / marks / materialize.
+   * The turntable owns the model afterwards (geometries + materials are disposed with it).
+   */
+  setObject(group: THREE.Group | null, parts: Map<string, THREE.Object3D[]>, opts: { materialize?: string[]; crossfade?: boolean; keepFrame?: boolean } = {}) {
+    if (this.model) {
+      if (opts.crossfade && !reducedMotion()) {
+        if (this.fade) this.disposeModel(this.fade.obj);
+        this.fade = { obj: this.model, t: 0 };
+        this.cloneForFade(this.model);
+      } else this.disposeModel(this.model);
+    }
+    this.model = null;
+    this.proj = null;
+    this.comps.clear();
+    if (!group) {
+      this.syncGlyphs();
+      return;
+    }
+    applyForgeEnvironment(group, this.env);
+    this.addComps(parts);
+    this.mount(group, opts);
+  }
+
+  /** the studio environment (outfit materials: set as envMap) */
+  get environment(): THREE.Texture {
+    return this.env;
+  }
+
+  private mount(group: THREE.Group, opts: { materialize?: string[]; keepFrame?: boolean }) {
+    for (const id of opts.materialize ?? []) if (!reducedMotion()) this.sweeps.set(id, performance.now());
+    this.model = group;
+    this.pivot.add(group);
+    this.frameModel(!opts.keepFrame);
+    this.applyLooks();
+    this.syncGlyphs();
+  }
+
+  private addComps(parts: Map<string, THREE.Object3D[]>) {
+    for (const [id, groups] of parts) {
       const meshes: THREE.Mesh[] = [];
+      for (const g of groups) {
       // the component's own content is its first child; nested children are other components
       const content = g.children[0];
       content?.traverse((o) => {
@@ -308,15 +358,9 @@ export class Turntable {
         m.material = mat;
         meshes.push(m);
       });
-      this.comps.set(id, { id, group: g, meshes });
+      }
+      if (groups[0]) this.comps.set(id, { id, group: groups[0], meshes });
     }
-    this.addProjectile(design, group);
-    for (const id of opts.materialize ?? []) if (!reducedMotion()) this.sweeps.set(id, performance.now());
-    this.model = group;
-    this.pivot.add(group);
-    this.frameModel(!opts.keepFrame);
-    this.applyLooks();
-    this.syncGlyphs();
   }
 
   /** small floating copy of the projectile to the right of the weapon (generated, else preset) */
@@ -392,7 +436,7 @@ export class Turntable {
     this.radius = Math.max(0.15, size.length() / 2);
     const fov = (this.camera.fov * Math.PI) / 180;
     const aspectFix = Math.max(1, 1.25 / Math.max(0.5, this.camera.aspect));
-    this.distGoal = (this.radius / Math.sin(fov / 2)) * 0.82 * aspectFix;
+    this.distGoal = (this.radius / Math.sin(fov / 2)) * this.fit * aspectFix;
     if (snap) this.dist = this.distGoal;
     const floor = -size.y / 2 - 0.02;
     this.shadow.position.y = floor;

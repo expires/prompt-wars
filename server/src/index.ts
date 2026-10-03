@@ -20,8 +20,6 @@ import {
   POSE_FLAG_GROUNDED,
   POSE_FLAG_TELEPORT,
   POSE_FLAG_BLOCK,
-  CROUCH_EYE_OFFSET,
-  STAND_EYE_OFFSET,
   MELEE_ORIGIN_TOLERANCE,
   blockCovers,
   grantedCharge,
@@ -80,7 +78,14 @@ import {
   clampRespawnSeconds,
   PICKUP_RESPAWN_SECONDS,
   PICKUP_SERVER_RADIUS,
+  OUTFIT_LIMITS,
+  DEFAULT_DIMS,
+  bodyStats,
+  eyeHeight,
+  outfitForStorage,
+  type BodyDims,
 } from '@ai-gaem/shared';
+import { OUTFIT_PRESETS } from '@ai-gaem/shared/outfit/examples';
 import { PART_CATALOG, PART_RECIPES } from './catalog.generated';
 
 // ---------------------------------------------------------------------------
@@ -146,6 +151,10 @@ const player = table(
     dotElement: t.u8().default(0),
     /** element code of the slow active until slowUntil (ice = chilled, shock = shocked) */
     slowElement: t.u8().default(0),
+    /** equipped outfit (`outfit` row id; 0 = the default body). Body size drives HP + hitbox. */
+    outfitId: t.u64().default(0n),
+    /** max HP of the current body (@ai-gaem/shared bodyStats; 100 for the default body) */
+    maxHp: t.f32().default(100),
   },
 );
 
@@ -285,6 +294,30 @@ const weapon = table(
      * Weapon used for all gameplay (its stats always equal the design's).
      */
     design: t.string().default(''),
+  },
+);
+
+/**
+ * Closet outfits (@ai-gaem/shared `OutfitDesign`, sanitized). The numeric body columns are
+ * derived server-side from the sanitized body (bodyStats) and are what gameplay uses: hit
+ * validation (scale / build / head), max HP, movement multiplier. Pieces are cosmetic.
+ */
+const outfit = table(
+  { name: 'outfit', public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    owner: t.identity().index('btree'),
+    name: t.string(),
+    /** OutfitDesign JSON */
+    json: t.string(),
+    prompt: t.string(),
+    isPreset: t.bool(),
+    scale: t.f32(),
+    build: t.f32(),
+    head: t.f32(),
+    maxHp: t.f32(),
+    speedMult: t.f32(),
+    createdAt: t.timestamp(),
   },
 );
 
@@ -480,6 +513,7 @@ const spacetimedb = schema({
   pickup,
   pickupTimer,
   pickupEvent,
+  outfit,
 });
 export default spacetimedb;
 
@@ -488,6 +522,7 @@ type PlayerRow = NonNullable<ReturnType<Ctx['db']['player']['identity']['find']>
 type PoseStateRow = NonNullable<ReturnType<Ctx['db']['poseState']['identity']['find']>>;
 type CombatRow = NonNullable<ReturnType<Ctx['db']['playerCombat']['identity']['find']>>;
 type WeaponRow = NonNullable<ReturnType<Ctx['db']['weapon']['id']['find']>>;
+type OutfitRow = NonNullable<ReturnType<Ctx['db']['outfit']['id']['find']>>;
 
 // ---------------------------------------------------------------------------
 // Constants / helpers
@@ -533,6 +568,41 @@ function requirePlayer(ctx: Ctx): PlayerRow {
   const p = ctx.db.player.identity.find(ctx.sender);
   if (!p) throw new SenderError('no player row; reconnect');
   return p;
+}
+
+/** Body of a player for hit validation (default body when no / unknown outfit). */
+function bodyDimsOf(ctx: Ctx, p: { outfitId: bigint }): BodyDims {
+  if (!p.outfitId) return DEFAULT_DIMS;
+  const o = ctx.db.outfit.id.find(p.outfitId);
+  return o ? { scale: o.scale, build: o.build, head: o.head } : DEFAULT_DIMS;
+}
+
+/** Max HP of a player's body (never below 1; 100 for the default body). */
+function maxHpOf(p: { maxHp: number }): number {
+  return Number.isFinite(p.maxHp) && p.maxHp > 0 ? p.maxHp : MAX_HP;
+}
+
+/** Store a sanitized outfit (body columns derived here, never from the client). */
+function insertOutfit(ctx: Ctx, owner: Identity, raw: unknown, prompt: string, isPreset: boolean): OutfitRow {
+  const o = outfitForStorage(raw);
+  o.name = censorText(o.name);
+  o.theme = censorText(o.theme);
+  for (const pc of o.pieces) pc.label = censorText(pc.label);
+  const st = bodyStats(o.body);
+  return ctx.db.outfit.insert({
+    id: 0n,
+    owner,
+    name: o.name,
+    json: JSON.stringify(o),
+    prompt: prompt.slice(0, 300),
+    isPreset,
+    scale: st.scale,
+    build: st.build,
+    head: st.head,
+    maxHp: st.maxHp,
+    speedMult: st.speedMult,
+    createdAt: ctx.timestamp,
+  });
 }
 
 function insertWeapon(ctx: Ctx, owner: Identity, w: Weapon, prompt: string, isPreset: boolean, design = ''): WeaponRow {
@@ -651,7 +721,7 @@ function spawnPlayer(ctx: Ctx, p: PlayerRow, weaponId: bigint): PlayerRow {
     z: sp.z,
     yaw: sp.yaw,
     pitch: 0,
-    hp: MAX_HP,
+    hp: maxHpOf(p),
     alive: true,
     weaponId,
     respawnAt: EPOCH,
@@ -779,6 +849,9 @@ function seedWorld(ctx: Ctx) {
     for (const sp of activeSpawns) ctx.db.spawnPoint.insert({ id: 0n, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw });
   }
   syncPickups(ctx);
+  // Closet presets (Scout / Soldier / Tank): seeded once, matched by name
+  const presetOutfits = new Set([...ctx.db.outfit.iter()].filter(o => o.isPreset).map(o => o.name));
+  for (const po of OUTFIT_PRESETS) if (!presetOutfits.has(po.name)) insertOutfit(ctx, ctx.sender, po, `preset:${po.name.toLowerCase()}`, true);
   // Migration: the old always-on 4 Hz tick is gone.
   for (const row of [...ctx.db.tickTimer.iter()]) ctx.db.tickTimer.scheduledId.delete(row.scheduledId);
   // Migration: poses moved to the quantized `pose` table (+ private pose_state).
@@ -924,6 +997,8 @@ export const onConnect = spacetimedb.clientConnected(ctx => {
     needsLoadout: true,
     dotElement: 0,
     slowElement: 0,
+    outfitId: 0n,
+    maxHp: MAX_HP,
   };
   // New players start dead with no weapon ("forging"): they respawn once they have registered a
   // design (register_design) or equipped a preset. The pose row parks them at a spawn point.
@@ -1077,6 +1152,7 @@ function applyHit(ctx: Ctx, s: ShotCtx, slot: number, zone: number, impact: [num
   const { w, o } = s;
   const maxRange = w.range * RANGE_TOLERANCE_MULT + RANGE_TOLERANCE_ADD;
   const swept = sweptPose(ctx, pose);
+  const dims = bodyDimsOf(ctx, victim);
 
   let damage: number;
   let headshot = false;
@@ -1086,7 +1162,7 @@ function applyHit(ctx: Ctx, s: ShotCtx, slot: number, zone: number, impact: [num
     // reach (eye -> impact, charged reach + tolerance) and the impact on the swept hitbox
     const charge = s.charge ?? 0;
     if (!isMeleeReachValid(o, impact, meleeReach(w, charge))) return false;
-    const z = classifyHit(swept, impact, zone);
+    const z = classifyHit(swept, impact, zone, dims);
     if (z < 0) return false;
     headshot = z === HIT_ZONE_HEAD;
     // block: the victim holds a melee weapon, has the block flag set and faces the attacker
@@ -1098,11 +1174,11 @@ function applyHit(ctx: Ctx, s: ShotCtx, slot: number, zone: number, impact: [num
     knockSpeed = blocked ? 0 : meleeKnockback(w, charge, meleeMetaOf(w).weight);
   } else if (w.splashRadius > 0) {
     if (dist(o[0], o[1], o[2], impact[0], impact[1], impact[2]) > maxRange) return false;
-    damage = splashDamageAt(w, splashDistance(swept, impact));
+    damage = splashDamageAt(w, splashDistance(swept, impact, dims));
   } else {
     if (dist(o[0], o[1], o[2], pose.x, pose.y, pose.z) > maxRange) return false;
     const claimed = w.fireMode === 'stream' ? 0 : zone;
-    const z = classifyHit(swept, impact, claimed);
+    const z = classifyHit(swept, impact, claimed, dims);
     if (z < 0) return false;
     headshot = z === HIT_ZONE_HEAD;
     const n = Math.max(1, Math.min(pellets, w.pellets));
@@ -1206,7 +1282,7 @@ export const fire = spacetimedb.reducer(
     if (pose && dist(ox, oy, oz, pose.x, pose.y, pose.z) > MAX_ORIGIN_OFFSET) return;
     const melee = w.fireMode === 'melee';
     if (melee && pose) {
-      const eyeY = pose.y + ((pose.flags & POSE_FLAG_CROUCH) !== 0 ? CROUCH_EYE_OFFSET : STAND_EYE_OFFSET);
+      const eyeY = pose.y + eyeHeight(bodyDimsOf(ctx, p), (pose.flags & POSE_FLAG_CROUCH) !== 0 ? 1 : 0);
       const tol = MELEE_ORIGIN_TOLERANCE + Math.hypot(pose.vx, pose.vy, pose.vz) * 0.15;
       if (dist(ox, oy, oz, pose.x, eyeY, pose.z) > tol) return;
     }
@@ -1354,6 +1430,40 @@ export const use_forged = spacetimedb.reducer({ norm: t.string() }, (ctx, { norm
 });
 
 /**
+ * Closet: store an outfit (JSON of @ai-gaem/shared `OutfitDesign`, e.g. from the forge service's
+ * /outfit stream). Always re-sanitized here (caps, socket fit, triangle budget, profanity); HP /
+ * hitbox / speed come from the sanitized body. Equipped right away while dead (new players after
+ * forging, the death screen, after request_redeploy); otherwise only stored (equip_outfit later).
+ */
+export const register_outfit = spacetimedb.reducer({ outfitJson: t.string(), prompt: t.string() }, (ctx, { outfitJson, prompt }) => {
+  if (outfitJson.length > OUTFIT_LIMITS.maxOutfitJson) throw new SenderError('outfit json too large');
+  const p = requirePlayer(ctx);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(outfitJson);
+  } catch {
+    throw new SenderError('invalid json');
+  }
+  const cleanPrompt = censorText(prompt.replace(/[\u0000-\u001f]/g, ' ').trim());
+  const row = insertOutfit(ctx, ctx.sender, raw, cleanPrompt, false);
+  if (!p.alive) ctx.db.player.identity.update({ ...p, outfitId: row.id, maxHp: row.maxHp, hp: Math.min(p.hp, row.maxHp) });
+});
+
+/** Wear a stored outfit (your own or a preset; 0 = default body). Only while dead: HP / hitbox change. */
+export const equip_outfit = spacetimedb.reducer({ outfitId: t.u64() }, (ctx, { outfitId }) => {
+  const p = requirePlayer(ctx);
+  if (p.alive) throw new SenderError('can only change outfit while dead');
+  if (outfitId === 0n) {
+    ctx.db.player.identity.update({ ...p, outfitId: 0n, maxHp: MAX_HP });
+    return;
+  }
+  const o = ctx.db.outfit.id.find(outfitId);
+  if (!o) throw new SenderError('unknown outfit');
+  if (!o.isPreset && !o.owner.isEqual(ctx.sender)) throw new SenderError('not your outfit');
+  ctx.db.player.identity.update({ ...p, outfitId, maxHp: o.maxHp });
+});
+
+/**
  * Esc menu "redeploy": die on the spot (no killer credit) so the loadout can be changed, then
  * respawn after RESPAWN_DELAY_SECONDS. Free at full HP; when already damaged it counts as a death
  * (so it can't be used to deny a kill).
@@ -1361,7 +1471,7 @@ export const use_forged = spacetimedb.reducer({ norm: t.string() }, (ctx, { norm
 export const request_redeploy = spacetimedb.reducer(ctx => {
   const p = requirePlayer(ctx);
   if (!p.alive) return;
-  const damaged = p.hp < MAX_HP;
+  const damaged = p.hp < maxHpOf(p);
   ctx.db.player.identity.update({
     ...p,
     alive: false,
@@ -1416,9 +1526,10 @@ export const take_pickup = spacetimedb.reducer({ id: t.u32() }, (ctx, { id }) =>
   const s = ctx.db.poseState.identity.find(ctx.sender);
   if (!s || !s.alive) return;
   if (!pickupInReach(s, pk, PICKUP_SERVER_RADIUS)) throw new SenderError('too far from the pickup');
-  const amount = pk.kind === 'health' ? healAmount(p.hp) : 0;
+  const max = maxHpOf(p);
+  const amount = pk.kind === 'health' ? healAmount(p.hp, max) : 0;
   if (amount <= 0) return; // full HP: leave it for someone who needs it
-  ctx.db.player.identity.update({ ...p, hp: Math.min(MAX_HP, p.hp + amount) });
+  ctx.db.player.identity.update({ ...p, hp: Math.min(max, p.hp + amount) });
   const secs = clampRespawnSeconds(pk.respawnSecs);
   const respawnAt = addSeconds(ctx.timestamp, secs);
   ctx.db.pickup.id.update({ ...pk, available: false, respawnAt });

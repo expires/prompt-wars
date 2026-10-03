@@ -2,9 +2,6 @@
 // (local damage estimates) and tests. Keep this file free of runtime dependencies.
 
 import {
-  HEAD_CENTER_CROUCHED,
-  HEAD_CENTER_STANDING,
-  HEAD_RADIUS,
   HIT_ZONE_BODY,
   HIT_ZONE_HEAD,
   PLAYER_CROUCH_HEIGHT,
@@ -13,6 +10,7 @@ import {
   type Weapon,
 } from './weapon';
 import { meleeSwingRate } from './melee';
+import { DEFAULT_DIMS, bodyRadiusCheck, bodyTop, headCenter, headRadius, standHeight, type BodyDims } from './outfit/balance';
 
 // ---------------------------------------------------------------------------
 // Pose flags (pose.flags / pose_state.flags)
@@ -96,7 +94,7 @@ export const HIT_TOLERANCE = 0.3;
 export const HEAD_HORIZ_TOLERANCE = 0.5;
 /** Speed used for the tolerance is capped (m/s). */
 export const MAX_TOLERANCE_SPEED = 15;
-/** body radius used for validation (client hitbox 0.3 m) */
+/** body radius used for validation at the standard body (client hitbox 0.3 m); see bodyRadiusCheck */
 export const BODY_RADIUS_CHECK = 0.35;
 
 export interface PoseSample {
@@ -141,25 +139,27 @@ function forEachSample(p: SweptPose, fn: (x: number, y: number, z: number, crouc
  * Is the impact plausibly on the victim's head (sphere centred HEAD_CENTER_* above the feet)?
  * Vertical tolerance HIT_TOLERANCE + speed term, horizontal HEAD_HORIZ_TOLERANCE + speed term.
  */
-export function isPlausibleHeadHit(pose: SweptPose, impact: readonly [number, number, number]): boolean {
+export function isPlausibleHeadHit(pose: SweptPose, impact: readonly [number, number, number], dims: BodyDims = DEFAULT_DIMS): boolean {
   const st = speedTol(pose.speed);
-  const vTol = HEAD_RADIUS + HIT_TOLERANCE + st;
-  const hTol = HEAD_RADIUS + HEAD_HORIZ_TOLERANCE + st;
+  const r = headRadius(dims);
+  const vTol = r + HIT_TOLERANCE + st;
+  const hTol = r + HEAD_HORIZ_TOLERANCE + st;
   return forEachSample(pose, (x, y, z, crouching) => {
-    const centre = y + (crouching ? HEAD_CENTER_CROUCHED : HEAD_CENTER_STANDING);
+    const centre = y + headCenter(dims, crouching ? 1 : 0);
     if (Math.abs(impact[1] - centre) > vTol) return false;
     return Math.hypot(impact[0] - x, impact[2] - z) <= hTol;
   });
 }
 
 /** Is the impact plausibly anywhere on the victim (feet .. top of the head)? */
-export function isPlausibleBodyHit(pose: SweptPose, impact: readonly [number, number, number]): boolean {
+export function isPlausibleBodyHit(pose: SweptPose, impact: readonly [number, number, number], dims: BodyDims = DEFAULT_DIMS): boolean {
   const tol = HIT_TOLERANCE + speedTol(pose.speed);
+  const rad = bodyRadiusCheck(dims);
   return forEachSample(pose, (x, y, z, crouching) => {
-    const top = crouching ? PLAYER_CROUCH_HEIGHT : PLAYER_HEIGHT;
+    const top = Math.max(bodyTop(dims, crouching ? 1 : 0), crouching ? PLAYER_CROUCH_HEIGHT * dims.scale : PLAYER_HEIGHT * dims.scale);
     const dy = impact[1] - y;
     if (dy < -tol || dy > top + tol) return false;
-    return Math.hypot(impact[0] - x, impact[2] - z) <= BODY_RADIUS_CHECK + tol;
+    return Math.hypot(impact[0] - x, impact[2] - z) <= rad + tol;
   });
 }
 
@@ -167,19 +167,19 @@ export function isPlausibleBodyHit(pose: SweptPose, impact: readonly [number, nu
  * Validate a claimed direct hit. Returns the zone to apply (head only if claimed *and*
  * plausible), or -1 if the impact isn't plausibly on the victim at all (hit rejected).
  */
-export function classifyHit(pose: SweptPose, impact: readonly [number, number, number], claimedZone: number): number {
-  if (claimedZone === HIT_ZONE_HEAD && isPlausibleHeadHit(pose, impact)) return HIT_ZONE_HEAD;
-  return isPlausibleBodyHit(pose, impact) ? HIT_ZONE_BODY : -1;
+export function classifyHit(pose: SweptPose, impact: readonly [number, number, number], claimedZone: number, dims: BodyDims = DEFAULT_DIMS): number {
+  if (claimedZone === HIT_ZONE_HEAD && isPlausibleHeadHit(pose, impact, dims)) return HIT_ZONE_HEAD;
+  return isPlausibleBodyHit(pose, impact, dims) ? HIT_ZONE_BODY : -1;
 }
 
 /**
  * Splash distance: closest distance from the blast point to the victim's body centre
  * (feet + 0.9 m, as the client measures it) along the trajectory, minus the lag tolerance.
  */
-export function splashDistance(pose: SweptPose, p: readonly [number, number, number]): number {
+export function splashDistance(pose: SweptPose, p: readonly [number, number, number], dims: BodyDims = DEFAULT_DIMS): number {
   let best = Infinity;
   forEachSample(pose, (x, y, z, crouching) => {
-    const cy = y + (crouching ? PLAYER_CROUCH_HEIGHT : PLAYER_HEIGHT) / 2;
+    const cy = y + (crouching ? PLAYER_CROUCH_HEIGHT * dims.scale : standHeight(dims)) / 2;
     best = Math.min(best, Math.hypot(p[0] - x, p[1] - cy, p[2] - z));
     return false;
   });

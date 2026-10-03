@@ -354,6 +354,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
+.hud-sb__size { flex: none; padding: 2px 5px; border: 1px solid var(--line); color: var(--fg-dim); font: 700 max(10px, calc(10 * var(--u) * var(--text-scale))) / 1 var(--font-label); letter-spacing: 0.08em; }
 .hud-sb__wpn { display: flex; align-items: center; gap: calc(10 * var(--u)); min-width: 0; }
 .hud-sb__dia { flex: none; width: max(7px, calc(10 * var(--u))); height: max(7px, calc(10 * var(--u))); transform: rotate(45deg); background: var(--tier, var(--t1)); box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.6); }
 .hud-sb__wn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 max(12px, calc(14 * var(--u) * var(--text-scale))) / 1 var(--font-label); color: var(--fg-dim); letter-spacing: 0.03em; }

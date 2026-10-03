@@ -1,6 +1,6 @@
 // Screen flow: landing (first login) -> forge / quick pick -> deploy; Esc pause menu; death screen;
 // the Weapon Forge editor (lazy chunk). Owns the menus; Game owns the simulation.
-import { type ForgeDesign } from '@ai-gaem/shared';
+import { bodyStats, bodyStatsLine, DEFAULT_BODY, type ForgeDesign, type OutfitDesign } from '@ai-gaem/shared';
 import type { Game } from './Game';
 import { Landing, randomCallsign } from '../ui/menus/Landing';
 import { PauseMenu } from '../ui/menus/PauseMenu';
@@ -13,12 +13,13 @@ import type { Weapon } from '../weapons/types';
 import type { NetPlayer } from '../net';
 import type { ForgeEditorHandle, ForgeEditorOptions } from '../forge/ForgeEditor';
 import type { ForgeCacheLookup, ForgeOrigin } from '../forge/forgeClient';
+import type { ClosetEditorHandle, ClosetEditorOptions } from '../forge/ClosetEditor';
 import { generateWeaponStub, getDefaultWeapons } from '../weapons/defaultWeapons';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const CALLSIGN_KEY = 'ai-gaem.callsign';
 
-type Screen = 'none' | 'landing' | 'pause' | 'death' | 'forge';
+type Screen = 'none' | 'landing' | 'pause' | 'death' | 'forge' | 'closet';
 
 export class GameFlow {
   readonly settingsPanel = new SettingsPanel();
@@ -27,6 +28,12 @@ export class GameFlow {
   readonly death = new DeathScreen();
   readonly slot = new SlotMachine();
   forge: ForgeEditorHandle | null = null;
+  closet: ClosetEditorHandle | null = null;
+  private closetLoading = false;
+  private closetReturn: Screen = 'none';
+  /** first login: the weapon is registered, the Closet comes next (then deploy) */
+  private pendingCloset = false;
+  private outfitEquipped = false;
   /** screen to go back to when the forge closes */
   private forgeReturn: Screen = 'none';
   private deathInfo: DeathInfo = {};
@@ -53,11 +60,16 @@ export class GameFlow {
         this.touchFullscreen();
         void this.quickPick(id, cs);
       },
+      onCloset: (cs) => {
+        this.applyCallsign(cs);
+        void this.openCloset('pause', 'landing');
+      },
     };
     this.pause.handlers = {
       onResume: () => this.resume(),
       onRedeploy: () => void this.redeploy(),
       onForge: () => void this.openForge({ mode: 'pause', seedCurrent: true }, 'pause'),
+      onCloset: () => void this.openCloset('pause', 'pause'),
       onLeave: () => void this.leave(),
     };
     this.death.handlers = {
@@ -66,6 +78,7 @@ export class GameFlow {
       onOpenForge: (p) => void this.openForge({ mode: 'death', prompt: p, autostart: !!p.trim() }, 'death'),
       onRemix: (w) => void this.openForge({ mode: 'remix', remix: w }, 'death'),
       onOpenSlot: () => void this.showSlot(),
+      onOpenCloset: () => void this.openCloset('death', 'death'),
     };
     window.addEventListener('keydown', (e) => this.onKey(e));
   }
@@ -74,6 +87,7 @@ export class GameFlow {
 
   get screen(): Screen {
     if (this.forge || this.forgeLoading) return 'forge';
+    if (this.closet || this.closetLoading) return 'closet';
     if (this.death.visible) return 'death';
     if (this.landing.visible) return 'landing';
     if (this.pause.visible) return 'pause';
@@ -87,7 +101,7 @@ export class GameFlow {
 
   /** the forge covers the whole screen: the world needn't render */
   get opaque(): boolean {
-    return !!this.forge;
+    return !!this.forge || !!this.closet;
   }
 
   private get online() {
@@ -141,6 +155,7 @@ export class GameFlow {
       statusKind: (this.online ? (connected ? 'ok' : 'bad') : 'off') as 'ok' | 'off' | 'bad',
       alive: this.game.alive,
       busy: this.busy,
+      outfitLine: bodyStatsLine({ ...bodyStats(this.game.outfit?.outfit.body ?? DEFAULT_BODY), maxHp: this.game.maxHp }),
     };
   }
 
@@ -268,7 +283,7 @@ export class GameFlow {
 
   private onKey(e: KeyboardEvent) {
     if (e.key !== 'Escape' || e.repeat) return;
-    if (this.forge || document.querySelector('[data-testid=confirm-dialog]')) return;
+    if (this.forge || this.closet || document.querySelector('[data-testid=confirm-dialog]')) return;
     if (this.pause.visible) {
       e.preventDefault();
       this.resume();
@@ -309,7 +324,7 @@ export class GameFlow {
 
   private async redeploy() {
     if (!this.game.alive) return;
-    if (this.game.hp < 100) {
+    if (this.game.hp < this.game.maxHp) {
       const ok = await confirmDialog({
         title: 'Redeploy?',
         body: `Counts as a death (${Math.round(this.game.hp)} HP left).`,
@@ -360,7 +375,7 @@ export class GameFlow {
     // the kill event may have arrived just before the player row update
     const recent = !redeploy && performance.now() - this.killedAt < 3000 ? this.deathInfo : {};
     this.deathInfo = { ...recent, redeploy, message, yourWeapon: this.currentWeapon() };
-    if (!this.forge) this.death.show(this.deathInfo);
+    if (!this.forge && !this.closet) this.death.show(this.deathInfo);
     this.syncHud();
   }
 
@@ -539,6 +554,12 @@ export class GameFlow {
 
   private onForgeClosed() {
     this.forge = null;
+    if (this.pendingCloset) {
+      this.pendingCloset = false;
+      this.equipped = false;
+      void this.openCloset('first', 'landing');
+      return;
+    }
     if (this.equipped) {
       this.equipped = false;
       this.syncHud();
@@ -562,6 +583,7 @@ export class GameFlow {
     if (!net.registerDesign) throw new Error('Server doesn’t support forged weapons');
     const fresh = !!origin?.fresh;
     const cached = this.online && origin?.cached && net.useForged ? origin.cached : undefined;
+    const firstTime = this.needsLoadout;
     if (!this.online) {
       const id = await net.registerDesign(design, prompt);
       const w = id ? net.getWeapon?.(id) : undefined;
@@ -574,7 +596,7 @@ export class GameFlow {
       return;
     }
     if (this.game.alive) {
-      if (this.game.hp < 100) {
+      if (this.game.hp < this.game.maxHp) {
         const ok = await confirmDialog({
           title: 'Redeploy now?',
           body: `Counts as a death (${Math.round(this.game.hp)} HP left).`,
@@ -599,6 +621,12 @@ export class GameFlow {
       if (!id) throw new Error('the weapon didn’t arrive from the server');
       await this.waitFor(() => this.game.me?.weaponId === id && !this.needsLoadout, 4000);
     }
+    if (firstTime && this.closetInFirstFlow) {
+      // first login: pick a look before deploying (the Closet opens once the forge closes)
+      this.equipped = true;
+      this.pendingCloset = true;
+      return;
+    }
     this.equipped = true;
     this.death.setBusy(true, 'Respawning…');
     try {
@@ -622,6 +650,155 @@ export class GameFlow {
     const w = this.currentWeapon();
     if (w) this.game.hud.toast(`Equipped <b>${esc(w.name)}</b>`, { type: 'forge', ms: 3000 });
     // the forge closes itself after onEquip resolves; lock once it's gone
+    setTimeout(() => this.lockAndPlay(), 200);
+  }
+
+  // ------------------------------------------------------------------ closet (outfits)
+
+  /** e2e runs skip the first-login Closet unless `?closet=1` */
+  private get closetInFirstFlow(): boolean {
+    if (this.params.get('closet') === '0') return false;
+    return !this.game.opts.e2e || this.params.get('closet') === '1';
+  }
+
+  async openCloset(mode: ClosetEditorOptions['mode'], from: Screen) {
+    if (this.closet || this.closetLoading || this.forge) return;
+    this.closetLoading = true;
+    this.closetReturn = from;
+    this.game.input.exitLock();
+    let mod: typeof import('../forge/ClosetEditor');
+    try {
+      mod = await import('../forge/ClosetEditor');
+    } catch (err) {
+      this.closetLoading = false;
+      this.game.hud.toast(esc(`Closet failed to load: ${(err as Error)?.message ?? err}`), { type: 'error' });
+      return;
+    }
+    this.closetLoading = false;
+    const net = this.game.net;
+    const presets = [
+      ...(net.outfitPresets?.() ?? []).map((o) => ({ id: o.id, name: o.name, outfit: o.outfit })),
+      { id: '0', name: 'Default', outfit: null },
+    ];
+    const cur = this.game.outfit;
+    const curId = this.online ? (this.game.me?.outfitId ?? '0') : ((net as { localOutfitId?: string }).localOutfitId ?? '0');
+    const seed = cur ? { outfit: cur.outfit, presetId: cur.isPreset ? cur.id : undefined } : { outfit: null, presetId: curId === '0' ? '0' : undefined };
+    const alive = this.game.alive && mode !== 'first';
+    this.landing.hide();
+    this.pause.hide();
+    this.death.hide();
+    this.outfitEquipped = false;
+    this.closet = mod.openClosetEditor({
+      mode,
+      playerIdentity: net.localId || undefined,
+      baseUrl: this.forgeBase(),
+      presets,
+      seed,
+      equipLabel: mode === 'first' ? 'Wear & deploy' : alive ? 'Wear & redeploy' : 'Wear & respawn',
+      onEquip: (o, prompt, presetId) => this.equipOutfit(o, prompt, presetId),
+      onSkip: () => void this.skipCloset(),
+      onClose: () => this.onClosetClosed(mode),
+    });
+    this.syncHud();
+  }
+
+  private skipped = false;
+
+  private async skipCloset() {
+    this.skipped = true;
+    try {
+      await this.deploy(true);
+    } catch (err) {
+      this.game.hud.toast(esc(`Deploy failed: ${(err as Error)?.message ?? err}`), { type: 'error' });
+    }
+  }
+
+  private onClosetClosed(mode: ClosetEditorOptions['mode']) {
+    this.closet = null;
+    if (this.outfitEquipped) {
+      this.outfitEquipped = false;
+      this.syncHud();
+      return;
+    }
+    if (mode === 'first') {
+      // closing the first-login Closet = keep the default body and deploy
+      if (!this.skipped) void this.skipCloset();
+      this.skipped = false;
+      this.syncHud();
+      return;
+    }
+    const back = this.closetReturn;
+    if (back === 'landing' || this.needsLoadout) this.showLanding();
+    else if (back === 'death' && !this.game.alive) this.death.show(this.deathInfo);
+    else if (back === 'pause' && this.game.alive) this.openPause();
+    else if (!this.game.alive) this.death.show(this.deathInfo);
+    this.syncHud();
+  }
+
+  /**
+   * Wear an outfit: an unchanged preset / the default body is equipped by id, anything else is
+   * registered (the server re-sanitizes it and derives HP / hitbox / speed). Body changes need a
+   * death: alive players redeploy first (counts as a death when damaged), then respawn.
+   */
+  async equipOutfit(outfit: OutfitDesign | null, prompt: string, presetId?: string): Promise<void> {
+    const net = this.game.net;
+    if (!net.equipOutfit) throw new Error('Server doesn’t support outfits');
+    if (!this.online) {
+      let id = presetId ?? '0';
+      if (presetId === undefined && outfit && net.registerOutfit) id = (await net.registerOutfit(outfit, prompt)) ?? '0';
+      await net.equipOutfit(id);
+      this.game.applyLocalBody();
+      if (!this.game.alive) {
+        net.respawn(true);
+        this.game.respawn();
+      } else {
+        this.game.hp = this.game.maxHp;
+        this.game.hud.setHealth(this.game.hp, this.game.maxHp);
+      }
+      this.finishOutfit();
+      return;
+    }
+    if (this.game.alive) {
+      if (this.game.hp < this.game.maxHp) {
+        const ok = await confirmDialog({ title: 'Redeploy now?', body: `Counts as a death (${Math.round(this.game.hp)} HP left).`, yes: 'Wear & redeploy' });
+        if (!ok) throw new Error('cancelled');
+      }
+      this.redeploying = true;
+      await net.requestRedeploy?.();
+      await this.waitFor(() => !this.game.alive, 4000);
+    }
+    let id: string;
+    if (presetId !== undefined) {
+      id = presetId;
+      await net.equipOutfit(id);
+    } else {
+      if (!outfit || !net.registerOutfit) throw new Error('nothing to wear');
+      const got = await net.registerOutfit(outfit, prompt);
+      if (!got) throw new Error('the outfit didn’t arrive from the server');
+      id = got;
+    }
+    await this.waitFor(() => (this.game.me?.outfitId ?? '0') === id, 4000);
+    this.outfitEquipped = true;
+    this.death.setBusy(true, 'Respawning…');
+    try {
+      await this.game.requestRespawn(true);
+    } finally {
+      this.death.setBusy(false);
+    }
+    if (!this.game.alive) {
+      this.outfitEquipped = false;
+      throw new Error('Respawn failed. Try Keep loadout.');
+    }
+    this.finishOutfit();
+  }
+
+  private finishOutfit() {
+    this.outfitEquipped = true;
+    this.landing.hide();
+    this.death.hide();
+    this.pause.hide();
+    const o = this.game.outfit;
+    this.game.hud.toast(`Wearing <b>${esc(o?.name ?? 'Default')}</b> · HP ${this.game.maxHp}`, { type: 'forge', ms: 3000 });
     setTimeout(() => this.lockAndPlay(), 200);
   }
 

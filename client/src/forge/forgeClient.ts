@@ -76,6 +76,8 @@ export interface StreamOptions {
   baseUrl?: string;
   /** abort when no bytes arrive for this long (ms) */
   idleTimeoutMs?: number;
+  /** endpoint (default FORGE_API_PATH/generate; the Closet uses OUTFIT_API_PATH) */
+  path?: string;
 }
 
 /** POST /api/forge/generate and call `onEvent` for every NDJSON event as it arrives. */
@@ -101,7 +103,7 @@ export async function streamForge(req: ForgeGenerateRequest, onEvent: (ev: Forge
   try {
     let res: Response;
     try {
-      res = await fetch(`${opts.baseUrl ?? ''}${FORGE_API_PATH}/generate`, {
+      res = await fetch(`${opts.baseUrl ?? ''}${opts.path ?? `${FORGE_API_PATH}/generate`}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(req),

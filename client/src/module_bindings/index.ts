@@ -37,9 +37,11 @@ import {
 import AddSpawnPointReducer from "./add_spawn_point_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
 import ClearSpawnPointsReducer from "./clear_spawn_points_reducer";
+import EquipOutfitReducer from "./equip_outfit_reducer";
 import EquipWeaponReducer from "./equip_weapon_reducer";
 import FireReducer from "./fire_reducer";
 import RegisterDesignReducer from "./register_design_reducer";
+import RegisterOutfitReducer from "./register_outfit_reducer";
 import RegisterWeaponReducer from "./register_weapon_reducer";
 import ReloadReducer from "./reload_reducer";
 import RemoveSpawnPointReducer from "./remove_spawn_point_reducer";
@@ -60,6 +62,7 @@ import * as GenerateWeaponProcedure from "./generate_weapon_procedure";
 // Import all table schema definitions
 import ForgedPromptRow from "./forged_prompt_table";
 import HitEventRow from "./hit_event_table";
+import OutfitRow from "./outfit_table";
 import PickupRow from "./pickup_table";
 import PickupEventRow from "./pickup_event_table";
 import PlayerRow from "./player_table";
@@ -95,6 +98,20 @@ const tablesSchema = __schema({
     ],
     event: true,
   }, HitEventRow),
+  outfit: __table({
+    name: 'outfit',
+    indexes: [
+      { accessor: 'id', name: 'outfit_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'owner', name: 'outfit_owner_idx_btree', algorithm: 'btree', columns: [
+        'owner',
+      ] },
+    ],
+    constraints: [
+      { name: 'outfit_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, OutfitRow),
   pickup: __table({
     name: 'pickup',
     indexes: [
@@ -187,9 +204,11 @@ const reducersSchema = __reducers(
   __reducerSchema("add_spawn_point", AddSpawnPointReducer),
   __reducerSchema("claim_admin", ClaimAdminReducer),
   __reducerSchema("clear_spawn_points", ClearSpawnPointsReducer),
+  __reducerSchema("equip_outfit", EquipOutfitReducer),
   __reducerSchema("equip_weapon", EquipWeaponReducer),
   __reducerSchema("fire", FireReducer),
   __reducerSchema("register_design", RegisterDesignReducer),
+  __reducerSchema("register_outfit", RegisterOutfitReducer),
   __reducerSchema("register_weapon", RegisterWeaponReducer),
   __reducerSchema("reload", ReloadReducer),
   __reducerSchema("remove_spawn_point", RemoveSpawnPointReducer),

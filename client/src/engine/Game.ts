@@ -10,8 +10,16 @@ import {
   meleeMetaOf,
   moveSpeedLabel,
   weaponMoveMultiplier,
+  combinedMoveMult,
+  hitboxArea,
+  sizeClassOf,
+  DEFAULT_DIMS,
+  MOVE_MULT_MAX,
+  MOVE_MULT_MIN,
   type MapDef,
 } from '@ai-gaem/shared';
+import type { NetOutfit } from '../net/NetClient';
+import { setOutfitEnvRenderer } from '../player/outfitModelCache';
 import { playerStatus } from '../weapons/elementFx';
 import { reducedMotionActive } from '../ui/hud/applyUiSettings';
 import { createRenderer, type RenderContext } from './renderer';
@@ -174,6 +182,7 @@ export class Game {
     this.opts = opts;
     this.rc = createRenderer(container);
     setDesignEnvRenderer(this.rc.renderer);
+    setOutfitEnvRenderer(this.rc.renderer);
     setTelemetryContext({
       renderer: this.rc.renderer,
       name: () => this.me?.name,
@@ -393,8 +402,8 @@ export class Game {
     const pickupDefs = mapPickups(pickupDef);
     this.pickups = new PickupSystem(this.rc.scene, this.net, pickupDefs, pickupDefs.length > 0 && (!online || pickupDef?.id === ACTIVE_MAP_ID));
     this.pickups.onLocalHeal = (amount) => {
-      this.hp = Math.min(MAX_HP, this.hp + amount);
-      this.hud.setHealth(this.hp);
+      this.hp = Math.min(this.maxHp, this.hp + amount);
+      this.hud.setHealth(this.hp, this.maxHp);
     };
     this.pickups.onTaken = ({ e, local }) => {
       if (!local) {
@@ -462,6 +471,10 @@ export class Game {
         this.syncWeapon();
         this.flow.onWeaponsChanged();
       });
+      this.net.onOutfitsChanged?.(() => {
+        this.applyLocalBody();
+        this.flow.onWeaponsChanged();
+      });
       this.net.onLocalHit?.((e) => {
         if (e.knock.some((k) => k !== 0)) this.player.applyImpulse(new THREE.Vector3(...e.knock));
         if (e.blocked) this.sfx.blockClang();
@@ -504,7 +517,7 @@ export class Game {
       this.net.onLocalChanged?.((me) => {
         if (me.hp < this.hp) this.hud.damageFlash();
         this.hp = me.hp;
-        this.hud.setHealth(this.hp);
+        this.hud.setHealth(this.hp, this.maxHp);
         if (!me.alive && this.alive) this.die('Killed');
       });
       this.equip(getDefaultWeapons()[0]);
@@ -538,7 +551,7 @@ export class Game {
       feet: this.player.feet,
       yaw: this.player.yaw,
     }));
-    this.hud.setHealth(this.hp);
+    this.hud.setHealth(this.hp, this.maxHp);
     this.input.onLockChange((locked) => this.flow.onLockChange(locked));
 
     this.ready = true;
@@ -557,10 +570,11 @@ export class Game {
   private applyLocalState(me: NetPlayer) {
     const prev = this.me;
     this.me = me;
+    if (prev?.outfitId !== me.outfitId || prev?.maxHp !== me.maxHp) this.applyLocalBody();
     this.flow.onLocalChanged(me);
     if (me.hp < this.hp && me.alive) this.hud.damageFlash();
     this.hp = me.hp;
-    this.hud.setHealth(this.hp);
+    this.hud.setHealth(this.hp, this.maxHp);
     if (!me.alive && this.alive) {
       this.die('Killed');
     } else if (me.alive && !this.alive) {
@@ -723,6 +737,32 @@ export class Game {
     if (!this.me?.needsLoadout) void warmTemplates().catch((err) => console.warn('[templates] failed to load', err));
   }
 
+  // ------------------------------------------------------------------ body (Closet outfit)
+
+  /** movement multiplier of the current body (1 = default) */
+  bodySpeedMult = 1;
+
+  /** the outfit the local player wears (undefined = default body / not arrived yet) */
+  get outfit(): NetOutfit | undefined {
+    const id = this.net.authoritative ? this.me?.outfitId : (this.net as { localOutfitId?: string }).localOutfitId;
+    return id && id !== '0' ? this.net.getOutfit?.(id) : undefined;
+  }
+
+  /** max HP of the local body (server-derived online) */
+  get maxHp(): number {
+    if (this.net.authoritative) return this.me?.maxHp ?? MAX_HP;
+    return this.outfit?.maxHp ?? MAX_HP;
+  }
+
+  /** capsule / eye height / speed for the current body */
+  applyLocalBody() {
+    if (!this.player) return;
+    const o = this.outfit;
+    this.player.setBody(o?.dims ?? DEFAULT_DIMS);
+    this.bodySpeedMult = o?.speedMult ?? 1;
+    this.hud?.setHealth(this.hp, this.maxHp);
+  }
+
   /** local respawn. `pickSpawn` = choose a local spawn point (offline); networked mode teleports first. */
   respawn(pickSpawn = true) {
     if (pickSpawn) {
@@ -731,8 +771,9 @@ export class Game {
     }
     this.player.inputEnabled = true;
     this.player.frozen = false;
-    this.hp = this.me?.hp ?? MAX_HP;
-    this.hud.setHealth(this.hp);
+    this.applyLocalBody();
+    this.hp = this.me?.hp ?? this.maxHp;
+    this.hud.setHealth(this.hp, this.maxHp);
     this.weapons.refill();
     this.alive = true;
     this.lastHitOnMe = null;
@@ -744,7 +785,7 @@ export class Game {
     if (!this.alive) return;
     this.hp -= amount;
     this.hud.damageFlash();
-    this.hud.setHealth(this.hp);
+    this.hud.setHealth(this.hp, this.maxHp);
     if (this.hp <= 0) this.die(reason);
   }
 
@@ -961,6 +1002,7 @@ export class Game {
       // three.js re-uploads geometries / textures / programs lazily; regenerate what was rendered
       // into render targets (the PMREM studio environment of forge designs) and recompile materials
       setDesignEnvRenderer(this.rc.renderer);
+      setOutfitEnvRenderer(this.rc.renderer);
       this.rc.scene.traverse((o) => {
         const m = (o as THREE.Mesh).material;
         if (m) for (const mat of Array.isArray(m) ? m : [m]) mat.needsUpdate = true;
@@ -1032,7 +1074,9 @@ export class Game {
     // shooting cancels sprint (you can't fire mid-sprint; the shot goes out as the sprint ends)
     if (canAct && actions.fire && player.sprinting) player.blockSprint();
     // carry weight (big guns slower, melee / sidearms faster); blocking slows you down further
-    player.moveMult = weaponMoveMultiplier(this.weapons.weapon) * (melee && this.weapons.melee.blocking ? BLOCK_MOVE_MULT : 1);
+    // body size (outfit) stacks with carry weight inside the global window
+    const carry = combinedMoveMult(weaponMoveMultiplier(this.weapons.weapon), this.bodySpeedMult, MOVE_MULT_MIN, MOVE_MULT_MAX);
+    player.moveMult = carry * (melee && this.weapons.melee.blocking ? BLOCK_MOVE_MULT : 1);
     player.aimSlow = this.aimSlowdown(pad);
     const md = input.active ? player.frameInput(dt, this.rig.fovScale) : (input.consumeMouse(), { dx: 0, dy: 0 });
     this.acc += dt;
@@ -1116,7 +1160,7 @@ export class Game {
     this.updateCrosshair();
     this.dummies?.update(dt, this.rc.camera);
     this.props.update(dt);
-    this.pickups.update(dt, { feet: player.feet, hp: this.hp, alive: this.alive });
+    this.pickups.update(dt, { feet: player.feet, hp: this.hp, alive: this.alive, maxHp: this.maxHp });
     this.remotes.update(dt, now);
     this.damageNumbers.update(vdt, cam, (id) => this.remotes.headOf(id));
     this.hud.update(dt);
@@ -1165,6 +1209,13 @@ export class Game {
     p.mouseAtStart = this.input.mouseEvents;
   }
 
+  /** scoreboard size tag ("L 125"); omitted for the default body */
+  private sizeTag(p: NetPlayer, you: boolean): string | undefined {
+    const o = you ? this.outfit : p.outfitId && p.outfitId !== '0' ? this.net.getOutfit?.(p.outfitId) : undefined;
+    if (!o) return undefined;
+    return `${sizeClassOf(hitboxArea(o.outfit.body))} ${o.maxHp}`;
+  }
+
   /** Tab scoreboard rows + ping / FPS micro (twice a second) */
   private updateScoreboard() {
     const online = this.net.authoritative;
@@ -1186,6 +1237,7 @@ export class Game {
         you,
         alive: p.alive,
         prompt: weaponPrompt(w) || undefined,
+        size: this.sizeTag(p, you),
       };
     };
     const rows = [];

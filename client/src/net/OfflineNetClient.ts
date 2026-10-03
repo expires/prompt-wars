@@ -1,6 +1,12 @@
-import { designToWeapon, elementCode, meleeHitDamage, slowDurationFor, zoneDamage, type ForgeDesign } from '@ai-gaem/shared';
+import { bodyStats, designToWeapon, elementCode, meleeHitDamage, outfitForStorage, slowDurationFor, zoneDamage, type ForgeDesign, type OutfitDesign } from '@ai-gaem/shared';
+import { OUTFIT_EXAMPLES, OUTFIT_PRESETS } from '@ai-gaem/shared/outfit/examples';
 import type { Weapon } from '../weapons/types';
-import type { HitInfo, KillEvent, LocalPose, NetClient, NetPlayer, PoseSnapshot, Vec3 } from './NetClient';
+import type { HitInfo, KillEvent, LocalPose, NetClient, NetOutfit, NetPlayer, PoseSnapshot, Vec3 } from './NetClient';
+
+function netOutfit(id: string, outfit: OutfitDesign, isPreset: boolean, prompt = ''): NetOutfit {
+  const st = bodyStats(outfit.body);
+  return { id, name: outfit.name, isPreset, outfit, prompt, maxHp: st.maxHp, speedMult: st.speedMult, dims: { scale: st.scale, build: st.build, head: st.head } };
+}
 
 type Listener<T> = (v: T) => void;
 
@@ -18,6 +24,10 @@ export class OfflineNetClient implements NetClient {
   private poses = new Map<string, PoseSnapshot>();
   private killCbs: Listener<KillEvent>[] = [];
   private weapons = new Map<string, Weapon>();
+  private outfits = new Map<string, NetOutfit>();
+  private outfitCbs: Listener<void>[] = [];
+  /** outfit the local player wears (offline the game applies it) */
+  localOutfitId = '0';
   private bots: (NetPlayer & { cx: number; cz: number; r: number; speed: number; phase: number })[] = [];
   private timer?: number;
   private t = 0;
@@ -25,6 +35,10 @@ export class OfflineNetClient implements NetClient {
   constructor(private readonly opts: { bots?: number; botCenter?: Vec3 } = {}) {}
 
   async connect() {
+    for (const o of OUTFIT_PRESETS) this.outfits.set(`preset-${o.name.toLowerCase()}`, netOutfit(`preset-${o.name.toLowerCase()}`, o, true));
+    OUTFIT_EXAMPLES.forEach(([p, o], i) => this.outfits.set(`example-${i}`, netOutfit(`example-${i}`, o, false, p)));
+    // bots wear the hand-built outfits (variety for tests / screenshots)
+    const looks = [...this.outfits.keys()];
     const n = this.opts.bots ?? 0;
     const [bx, by, bz] = this.opts.botCenter ?? [0, 0, 0];
     for (let i = 0; i < n; i++) {
@@ -34,7 +48,9 @@ export class OfflineNetClient implements NetClient {
         pos: [bx, by, bz],
         yaw: 0,
         pitch: 0,
-        hp: 100,
+        hp: this.outfits.get(looks[i % looks.length])!.maxHp,
+        maxHp: this.outfits.get(looks[i % looks.length])!.maxHp,
+        outfitId: looks[i % looks.length],
         alive: true,
         color: `hsl(${(i * 77) % 360},70%,50%)`,
         cx: bx + (Math.random() - 0.5) * 10,
@@ -64,7 +80,7 @@ export class OfflineNetClient implements NetClient {
       // face along the direction of travel (tangent); yaw 0 faces -Z
       b.yaw = Math.atan2(Math.sin(a), -Math.cos(a));
       // crouch for ~1.5 s out of every 5 (exercises remote crouch + hitboxes)
-      b.crouching = (this.t + b.phase) % 5 < 1.5;
+      b.crouching = !(b as { still?: boolean }).still && (this.t + b.phase) % 5 < 1.5;
       const w = b.speed * b.r;
       const snap: PoseSnapshot = {
         pos: [...b.pos],
@@ -139,7 +155,7 @@ export class OfflineNetClient implements NetClient {
       this.killCbs.forEach((cb) => cb(e));
       setTimeout(() => {
         bot.alive = true;
-        bot.hp = 100;
+        bot.hp = bot.maxHp ?? 100;
       }, 3000);
     }
     this.emitPlayers();
@@ -163,6 +179,31 @@ export class OfflineNetClient implements NetClient {
   async registerDesign(design: ForgeDesign, prompt: string) {
     const w: Weapon = { ...designToWeapon(design), design, prompt };
     return this.registerWeapon(w);
+  }
+
+  async registerOutfit(outfit: OutfitDesign, prompt: string) {
+    const id = `local-outfit-${Math.random().toString(36).slice(2, 9)}`;
+    this.outfits.set(id, netOutfit(id, outfitForStorage(outfit), false, prompt));
+    this.localOutfitId = id;
+    this.outfitCbs.forEach((cb) => cb());
+    return id;
+  }
+
+  async equipOutfit(id: string) {
+    this.localOutfitId = id;
+  }
+
+  getOutfit(id: string) {
+    return this.outfits.get(id);
+  }
+
+  outfitPresets() {
+    return [...this.outfits.values()].filter((o) => o.isPreset).sort((a, b) => a.maxHp - b.maxHp);
+  }
+
+  onOutfitsChanged(cb: Listener<void>) {
+    this.outfitCbs.push(cb);
+    return () => (this.outfitCbs = this.outfitCbs.filter((c) => c !== cb));
   }
 
   async requestRedeploy() {

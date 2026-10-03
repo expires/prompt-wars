@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { clampWeapon, sanitizeDesign } from '@ai-gaem/shared';
+import { clampWeapon, sanitizeDesign, sanitizeOutfit } from '@ai-gaem/shared';
+import { outfitCacheStats } from './player/outfitModelCache';
 import type { Game } from './engine/Game';
 import { Humanoid } from './player/humanoid';
 import { playerStatus } from './weapons/elementFx';
@@ -95,6 +96,14 @@ export interface GameTestHook {
    * `index`: give every bot that sample weapon instead (deterministic state for measurements)
    */
   botsCycle(churn?: boolean, index?: number): boolean;
+  /** Closet: wear an outfit (raw OutfitDesign JSON; presetId = equip a stored row by id) via the editor's path */
+  equipOutfit(outfit: unknown, prompt?: string, presetId?: string): Promise<void>;
+  /** Closet: open the editor ('pause' | 'death' | 'first') */
+  openCloset(mode?: 'pause' | 'death' | 'first'): Promise<void>;
+  /** preset outfit rows (id, name, maxHp) */
+  outfitPresets(): { id: string; name: string; maxHp: number }[];
+  /** offline bots: wear these outfit ids (round robin) */
+  botsOutfits(ids: string[]): boolean;
 }
 
 export interface MemStats {
@@ -107,6 +116,7 @@ export interface MemStats {
   /** meshes / lines / points / sprites in the world scene */
   sceneMeshes: number;
   designCache: ReturnType<typeof designModelCacheStats>;
+  outfitCache?: ReturnType<typeof outfitCacheStats>;
   projectiles: number;
   effects: number;
   particles: number;
@@ -195,6 +205,21 @@ function getState(game: Game) {
     deathVisible: ready ? game.flow.death.visible : false,
     screen: game.flow?.screen ?? 'none',
     needsLoadout: !!game.me?.needsLoadout,
+    maxHp: ready ? game.maxHp : 100,
+    serverMaxHp: game.me?.maxHp,
+    outfitId: game.me?.outfitId ?? (game.net as { localOutfitId?: string } | undefined)?.localOutfitId ?? '0',
+    outfit: ready && game.outfit ? { id: game.outfit.id, name: game.outfit.name, maxHp: game.outfit.maxHp, speedMult: game.outfit.speedMult, dims: game.outfit.dims, pieces: game.outfit.outfit.pieces.length } : null,
+    bodySpeedMult: ready ? game.bodySpeedMult : 1,
+    playerDims: p?.dims ?? null,
+    closet: game.flow?.closet
+      ? {
+          busy: game.flow.closet.session.state.busy,
+          error: game.flow.closet.session.state.error,
+          outfit: game.flow.closet.session.state.outfit
+            ? { name: game.flow.closet.session.state.outfit.name, body: game.flow.closet.session.state.outfit.body, pieces: game.flow.closet.session.state.outfit.pieces.map((x) => ({ id: x.id, label: x.label, socket: x.socket, locked: !!x.locked })) }
+            : null,
+        }
+      : null,
     weaponDesign: w?.design ? { name: w.design.name, components: w.design.components.map((c) => ({ id: c.id, label: c.label })) } : null,
     forge: game.flow?.forge
       ? {
@@ -238,6 +263,9 @@ function getState(game: Game) {
             /** elemental status + rendered body glow */
             status: r.status,
             tint: r.tint,
+            /** worn outfit + hitbox body + attached outfit part groups */
+            outfit: r.outfit,
+            maxHp: r.state.maxHp ?? 100,
           };
         })
       : [],
@@ -435,6 +463,7 @@ export function installTestHook(game: Game) {
         viewObjects: view.n,
         sceneMeshes: world.draw,
         designCache: designModelCacheStats(),
+        outfitCache: outfitCacheStats(),
         projectiles: ws['projectiles'].length,
         effects: fx['items'].length,
         particles: layers.reduce((a, l) => a + l.particles.length, 0),
@@ -475,6 +504,27 @@ export function installTestHook(game: Game) {
     equipDesign(design, prompt = 'test design') {
       const { design: d } = sanitizeDesign(design);
       return game.flow.equipDesign(d, prompt);
+    },
+    equipOutfit(outfit, prompt = 'test outfit', presetId) {
+      const o = outfit ? sanitizeOutfit(outfit).outfit : null;
+      return game.flow.equipOutfit(o, prompt, presetId);
+    },
+    openCloset(mode = 'pause') {
+      return game.flow.openCloset(mode, game.alive ? 'pause' : 'death');
+    },
+    outfitPresets() {
+      return (game.net.outfitPresets?.() ?? []).map((o) => ({ id: o.id, name: o.name, maxHp: o.maxHp }));
+    },
+    botsOutfits(ids) {
+      const bots = (game.net as unknown as { bots?: { id: string; outfitId?: string; maxHp?: number; hp: number }[] }).bots;
+      if (!Array.isArray(bots) || !bots.length) return false;
+      bots.forEach((b, i) => {
+        b.outfitId = ids[i % ids.length];
+        const o = game.net.getOutfit?.(b.outfitId);
+        b.maxHp = o?.maxHp ?? 100;
+        b.hp = b.maxHp;
+      });
+      return true;
     },
   };
   (window as unknown as { __game: GameTestHook }).__game = hook;
