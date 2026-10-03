@@ -12,17 +12,29 @@
 import {
   A_D0,
   A_END,
-  A_FRONT_D1,
-  A_GLASS_H,
   A_ROWS,
   A_ROW_D,
-  A_WALK_Y,
   BACK_WALL_D1,
   BOX_CEIL,
   BOX_GLASS_D1,
   BOX_REAR_D0,
+  ACCESS_D0,
+  ACCESS_RISE,
+  ACCESS_STEPS,
+  ACCESS_TREAD,
+  ACCESS_W,
+  A_FIXED_ROW0,
   CLOSED_D,
+  CLOSED_LEDGE_D1,
+  CLOSED_LEDGE_RAIL_D1,
   CLOSED_RAIL_D1,
+  MENTORS_SECTOR,
+  STORED_D,
+  STORED_H,
+  STORED_RAIL_D1,
+  STORED_WALK_D1,
+  isStairColumn,
+  recessD0,
   DRAPE_D,
   RECESS_D1,
   RECESS_H,
@@ -44,8 +56,6 @@ import {
   CST_D1,
   CST_HEADROOM,
   FLOOR_STAIR_D0,
-  FLOOR_STAIR_RISE,
-  FLOOR_STAIR_TREAD,
   GROUND,
   LEVEL_B,
   OUTER_WALL_D1,
@@ -208,30 +218,29 @@ function concourse(col: Column, dm: number): Iv[] {
 
 function baseCell(col: Column, dm: number): Iv[] {
   if (col.closed && dm < CROSS_END) {
-    // closed end: event floor up to the folded-stand facade, balcony (+ railing) on top of it
+    // closed end: event floor up to the stored-seat wall, a ledge walkway on top of it, then the
+    // folded upper stands up to the balcony (+ railing) at the cross-aisle level
     if (dm < CLOSED_D) return [{ y0: GROUND, y1: 0, top: 'floor', side: 'concrete' }];
+    if (dm < CLOSED_LEDGE_D1) {
+      const out: Iv[] = [{ y0: GROUND, y1: STORED_H, top: 'walk', side: 'concrete', sideIn: isLoungeColumn(col) ? 'wall' : 'shelf' }];
+      if (dm < CLOSED_LEDGE_RAIL_D1) out.push({ y0: STORED_H, y1: STORED_H + 1.0, top: 'glass', side: 'glass' });
+      return out;
+    }
     const out: Iv[] = [{ y0: GROUND, y1: LEVEL_B, top: 'walk', side: 'concrete', sideIn: 'stands' }];
     if (dm < CLOSED_RAIL_D1) out.push({ y0: LEVEL_B, y1: LEVEL_B + 1.0, top: 'glass', side: 'glass' });
     return out;
   }
-  if (dm < 0) {
-    if (col.a === 'aisle') {
-      const k = Math.floor((dm - FLOOR_STAIR_D0) / FLOOR_STAIR_TREAD);
-      return [{ y0: GROUND, y1: FLOOR_STAIR_RISE * (k + 1), top: 'aisle', side: 'riser' }];
-    }
-    return [{ y0: GROUND, y1: 0, top: 'floor', side: 'concrete' }];
+  // event floor runs up to the stored-seat wall all round
+  if (dm < STORED_D) return [{ y0: GROUND, y1: 0, top: 'floor', side: 'concrete' }];
+  if (dm < STORED_WALK_D1) {
+    // stored-seat wall (shelf face toward the floor), walkway on top, railing except at stair heads
+    const out: Iv[] = [{ y0: GROUND, y1: STORED_H, top: 'walk', side: 'concrete', sideIn: 'shelf' }];
+    if (dm < STORED_RAIL_D1 && !isStairColumn(col)) out.push({ y0: STORED_H, y1: STORED_H + 1.0, top: 'glass', side: 'glass' });
+    return out;
   }
-  if (dm < A_FRONT_D1) {
-    if (col.a === 'aisle') return [{ y0: GROUND, y1: A_WALK_Y, top: 'aisle', side: 'concrete', sideIn: 'led' }];
-    return [
-      { y0: GROUND, y1: A_WALK_Y, top: 'concrete', side: 'concrete', sideIn: 'led' },
-      { y0: A_WALK_Y, y1: A_WALK_Y + A_GLASS_H, top: 'glass', side: 'glass' },
-    ];
-  }
-  if (dm < A_D0) return [{ y0: GROUND, y1: A_WALK_Y, top: 'walk', side: 'concrete' }];
   if (dm < A_END) {
     const aisle = col.a === 'aisle';
-    return [{ y0: GROUND, y1: aTop(dm, aisle), top: aisle ? 'aisle' : 'tier', side: aisle ? 'riser' : 'shelf' }];
+    return [{ y0: GROUND, y1: aTop(dm, aisle), top: aisle ? 'aisle' : 'tier', side: aisle ? 'riser' : 'tier' }];
   }
   if (dm < CROSS_END) return [{ y0: GROUND, y1: LEVEL_B, top: 'walk', side: 'concrete' }];
   if (dm < RING_B_END) return ringB(col, dm);
@@ -247,11 +256,28 @@ function baseCell(col: Column, dm: number): Iv[] {
 
 function cellIntervals(col: Column, d0: number, d1: number): Iv[] {
   const dm = (d0 + d1) / 2;
+  let base: Iv[];
   if (col.closed) {
     // closed end: everything under the balcony is painted white (recess walls, facade returns)
-    const base = baseCell(col, dm).map((iv) => (iv.side === 'concrete' && iv.y1 <= LEVEL_B + EPS ? { ...iv, side: 'wall' as SurfaceMat } : iv));
-    if (!isRecessColumn(col) || dm < CLOSED_D || dm >= RECESS_D1) return base;
-    // service tunnel through the folded stands: concrete floor, solid above RECESS_H
+    base = baseCell(col, dm).map((iv) => (iv.side === 'concrete' && iv.y1 <= LEVEL_B + EPS ? { ...iv, side: 'wall' as SurfaceMat } : iv));
+  } else if (col.a === 'tunnel' && dm < TUN_STAIR_D1) {
+    const ceil = tunnelCeil(dm);
+    base = [];
+    for (const iv of baseCell({ ...col, a: 'seat', b: 'vom' }, dm)) {
+      if (iv.y1 <= 0.01) continue;
+      const y0 = Math.max(iv.y0, ceil);
+      if (iv.y1 - y0 < 0.3) continue;
+      base.push({ ...iv, y0 });
+    }
+    const stair = dm >= TUN_STAIR_D0;
+    base.unshift({ y0: GROUND, y1: stair ? tunnelStairTop(dm) : 0, top: stair ? 'aisle' : 'concrete', side: stair ? 'aisle' : 'concrete' });
+    return base;
+  } else base = baseCell(col, dm);
+  const { columns } = layout();
+  const n = columns.length;
+  const inRecess = (c: Column) => isRecessColumn(c) && dm >= recessD0(c) && dm < RECESS_D1;
+  if (inRecess(col)) {
+    // room behind the stored-seat wall: concrete floor, solid above RECESS_H
     const out: Iv[] = [{ y0: GROUND, y1: 0, top: 'walk', side: 'wall' }];
     for (const iv of base) {
       const y0 = Math.max(iv.y0, RECESS_H);
@@ -260,21 +286,11 @@ function cellIntervals(col: Column, d0: number, d1: number): Iv[] {
     }
     return out;
   }
-  if (col.a === 'tunnel' && dm < TUN_STAIR_D1) {
-    const base = baseCell({ ...col, a: 'seat', b: 'vom' }, dm);
-    const ceil = tunnelCeil(dm);
-    const out: Iv[] = [];
-    for (const iv of base) {
-      if (iv.y1 <= 0.01) continue;
-      const y0 = Math.max(iv.y0, ceil);
-      if (iv.y1 - y0 < 0.3) continue;
-      out.push({ ...iv, y0 });
-    }
-    const stair = dm >= TUN_STAIR_D0;
-    out.unshift({ y0: GROUND, y1: stair ? tunnelStairTop(dm) : 0, top: stair ? 'aisle' : 'concrete', side: stair ? 'aisle' : 'concrete' });
-    return out;
+  // the recess side walls are painted white
+  if (inRecess(columns[(col.index + 1) % n]!) || inRecess(columns[(col.index - 1 + n) % n]!)) {
+    return base.map((iv) => (iv.side !== 'glass' && iv.y0 < RECESS_H ? { ...iv, side: 'wall' as SurfaceMat } : iv));
   }
-  return baseCell(col, dm);
+  return base;
 }
 
 // ------------------------------------------------------------------ mesh output
@@ -303,6 +319,8 @@ export interface Prop {
   cyl?: boolean;
   /** material-specific variant (letter index, sign variant, …) */
   tag?: number;
+  /** collider only: not drawn */
+  hidden?: boolean;
 }
 
 export interface Seat {
@@ -310,8 +328,8 @@ export interface Seat {
   y: number;
   z: number;
   yaw: number;
-  /** A lower ring, C upper ring, B glass boxes (red VIP seats) */
-  tier: 'A' | 'B' | 'C';
+  /** A lower ring, C upper ring, B glass boxes (red VIP seats), S folded on the stored-seat wall */
+  tier: 'A' | 'B' | 'C' | 'S';
   row: number;
 }
 
@@ -449,6 +467,19 @@ export function floorClear(x: number, z: number, margin: number): boolean {
   return floorEdgeOffset(x, z) <= (isClosedSide(x) ? CLOSED_D : 0) - margin;
 }
 
+/** closed-end lounge segment of the stored wall (INFO neon, red doors): plain painted wall */
+export function isLoungeColumn(c: Column): boolean {
+  return c.part === 'W' && Math.abs(columnPoint(c.index, 0.5, 0).z + 1.8) < 9.4;
+}
+/** red emergency doors in the stored-seat wall (box-door aisles on the long sides) */
+export function hasWallDoor(c: Column): boolean {
+  return !c.closed && c.a === 'aisle' && c.b === 'door' && (c.part === 'N' || c.part === 'S') && c.index % 2 === 0;
+}
+/** columns whose stored-seat wall shows shelves + folded seats (not at openings / doors) */
+export function hasStoredShelves(c: Column): boolean {
+  return c.a !== 'tunnel' && !isRecessColumn(c) && !isLoungeColumn(c) && !hasWallDoor(c);
+}
+
 export const TABLE_DEPTH = 0.8;
 export const TABLE_H = 0.75;
 /** hackathon desk rows run along z; x of each row (E block, W block) */
@@ -560,7 +591,7 @@ function floorProps(): Prop[] {
   box(-46.4, -11.7, 0.8, 0.45, 0.3, 'metal', 0, IN, false);
   for (const [x, z] of [[-46.9, -10.0], [-46.3, -9.9], [-44.6, 10.4]] as const) box(x, z, 0.55, 0.85, 0.55, 'bin', 0, 0, false, { cyl: true });
   // roll-up banners + a TV on a stand
-  for (const [x, z, t] of [[-45.2, 9.3, 0], [-44.6, -4.5, 1], [-41.0, 12.8, 2]] as const) {
+  for (const [x, z, t] of [[-45.2, 9.3, 2], [-44.6, -4.5, 1], [-41.0, 12.8, 2]] as const) {
     box(x, z, 0.85, 2.0, 0.04, 'rollup', 0.08, IN + (z > 0 ? 0.35 : -0.25), false, { tag: t });
     box(x, z, 0.9, 0.08, 0.28, 'metal', 0, IN + (z > 0 ? 0.35 : -0.25), false);
   }
@@ -652,25 +683,31 @@ function bowlProps(): Prop[] {
       // steel lift doors next to it on every other kiosk
       if (j % 2 === 0) P.push({ ...propAt(j, 0.5, CONC_D1 - 0.03, LEVEL_B, 1.6, 2.3, 0.06, 'greydoor', false), tag: 1 });
     }
-    // ---- service tunnels through the folded stands (mentors village / chill-out rooms)
+    // ---- rooms behind the stored-seat wall (chill-out zone west, mentors village south-east)
     if (isRecessColumn(col) && col.a === 'aisle') {
-      const mentors = col.sector % 2 === 1;
-      // grey double doors + exit signs on the back wall, purple banner over the opening
+      const mentors = col.sector === MENTORS_SECTOR;
+      const d0 = recessD0(col);
+      // grey double doors + exit signs on the back wall, purple banner hung from the walkway rail
       P.push({ ...propAt(j, 1, RECESS_D1 - 0.05, 0, 2.4, 2.4, 0.08, 'greydoor', false), tag: 0 });
       P.push(propAt(j, 1, RECESS_D1 - 0.08, 2.6, 0.62, 0.22, 0.05, 'exit', false));
-      P.push({ ...propAt(j, 1, CLOSED_D - 0.04, LEVEL_B - 1.85, 3.2, 1.8, 0.03, 'banner', false), tag: mentors ? 0 : 1 });
-      P.push(propAt(j, 1, CLOSED_D - 0.05, RECESS_H + 0.15, 0.62, 0.22, 0.05, 'exit', false));
+      P.push({ ...propAt(j, 1, d0 - 0.04, STORED_H + 1.0 - 1.8, 3.2, 1.8, 0.03, 'banner', false), tag: mentors ? 0 : 1 });
+      P.push(propAt(j, 1, d0 + 0.05, RECESS_H - 0.3, 0.62, 0.22, 0.05, 'exit', false));
       if (mentors) {
         // wooden tables + blue chairs along one wall
-        for (const d of [14.2, 17.4]) {
+        for (const d of [d0 + 2.4, d0 + 5.6]) {
           P.push(propAt(j, 0.33, d, 0, 0.8, 0.75, 2.4, 'wood'));
           for (const dd of [-0.7, 0, 0.7]) P.push(propAt(j, 0.83, d + dd, 0, 0.45, 0.85, 0.45, 'chairblue', false));
         }
-        P.push(propAt(j, 1.7, CLOSED_D - 1.2, 0, 0.8, 1.7, 0.05, 'standee', false));
+        P.push(propAt(j, 1.7, d0 - 1.2, 0, 0.8, 1.7, 0.05, 'standee', false));
       } else {
-        P.push({ ...propAt(j, 0.6, 14.8, 0, 0.95, 0.55, 0.95, 'beanbag'), tag: 0 });
-        P.push({ ...propAt(j + 1, 0.4, 16.6, 0, 0.95, 0.55, 0.95, 'beanbag'), tag: 1 });
+        P.push({ ...propAt(j, 0.6, d0 + 3.0, 0, 0.95, 0.55, 0.95, 'beanbag'), tag: 0 });
+        P.push({ ...propAt(j + 1, 0.4, d0 + 4.8, 0, 0.95, 0.55, 0.95, 'beanbag'), tag: 1 });
       }
+    }
+    // ---- red emergency doors in the stored-seat wall (box-door aisles on the long sides)
+    if (hasWallDoor(col)) {
+      P.push(propAt(j, 0.5, STORED_D - 0.05, 0, 1.9, 2.3, 0.08, 'door', false));
+      P.push(propAt(j, 0.5, STORED_D - 0.06, 2.42, 0.62, 0.22, 0.05, 'exit', false));
     }
     // ---- closed end: black drapes in front of the upper ring, box-ring ceiling → roof
     if (col.closed) {
@@ -687,9 +724,50 @@ function bowlProps(): Prop[] {
   return P;
 }
 
+// ------------------------------------------------------------------ access stairs
+
+export interface AccessStair {
+  /** aisle column the stair lands in */
+  j: number;
+  /** foot (first riser) and head (wall face) on the stair centre line, at floor level */
+  foot: { x: number; z: number };
+  head: { x: number; z: number };
+  /** yaw facing the floor (same convention as props) */
+  yaw: number;
+}
+
+/** mobile steel staircases from the floor up to the stored-wall walkway */
+export function accessStairs(): AccessStair[] {
+  return layout()
+    .columns.filter((c) => isStairColumn(c))
+    .map((c) => {
+      const f = columnPoint(c.index, 0.5, ACCESS_D0);
+      const h = columnPoint(c.index, 0.5, STORED_D);
+      return { j: c.index, foot: { x: f.x, z: f.z }, head: { x: h.x, z: h.z }, yaw: h.yawIn };
+    });
+}
+
+/** solid step blocks (invisible: the client draws the open steel stair) */
+function stairColliders(): Prop[] {
+  const P: Prop[] = [];
+  for (const s of accessStairs()) {
+    for (let k = 0; k < ACCESS_STEPS; k++) {
+      const d = ACCESS_D0 + (k + 0.5) * ACCESS_TREAD;
+      const p = columnPoint(s.j, 0.5, d);
+      const top = (k + 1) * ACCESS_RISE;
+      P.push({ x: p.x, y: top / 2, z: p.z, sx: ACCESS_W, sy: top, sz: ACCESS_TREAD + 0.02, yaw: s.yaw, mat: 'metal', collide: true, hidden: true });
+    }
+  }
+  return P;
+}
+
 // ------------------------------------------------------------------ seats
 
 const SEAT_PITCH = 0.5;
+/** stored-seat wall: shelf levels (shelf top y) */
+export const STORED_SHELVES = 10;
+export const STORED_SHELF_PITCH = 0.42;
+export const storedShelfY = (k: number) => 0.3 + k * STORED_SHELF_PITCH;
 
 /**
  * Seats along every row: consecutive seat columns form one run (narrow partition columns
@@ -699,7 +777,7 @@ function seats(): Seat[] {
   const out: Seat[] = [];
   const { columns } = layout();
   const n = columns.length;
-  const rowRuns = (has: (c: Column) => boolean, d: number, y: number, tier: 'A' | 'B' | 'C', row: number) => {
+  const rowRuns = (has: (c: Column) => boolean, d: number, y: number, tier: Seat['tier'], row: number) => {
     const start = columns.findIndex((c) => !has(c));
     if (start < 0) return;
     let run: number[] = [];
@@ -734,13 +812,19 @@ function seats(): Seat[] {
     }
     flush();
   };
-  for (let i = 0; i < A_ROWS; i++) {
-    const has = (c: Column) => !c.closed && (c.a === 'seat' || (c.a === 'tunnel' && i >= 4));
+  for (let i = A_FIXED_ROW0; i < A_ROWS; i++) {
+    const has = (c: Column) => !c.closed && (c.a === 'seat' || c.a === 'tunnel');
     rowRuns(has, A_D0 + (i + 1) * A_ROW_D - 0.34, aSeatTop(i), 'A', i);
   }
   for (let i = 0; i < C_ROWS; i++) {
     const has = (c: Column) => !c.closed && (c.c === 'seat' || (c.c === 'stair' && i >= 6));
     rowRuns(has, C_D0 + (i + 1) * C_ROW_D - 0.34, cSeatTop(i), 'C', i);
+  }
+  // stored-seat wall: folded seats on every shelf (openings at the tunnels + rooms)
+  for (let k = 0; k < STORED_SHELVES; k++) {
+    const y = storedShelfY(k);
+    rowRuns((c) => !c.closed && hasStoredShelves(c), STORED_D - 0.12, y, 'S', k);
+    rowRuns((c) => c.closed && hasStoredShelves(c), CLOSED_D - 0.12, y, 'S', k);
   }
   // glass boxes: two rows of red VIP seats each (separate runs: box partitions stop them)
   for (const [row, d] of [[0, 16.9], [1, 17.9]] as const) {
@@ -933,7 +1017,7 @@ export function buildArenaGeometry(): ArenaGeometry {
   return {
     groups,
     collision,
-    props: [...floorProps(), ...bowlProps()],
+    props: [...floorProps(), ...bowlProps(), ...stairColliders()],
     seats: seats(),
     stats: { columns: nc, bands: nb, triangles, collisionTriangles: collision.indices.length / 3 },
   };

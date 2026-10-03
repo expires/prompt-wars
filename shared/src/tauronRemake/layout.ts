@@ -183,16 +183,50 @@ function closedShortSide(): ColSpec[] {
 export const CLOSED_PARTS = new Set(['NW', 'W', 'SW']);
 /** folded-stand facade line on the closed end (event floor reaches this offset) */
 export const CLOSED_D = A_D0 + 24 * (A_ROW_D / 2); // 11.8 (an existing band boundary)
-/** balcony railing band on top of the facade */
-export const CLOSED_RAIL_D1 = A_D0 + 25 * (A_ROW_D / 2); // 12.225
 /**
- * service tunnels through the folded stands on the closed west side (one per vomitory pair):
- * a floor-level opening from the facade to the back of the box ring (white walls, dark ceiling,
- * fluorescent tubes), dressed as the mentors village / chill-out rooms
+ * stored (retracted) telescopic stands: a vertical wall of steel shelves with folded blue seats
+ * round the whole floor at offset STORED_D, STORED_H tall, with a walkway (cable railing on its
+ * floor-side edge) on top; the fixed raked rows of tier A rise from the back of that walkway.
+ * On the closed end the same wall stands at CLOSED_D with a narrow ledge, the folded upper
+ * stands rise behind it to the balcony at the cross-aisle level.
  */
-export const RECESS_H = 4.5;
+export const STORED_D = A_D0 + 4 * A_ROW_D; // 5.0 (an existing band boundary)
+export const STORED_H = A_WALK_Y + 6 * A_ROW_R; // 4.5 (= top of A row 5)
+/** walkway on top of the wall: rows 4 + 5 flattened */
+export const STORED_WALK_D1 = A_D0 + 6 * A_ROW_D; // 6.7
+/** railing band (collides) along the walkway edge */
+export const STORED_RAIL_D1 = STORED_D + 0.1;
+/** first tier A row with seats (behind the walkway) */
+export const A_FIXED_ROW0 = 6;
+/** closed end: ledge walkway on top of the stored wall, then the folded upper stands */
+export const CLOSED_LEDGE_D1 = CLOSED_D + 2 * (A_ROW_D / 2); // 12.65
+export const CLOSED_LEDGE_RAIL_D1 = CLOSED_D + 0.1;
+/** balcony railing band on top of the folded upper stands */
+export const CLOSED_RAIL_D1 = CLOSED_LEDGE_D1 + A_ROW_D / 2; // 13.075
+
+/** steel access staircases from the floor up to the stored-wall walkway (at these A aisles) */
+export const STAIR_SECTORS = new Set([1, 2, 4, 6, 8, 9, 18, 20, 21, 24]);
+export const ACCESS_STEPS = 18;
+export const ACCESS_RISE = STORED_H / ACCESS_STEPS; // 0.25
+export const ACCESS_TREAD = 0.3;
+export const ACCESS_W = 1.1;
+/** stair foot (d of the first riser) */
+export const ACCESS_D0 = STORED_D - ACCESS_STEPS * ACCESS_TREAD; // -0.4
+export const isStairColumn = (c: Pick<Column, 'a' | 'sector' | 'closed'>) => c.a === 'aisle' && !c.closed && STAIR_SECTORS.has(c.sector);
+
+/**
+ * floor-level rooms behind the stored-seat wall (aisle + vom column pair of one sector):
+ * the chill-out zone through the folded stands on the closed west end, the mentors village
+ * under the fixed seating in the diagonally opposite (south-east) corner. White walls, dark
+ * ceiling at RECESS_H, fluorescent tubes; open from the wall face back to the box-ring rear.
+ */
+export const RECESS_H = 3.6;
 export const RECESS_D1 = RING_B_END;
-export const isRecessColumn = (c: Pick<Column, 'part' | 'b'>) => c.part === 'W' && c.b === 'vom';
+export const CHILLOUT_SECTOR = 14;
+export const MENTORS_SECTOR = 23;
+export const isRecessColumn = (c: Pick<Column, 'b' | 'sector'>) => c.b === 'vom' && (c.sector === CHILLOUT_SECTOR || c.sector === MENTORS_SECTOR);
+/** offset of the wall face a recess opens in */
+export const recessD0 = (c: Pick<Column, 'closed'>) => (c.closed ? CLOSED_D : STORED_D);
 /** drapes hang just in front of the upper ring, from the box-ring ceiling up to the roof */
 export const DRAPE_D = CROSS_END - 0.12;
 export const DRAPE_Y0 = BOX_CEIL;
@@ -281,6 +315,7 @@ function buildLayout(): Layout {
   for (let i = 0; i <= 4; i++) b.push(FLOOR_STAIR_D0 + i * FLOOR_STAIR_TREAD);
   b.push(A_FRONT_D1);
   for (let i = 0; i <= A_ROWS * 2; i++) b.push(A_D0 + (i * A_ROW_D) / 2);
+  b.push(STORED_RAIL_D1, CLOSED_LEDGE_RAIL_D1);
   b.push(CROSS_END, BOX_GLASS_D1, BOX_REAR_D0, RING_B_END);
   for (let i = 0; i <= C_ROWS * 2; i++) b.push(C_D0 + (i * C_ROW_D) / 2);
   b.push(CONC_D1, OUTER_WALL_D1, TOP_WALK_D1, BACK_WALL_D1);

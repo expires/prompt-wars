@@ -1,32 +1,32 @@
 [
   {
     "view": "floor east → bowl",
-    "fps": 2.813731007320944,
+    "fps": 1.8953752843098615,
     "calls": 108,
-    "triangles": 405860
+    "triangles": 539222
   },
   {
     "view": "floor → jumbotron",
-    "fps": 1.858390633714637,
+    "fps": 1.5704997330209258,
     "calls": 103,
-    "triangles": 419216
+    "triangles": 542626
   },
   {
     "view": "desk rows west",
-    "fps": 2.7755504841589547,
+    "fps": 1.989851756055975,
     "calls": 78,
-    "triangles": 441396
+    "triangles": 549030
   },
   {
     "view": "closed-end lounge",
-    "fps": 3.318400530944085,
+    "fps": 2.4730285325621377,
     "calls": 72,
-    "triangles": 428776
+    "triangles": 544686
   },
   {
     "view": "concourse",
-    "fps": 3.1704765226273413,
-    "calls": 86,
-    "triangles": 367544
+    "fps": 2.407463135720734,
+    "calls": 88,
+    "triangles": 529046
   }
 ]

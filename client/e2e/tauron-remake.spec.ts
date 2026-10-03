@@ -13,6 +13,8 @@ import {
   C_TOP,
   C_WALK_Y,
   LEVEL_B,
+  STORED_D,
+  STORED_H,
   TUN_STAIR_D1,
   columnPoint,
   layout,
@@ -121,6 +123,7 @@ test('tauron-remake: walk floor → tier C via aisle, vomitory, concourse, C sta
 
   const legs: { name: string; x: number; z: number; expectY: number }[] = [
     { name: 'A aisle foot', ...xz(P(va.index, -1.6)), expectY: 0 },
+    { name: 'access stair → stored-wall walkway', ...xz(P(va.index, STORED_D + 0.8)), expectY: STORED_H },
     { name: 'A aisle row 7', ...xz(P(va.index, A_D0 + 7.5 * A_ROW_D)), expectY: 5.46 },
     { name: 'cross aisle', ...xz(P(va.index, 15.1)), expectY: LEVEL_B },
     { name: 'vomitory', ...xz(P(va.index, 17.8)), expectY: LEVEL_B },
@@ -199,16 +202,19 @@ test('tauron-remake: viewpoints + perf', async ({ page }) => {
     { name: '10-c-stair-from-concourse', feet: pt(cs.index, 25.5, LEVEL_B + 0.05, 0.5), look: pt(cs.index, 17.5, 12.5) },
     { name: '11-desk-rows-floor-level', feet: [-12.7, 0.05, -8], look: [-30, 1, -14] },
     { name: '12-balcony-closed-end', feet: pt(closedBox.index, 13.6, LEVEL_B + 0.05), look: [10, 4, 0] },
-    // HackYeah 2026 photo set 2: bowl from the red door, telescopic tiers, jumbotron, ceiling,
-    // closed-end lounge (INFO neon, red emergency doors), service tunnel / mentors village
+    // HackYeah 2026 photo set 2: bowl from the red door, stored-seat wall + access stair, jumbotron,
+    // ceiling, closed-end lounge (INFO neon, red emergency doors), chill-out zone, mentors village
     { name: '13-bowl-wide-from-red-door', feet: [-33, 0.05, -18.5], look: [12, 10, 4] },
-    { name: '14-under-telescopic-tiers', feet: [-4, 0.05, -20.6], look: [22, 3.2, -23.2] },
+    { name: '14-stored-seat-wall-and-stair', feet: [22.5, 0.05, 20.5], look: [24.4, 3, 28.5] },
     { name: '15-jumbotron-close', feet: [15, 0.05, 7], look: [0, 16.5, 0] },
     { name: '16-ceiling-truss-ducts', feet: [8, 0.05, -14], look: [-2, 30, -2] },
     { name: '17-closed-end-red-doors', feet: [-38, 0.05, -4], look: [-47.8, 2.2, -9.5] },
     { name: '18-info-lounge', feet: [-37.5, 0.05, 3.5], look: [-47.8, 3.0, 4.0] },
-    { name: '19-mentors-village-tunnel', feet: [-39.5, 0.05, 8.5], look: [-47.8, 3.5, 11.3] },
-    { name: '20-inside-mentors-room', feet: [-48.6, 0.05, 11.2], look: [-55.5, 1.6, 11.3] },
+    { name: '19-mentors-village-se-corner', feet: [31, 0.05, -20.5], look: [35.5, 2, -26.5] },
+    { name: '20-inside-mentors-room', feet: [35.5, 0.05, -26.4], look: [44, 1.5, -34] },
+    { name: '21-chillout-zone', feet: [-38, 0.05, -1.6], look: [-48, 3, -1.6] },
+    { name: '22-walkway-on-stored-wall', feet: [14, 4.6, 28.5], look: [-10, 3, 20] },
+    { name: '23-360-stored-wall-and-bowl', feet: [30, 0.05, 6], look: [-30, 6, 8] },
   ];
   for (const v of views) {
     await page.evaluate(

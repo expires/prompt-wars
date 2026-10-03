@@ -8,9 +8,15 @@ import {
   A_ROW_R,
   A_TOP,
   A_WALK_Y,
+  ACCESS_D0,
+  ACCESS_RISE,
+  ACCESS_STEPS,
+  ACCESS_TREAD,
+  ACCESS_W,
   BACK_WALL_D1,
   BOUNDS_TOP,
   CLOSED_D,
+  CLOSED_LEDGE_D1,
   CONC_CEIL,
   CONC_D1,
   CROSS_END,
@@ -23,11 +29,21 @@ import {
   RECESS_D1,
   RECESS_H,
   STAGE_FRAME,
+  STORED_D,
+  STORED_H,
+  STORED_SHELF_PITCH,
+  STORED_SHELVES,
+  STORED_WALK_D1,
   TABLE_DEPTH,
   TABLE_H,
   TAURON_REMAKE_SPAWNS,
   TUN_CEIL,
+  accessStairs,
   buildArenaGeometry,
+  hasStoredShelves,
+  isStairColumn,
+  recessD0,
+  storedShelfY,
   columnPoint,
   columnWidth,
   floorEdgeOffset,
@@ -49,10 +65,11 @@ import type { GameMap, Vec3 } from './types';
  * (see shared/src/tauronRemake/layout.ts for the bowl design). The look follows reference photos
  * taken at the venue (colours / materials / layout only — no photo pixels are used): radial roof
  * truss with rings of spotlights + silver ductwork, acoustic upper bowl wall with a projected
- * cracked pattern, magenta TAURON fascia, telescopic lower tier (steel shelves, folded blue seats,
- * purple under-lighting, steel stair units), fixed upper tier with red aisles, drapes + folded
- * stands closing the west end (service tunnels dressed as the mentors village / chill-out rooms,
- * INFO neon, lounge clutter), desk rows with chairs + laptops, central stage under the oval
+ * cracked pattern, magenta TAURON fascia, a 360° wall of stored telescopic stands round the floor
+ * (steel shelves, folded blue seats, purple under-lighting) with a railed walkway on top and mobile
+ * steel access stairs, fixed raked rows rising behind it, red aisles in the upper tier, drapes +
+ * folded stands on the west end (chill-out zone, INFO neon, lounge clutter), mentors village in the
+ * south-east corner, desk rows with chairs + laptops, central stage under the oval
  * centre-hung screen, green-epoxy concourse with lane lines, lifts, AC cassettes.
  * All textures are drawn on canvases at load time.
  *
@@ -597,7 +614,7 @@ function fillAtlas(): Atlas {
 // ------------------------------------------------------------------ bowl surface textures
 
 /** world-space floor rectangle covered by the floor texture */
-const FLOOR_UV = { x0: -48.5, x1: 38.5, z0: -35.5, z1: 35.5 };
+const FLOOR_UV = { x0: -48.5, x1: 41.5, z0: -35.5, z1: 35.5 };
 
 /** grey polished concrete, magenta wash, line markings, drain grates, tape lanes */
 function floorTexture() {
@@ -739,35 +756,32 @@ function riserTexture() {
 }
 
 /**
- * telescopic tier riser (one row rise per texture height): steel nosing at the top, then the
- * purple / pink under-light washing down the dark riser. Returns [colour, emissive].
+ * stored-seat wall face behind the shelves (one shelf pitch per texture height): shadow under the
+ * shelf above, purple under-light washing down the dark back. Returns [colour, emissive].
  */
 function shelfTextures(): [THREE.CanvasTexture, THREE.CanvasTexture] {
-  const W = 256, H = 128;
+  const W = 256, H = 64;
   const make = (emissive: boolean) => {
     const [c, g] = canvas(W, H);
     const gr = g.createLinearGradient(0, 0, 0, H);
-    gr.addColorStop(0, emissive ? '#000000' : '#c3c6ca');
-    gr.addColorStop(0.2, emissive ? '#000000' : '#b3b6ba');
-    gr.addColorStop(0.21, emissive ? '#b03cc0' : '#4a2a62');
-    gr.addColorStop(0.42, emissive ? '#3a1450' : '#2a1d3a');
-    gr.addColorStop(1, emissive ? '#000000' : '#18161e');
+    gr.addColorStop(0, emissive ? '#000000' : '#0e0a14');
+    gr.addColorStop(0.1, emissive ? '#c040d0' : '#5a2c78');
+    gr.addColorStop(0.45, emissive ? '#4a1a66' : '#2c1d3e');
+    gr.addColorStop(1, emissive ? '#0a0410' : '#16121c');
     g.fillStyle = gr;
     g.fillRect(0, 0, W, H);
     if (!emissive) {
-      g.fillStyle = 'rgba(0,0,0,0.35)';
-      g.fillRect(0, 25, W, 2);
-      g.fillStyle = 'rgba(255,255,255,0.35)';
-      g.fillRect(0, 0, W, 2);
-      g.fillStyle = 'rgba(40,40,46,0.6)';
-      for (let x = 0; x < W; x += 128) g.fillRect(x, 0, 3, H); // frame posts
+      g.fillStyle = 'rgba(150,154,162,0.75)';
+      for (let x = 0; x < W; x += 128) g.fillRect(x, 0, 4, H); // frame posts
     }
     return c;
   };
-  const off = -(A_WALK_Y / A_ROW_R - Math.floor(A_WALK_Y / A_ROW_R));
-  const col = tex(make(false), [1 / 2, 1 / A_ROW_R]);
-  const em = tex(make(true), [1 / 2, 1 / A_ROW_R]);
-  col.offset.y = em.offset.y = off;
+  const rep: [number, number] = [1 / 2, 1 / STORED_SHELF_PITCH];
+  const col = tex(make(false), rep);
+  const em = tex(make(true), rep);
+  // canvas top sits just under each shelf (shelf tops at storedShelfY(k))
+  const f = storedShelfY(0) / STORED_SHELF_PITCH;
+  col.offset.y = em.offset.y = -(f - Math.floor(f));
   return [col, em];
 }
 
@@ -867,14 +881,14 @@ function standsTexture() {
   g.fillRect(0, 0, W, H);
   // upper wall under the balcony slab
   g.fillStyle = '#1d1a24';
-  g.fillRect(0, Y(9.45), W, 2.2 * m);
+  g.fillRect(0, Y(9.45), W, 1.2 * m);
   g.fillStyle = '#ffe9c0';
-  for (let x = 0.8; x < 24; x += 2) g.fillRect(x * m, Y(7.55), 0.45 * m, 0.08 * m);
+  for (let x = 0.8; x < 24; x += 2) g.fillRect(x * m, Y(8.3), 0.45 * m, 0.08 * m);
   const block = (x0: number, w: number) => {
-    const top = 6.9;
+    const top = 8.1, bot = 4.6;
     g.fillStyle = '#120c1c';
-    g.fillRect(x0 * m, Y(top), w * m, top * m);
-    for (let y = 0.35; y < top; y += 0.42) {
+    g.fillRect(x0 * m, Y(top), w * m, (top - bot) * m);
+    for (let y = bot + 0.05; y < top - 0.4; y += 0.42) {
       // purple glow under each shelf
       const gr = g.createLinearGradient(0, Y(y + 0.36), 0, Y(y));
       gr.addColorStop(0, 'rgba(150,60,180,0.55)');
@@ -899,17 +913,13 @@ function standsTexture() {
     }
     // frame posts
     g.fillStyle = '#8f949b';
-    for (let x = x0; x <= x0 + w + 0.01; x += w / 5) g.fillRect(x * m - 3, Y(top), 6, top * m);
-    g.fillStyle = '#5c6067';
-    g.fillRect(x0 * m, Y(0.3), w * m, 0.3 * m);
+    for (let x = x0; x <= x0 + w + 0.01; x += w / 5) g.fillRect(x * m - 3, Y(top), 6, (top - bot) * m);
   };
   block(0.3, 10.8);
   block(13.0, 10.7);
   // dark purple wall panel between the blocks
   g.fillStyle = '#3a2c4a';
-  g.fillRect(11.25 * m, Y(6.9), 1.6 * m, 6.9 * m);
-  g.fillStyle = 'rgba(255,255,255,0.06)';
-  g.fillRect(11.25 * m, Y(6.9), 1.6 * m, 4);
+  g.fillRect(11.25 * m, Y(8.1), 1.6 * m, 3.5 * m);
   return tex(c, [1 / 24, 1 / 9.45]);
 }
 
@@ -1502,14 +1512,14 @@ function foldedSeatGeometry(): THREE.BufferGeometry {
 
 function seatMeshes(seats: Seat[]): THREE.InstancedMesh[] {
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.5, side: THREE.DoubleSide });
-  const folded = seats.filter((s) => s.tier === 'A');
-  const down = seats.filter((s) => s.tier !== 'A');
+  const folded = seats.filter((s) => s.tier === 'S');
+  const down = seats.filter((s) => s.tier !== 'S');
   const q = new THREE.Quaternion();
   const c = new THREE.Color();
   const r = rng(42);
   const BLUE = new THREE.Color(0x2d5f8f);
   const BLUE2 = new THREE.Color(0x3a6f9e);
-  const LIGHT = new THREE.Color(0x3f8ccc); // telescopic seats: brighter, newer blue
+  const LIGHT = new THREE.Color(0x3f8ccc); // lower ring + stored seats: brighter, newer blue
   const LIGHT2 = new THREE.Color(0x4f9ad6);
   const RED = new THREE.Color(0xc4452c);
   const RED2 = new THREE.Color(0xb3283a);
@@ -1520,7 +1530,7 @@ function seatMeshes(seats: Seat[]): THREE.InstancedMesh[] {
       _m.compose(_v.set(s.x, s.y, s.z), q, _one);
       mesh.setMatrixAt(i, _m);
       if (s.tier === 'B') c.copy(RED);
-      else if (s.tier === 'A') c.copy(r() < 0.5 ? LIGHT : LIGHT2);
+      else if (s.tier === 'A' || s.tier === 'S') c.copy(r() < 0.5 ? LIGHT : LIGHT2);
       // upper ring: blue with a red band in the top rows (as in the venue)
       else if (s.row >= 11 && r() < 0.75) c.copy(r() < 0.5 ? RED2 : RED);
       else c.copy(r() < 0.5 ? BLUE : BLUE2);
@@ -1645,8 +1655,30 @@ class NearInstances {
   }
 }
 
-/** desk clutter beyond this distance is not drawn */
-const NEAR_R = 32;
+/**
+ * desk clutter (bottles, cans, notebooks) scales down to nothing between these distances in the
+ * vertex shader (no pop), and is compacted out of the instance buffer beyond NEAR_R (> fade end
+ * + the 1.5 m update hysteresis, so the cut is never visible)
+ */
+const CLUTTER_FADE: [number, number] = [20, 28];
+const NEAR_R = 30;
+
+/** scale each instance about its origin from 1 (at r0) to 0 (at r1) by camera distance */
+function shrinkWithDistance(m: THREE.Material, r0: number, r1: number) {
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+#ifdef USE_INSTANCING
+{
+  vec3 io = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  transformed *= 1.0 - smoothstep(${r0.toFixed(1)}, ${r1.toFixed(1)}, distance(io, cameraPosition));
+}
+#endif`,
+    );
+  };
+  m.customProgramCacheKey = () => `shrink${r0}-${r1}`;
+}
 
 // ------------------------------------------------------------------ decor (visual only)
 
@@ -1971,32 +2003,20 @@ function buildDecor(root: THREE.Group, mats: Mats, props: Prop[], B: PropBuckets
       rails.push([v3(a.x, y - 1.0, a.z), v3(a.x, y, a.z), 0.045, 0.045]);
     }
   };
-  ringRail((c) => !c.closed && c.a === 'seat', 0.14, A_WALK_Y + 1.0, 2);
+  // walkway on top of the stored-seat wall (open at the stair heads), closed-end ledge + balcony
+  ringRail((c) => !c.closed && !isStairColumn(c), STORED_D + 0.05, STORED_H + 1.0, 4, true);
+  ringRail((c) => c.closed, CLOSED_D + 0.05, STORED_H + 1.0, 4, true);
   ringRail((c) => !c.closed, CROSS_END + 0.08, C_WALK_Y + 1.0, 4, true);
-  ringRail((c) => c.closed, CLOSED_D + 0.2, LEVEL_B + 1.0, 4, true);
+  ringRail((c) => c.closed, CLOSED_LEDGE_D1 + 0.2, LEVEL_B + 1.0, 4, true);
   for (const col of columns) {
     if (col.closed) continue;
     if (col.a === 'aisle') {
-      // mobile steel stair unit: stringers + side railings with posts, centre handrail
-      const slope = (d: number) => (d <= 0 ? Math.max(0, (d + 1.2) * (A_WALK_Y / 1.2)) : d < A_D0 ? A_WALK_Y : A_WALK_Y + ((d - A_D0) / A_ROW_D) * A_ROW_R + A_ROW_R * 0.5);
-      for (const f of [0.06, 0.94]) {
-        const pts = [-1.2, 0, A_D0, A_END - 0.2].map((d) => {
-          const p = columnPoint(col.index, f, d);
-          return v3(p.x, slope(d), p.z);
-        });
-        for (let i = 0; i < 3; i++) {
-          rails.push([pts[i]!.clone().setY(pts[i]!.y - 0.12), pts[i + 1]!.clone().setY(pts[i + 1]!.y - 0.12), 0.05, 0.22]);
-          rails.push([pts[i]!.clone().setY(pts[i]!.y + 0.95), pts[i + 1]!.clone().setY(pts[i + 1]!.y + 0.95), 0.045, 0.045]);
-        }
-        for (let d = -1.0; d < A_END - 0.3; d += 1.4) {
-          const p = columnPoint(col.index, f, d);
-          const y = slope(d);
-          rails.push([v3(p.x, y, p.z), v3(p.x, y + 0.95, p.z), 0.035, 0.035]);
-        }
-      }
-      // castor frame at the foot
-      const p0 = columnPoint(col.index, 0.06, -1.15), p1 = columnPoint(col.index, 0.94, -1.15);
-      rails.push([v3(p0.x, 0.1, p0.z), v3(p1.x, 0.1, p1.z), 0.08, 0.08]);
+      // centre handrail up the fixed rows
+      const d0 = STORED_WALK_D1 + 0.3, d1 = A_END - 0.3;
+      const p0 = columnPoint(col.index, 0.5, d0), p1 = columnPoint(col.index, 0.5, d1);
+      const y = (d: number) => A_WALK_Y + 0.95 + ((d - A_D0) / A_ROW_D) * A_ROW_R;
+      rails.push([v3(p0.x, y(d0), p0.z), v3(p1.x, y(d1), p1.z), 0.05, 0.05]);
+      rails.push([v3(p0.x, y(d0) - 0.95, p0.z), v3(p0.x, y(d0), p0.z), 0.04, 0.04]);
     }
     if (col.c === 'aisle') {
       const p0 = columnPoint(col.index, 0.5, C_D0 + 0.3), p1 = columnPoint(col.index, 0.5, C_END - 0.3);
@@ -2004,11 +2024,44 @@ function buildDecor(root: THREE.Group, mats: Mats, props: Prop[], B: PropBuckets
       rails.push([v3(p0.x, y0, p0.z), v3(p1.x, y1, p1.z), 0.05, 0.05]);
     }
   }
-  // steel portal frames round the service tunnels on the closed end
+  for (const st of accessStairs()) {
+    const ux = st.foot.x - st.head.x, uz = st.foot.z - st.head.z;
+    const run = Math.hypot(ux, uz);
+    const dx = ux / run, dz = uz / run; // toward the floor
+    const tx = -dz, tz = dx; // across the stair
+    const at = (d: number, side: number, y: number) => v3(st.head.x + dx * (STORED_D - d) + tx * side, y, st.head.z + dz * (STORED_D - d) + tz * side);
+    const hw = ACCESS_W / 2 + 0.03;
+    for (let k = 0; k < ACCESS_STEPS; k++) {
+      const d = ACCESS_D0 + (k + 0.5) * ACCESS_TREAD;
+      const c = at(d, 0, (k + 1) * ACCESS_RISE - 0.025);
+      B.cast.geo(place(new THREE.BoxGeometry(ACCESS_W, 0.05, ACCESS_TREAD - 0.03), { x: c.x, y: c.y, z: c.z, yaw: st.yaw }), 0xb9bdc3, 0.08);
+    }
+    // stair line: y at the nose of each tread
+    const yAt = (d: number) => Math.max(0, Math.min(STORED_H, ((d - ACCESS_D0) / ACCESS_TREAD) * ACCESS_RISE));
+    for (const side of [-hw, hw]) {
+      rails.push([at(ACCESS_D0, side, 0.05), at(STORED_D, side, STORED_H - 0.1), 0.05, 0.24]); // stringer
+      rails.push([at(ACCESS_D0 + 0.15, side, 1.0), at(STORED_D, side, STORED_H + 1.0), 0.045, 0.045]); // handrail
+      rails.push([at(ACCESS_D0 + 0.15, side, 0.55), at(STORED_D, side, STORED_H + 0.55), 0.03, 0.03]); // knee rail
+      for (let d = ACCESS_D0 + 0.15; d < STORED_D; d += 1.2) rails.push([at(d, side, yAt(d)), at(d, side, yAt(d) + 1.0), 0.04, 0.04]);
+      rails.push([at(STORED_D - 0.03, side, STORED_H), at(STORED_D - 0.03, side, STORED_H + 1.0), 0.045, 0.045]);
+      // legs under the upper half + diagonal brace, castor at every leg foot
+      for (const d of [STORED_D - 0.15, (ACCESS_D0 + STORED_D) / 2]) {
+        rails.push([at(d, side, 0.12), at(d, side, yAt(d) - 0.1), 0.06, 0.06]);
+        rails.push([at(d - 0.06, side, 0.06), at(d + 0.06, side, 0.06), 0.06, 0.12]);
+      }
+      rails.push([at(STORED_D - 0.15, side, 0.3), at((ACCESS_D0 + STORED_D) / 2, side, yAt((ACCESS_D0 + STORED_D) / 2) - 0.2), 0.035, 0.035]);
+      rails.push([at(ACCESS_D0 + 0.04, side, 0.06), at(ACCESS_D0 + 0.16, side, 0.06), 0.06, 0.12]);
+    }
+    rails.push([at(ACCESS_D0 + 0.05, -hw, 0.12), at(ACCESS_D0 + 0.05, hw, 0.12), 0.06, 0.06]); // foot frame
+    rails.push([at(STORED_D - 0.15, -hw, 0.3), at(STORED_D - 0.15, hw, 0.3), 0.05, 0.05]);
+  }
+
+  // steel portal frames round the rooms behind the stored-seat wall
   for (const col of columns) {
     if (!isRecessColumn(col) || col.a !== 'aisle') continue;
-    const L = columnPoint(col.index, -0.05, CLOSED_D - 0.12), R = columnPoint(col.index + 1, 1.05, CLOSED_D - 0.12);
-    const top = LEVEL_B - 1.9;
+    const d0 = recessD0(col);
+    const L = columnPoint(col.index, -0.05, d0 - 0.12), R = columnPoint(col.index + 1, 1.05, d0 - 0.12);
+    const top = STORED_H - 0.1;
     for (const p of [L, R]) rails.push([v3(p.x, 0, p.z), v3(p.x, top, p.z), 0.2, 0.2]);
     rails.push([v3(L.x, RECESS_H + 0.1, L.z), v3(R.x, RECESS_H + 0.1, R.z), 0.22, 0.22]);
     rails.push([v3(L.x, top, L.z), v3(R.x, top, R.z), 0.18, 0.18]);
@@ -2046,7 +2099,7 @@ function buildDecor(root: THREE.Group, mats: Mats, props: Prop[], B: PropBuckets
       }
     }
     if (isRecessColumn(col)) {
-      for (let d = CLOSED_D + 0.8; d < RECESS_D1 - 1; d += 2.2) {
+      for (let d = recessD0(col) + 0.8; d < RECESS_D1 - 1; d += 2.2) {
         const p = columnPoint(col.index, 0.5, d), q = columnPoint(col.index, 0.5, d + 1.3);
         tubes.push([v3(p.x, RECESS_H - 0.05, p.z), v3(q.x, RECESS_H - 0.05, q.z), 0.1, 0.05]);
       }
@@ -2058,6 +2111,20 @@ function buildDecor(root: THREE.Group, mats: Mats, props: Prop[], B: PropBuckets
   const serv = beams(services, 0.55, new THREE.MeshStandardMaterial({ color: 0x6a6e74, roughness: 0.6, metalness: 0.3, emissive: 0x2a2c30 }), 0.4);
   serv.name = 'ducts';
   root.add(serv);
+
+  // ---- stored-seat wall: light-grey steel shelf (front lip + top) per column per level
+  for (const col of columns) {
+    if (!hasStoredShelves(col)) continue;
+    const d0 = col.closed ? CLOSED_D : STORED_D;
+    const a0 = columnPoint(col.index, -0.01, d0 - 0.3), a1 = columnPoint(col.index, 1.01, d0 - 0.3);
+    const b0 = columnPoint(col.index, -0.01, d0), b1 = columnPoint(col.index, 1.01, d0);
+    const want: V3 = [-Math.sin(a0.yawIn), 0, -Math.cos(a0.yawIn)];
+    for (let k = 0; k < STORED_SHELVES; k++) {
+      const y = storedShelfY(k);
+      B.nocast.quad([a0.x, y, a0.z], [a1.x, y, a1.z], [b1.x, y, b1.z], [b0.x, y, b0.z], [0, 1, 0], 0xc9ccd1, 0.12);
+      B.nocast.quad([a0.x, y - 0.06, a0.z], [a1.x, y - 0.06, a1.z], [a1.x, y, a1.z], [a0.x, y, a0.z], want, 0xd4d7db, 0.2);
+    }
+  }
 
   // ---- sector labels "A01".."A24": panel over the vomitory mouth + over the concourse doors
   for (const col of columns) {
@@ -2074,7 +2141,7 @@ function buildDecor(root: THREE.Group, mats: Mats, props: Prop[], B: PropBuckets
     if (!col.closed) {
       const span = Math.min(2.2, columnWidth(col.index, CROSS_END) + (fEnd === 1 ? columnWidth(nx.index, CROSS_END) : 0));
       panel(CROSS_END - 0.03, span / 2, 12.26, 12.9);
-    } else panel(CLOSED_D - 0.03, 0.5, LEVEL_B - 0.6, LEVEL_B - 0.1, col.index - 1, 0.5);
+    } else panel(CLOSED_LEDGE_D1 - 0.03, 0.5, LEVEL_B - 0.6, LEVEL_B - 0.1, col.index - 1, 0.5);
     panel(19.52, 0.55, LEVEL_B + 2.27, LEVEL_B + 2.7);
   }
 
@@ -2125,7 +2192,8 @@ function buildDecor(root: THREE.Group, mats: Mats, props: Prop[], B: PropBuckets
     root.add(rm);
   }
 
-  // ---- desks: folding chairs, laptops, desk clutter at every table (instanced, distance-culled)
+  // ---- desks: folding chairs, laptops (always drawn, one call each), desk clutter at every
+  // table (shrinks to nothing between CLUTTER_FADE m, compacted out beyond)
   const tables = props.filter((p) => p.mat === 'table');
   const chairSpots: { x: number; z: number; yaw: number }[] = [];
   for (const t of tables) {
@@ -2162,7 +2230,9 @@ function buildDecor(root: THREE.Group, mats: Mats, props: Prop[], B: PropBuckets
     { p: [0.05, 0.018, -0.28], s: [0.26, 0.035, 0.05], c: 0xa82424 },
     { p: [-0.12, 0.008, 0.18], s: [0.21, 0.016, 0.28], c: 0xe8e2d6 },
   ]);
-  const clutter = new THREE.InstancedMesh(clutterGeo, chairs.material as THREE.Material, chairSpots.length);
+  const clutterMat = new THREE.MeshStandardMaterial({ roughness: 0.6, vertexColors: true });
+  shrinkWithDistance(clutterMat, CLUTTER_FADE[0], CLUTTER_FADE[1]);
+  const clutter = new THREE.InstancedMesh(clutterGeo, clutterMat, chairSpots.length);
   const q = new THREE.Quaternion();
   const one = v3(1, 1, 1);
   const r = rng(11);
@@ -2214,7 +2284,7 @@ function buildDecor(root: THREE.Group, mats: Mats, props: Prop[], B: PropBuckets
   stagePts.name = 'stage-spots';
   root.add(stagePts);
 
-  return [new NearInstances(chairs, NEAR_R), new NearInstances(laptops, NEAR_R * 0.8), new NearInstances(clutter, NEAR_R * 0.62)];
+  return [new NearInstances(clutter, NEAR_R)];
 }
 
 // ------------------------------------------------------------------ scene look
@@ -2324,7 +2394,7 @@ export function createTauronRemake(physics: PhysicsContext, scene: THREE.Scene):
   // ---- props + decor: three merged meshes on the shared atlas
   const white = mats.atlas.get('white');
   const B: PropBuckets = { cast: new Pieces(white), nocast: new Pieces(white), decal: new Pieces(white) };
-  for (const p of geo.props) addProp(B, mats.atlas, p);
+  for (const p of geo.props) if (!p.hidden) addProp(B, mats.atlas, p);
   root.add(...seatMeshes(geo.seats));
   buildRoof(root, mats, B);
   const ticker = buildScoreboard(root, mats);

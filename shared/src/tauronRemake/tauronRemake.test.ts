@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { MAPS, findMapDef, mapSource } from '../maps';
-import { buildArenaGeometry, type ArenaGeometry, type Prop } from './geometry';
+import { accessStairs, buildArenaGeometry, type ArenaGeometry, type Prop } from './geometry';
 import {
   A_D0,
   A_END,
@@ -17,11 +17,21 @@ import {
   C_END,
   C_TOP,
   C_WALK_Y,
-  FLOOR_STAIR_D0,
+  ACCESS_D0,
+  A_FIXED_ROW0,
+  A_ROW_D,
+  CLOSED_LEDGE_D1,
   LEVEL_B,
+  MENTORS_SECTOR,
+  CHILLOUT_SECTOR,
   RECESS_D1,
   RECESS_H,
+  STORED_D,
+  STORED_H,
+  aSeatTop,
   isRecessColumn,
+  isStairColumn,
+  recessD0,
   TUN_STAIR_D0,
   TUN_STAIR_D1,
   columnPoint,
@@ -296,12 +306,41 @@ describe('tauron-remake routes are climbable (autostep 0.4 m)', () => {
     return bad.slice(0, 5);
   };
 
-  it('A aisle: floor → cross aisle', () => {
-    const col = layout().columns.find((c) => c.a === 'aisle' && c.part === 'N')!;
-    const pr = profile(col.index, FLOOR_STAIR_D0 - 0.5, A_END + 1, (d) => (d < A_END ? 12 : 12));
+  it('A aisle: floor → access stair → stored-wall walkway → cross aisle', () => {
+    const col = layout().columns.find((c) => isStairColumn(c) && c.part === 'N')!;
+    const pr = profile(col.index, ACCESS_D0 - 1, A_END + 1, () => 12);
     expect(pr[0]!.y).toBeCloseTo(0, 3);
+    expect(pr.find((p) => p.d > STORED_D + 0.3)!.y).toBeCloseTo(STORED_H, 3);
     expect(pr[pr.length - 1]!.y).toBeCloseTo(LEVEL_B, 3);
     expect(maxRiser(pr)).toBeLessThanOrEqual(0.4);
+    expect(autostepBlocked(col.index, pr)).toEqual([]);
+  });
+
+  it('stored-seat wall runs 360° round the floor with a railed walkway on top', () => {
+    const stairs = accessStairs();
+    expect(stairs.length).toBeGreaterThanOrEqual(8);
+    expect(stairs.length).toBeLessThanOrEqual(12);
+    let railed = 0;
+    for (const c of layout().columns) {
+      const d0 = c.closed ? CLOSED_D : STORED_D;
+      const p = columnPoint(c.index, 0.5, d0 + 0.5);
+      const f = columnPoint(c.index, 0.5, d0 - 0.5);
+      // floor right up to the wall, walkway on top of it
+      if (!isRecessColumn(c)) expect(groundAt(f.x, f.z, 2)!.y, `floor col ${c.index}`).toBeCloseTo(0, 3);
+      expect(groundAt(p.x, p.z, STORED_H + 0.8)!.y, `walkway col ${c.index}`).toBeCloseTo(STORED_H, 3);
+      // the railing at the walkway edge blocks walking off (except at stair heads)
+      const edge = columnPoint(c.index, 0.5, d0 + 0.3), out = columnPoint(c.index, 0.5, d0 - 0.3);
+      const dir = [out.x - edge.x, 0, out.z - edge.z];
+      const len = Math.hypot(dir[0]!, dir[2]!);
+      const hit = solid.ray([edge.x, STORED_H + 0.6, edge.z], [dir[0]! / len, 0, dir[2]! / len], 0.6);
+      if (isStairColumn(c)) expect(hit, `stair head col ${c.index}`).toBeNull();
+      else {
+        expect(hit, `railing col ${c.index}`).not.toBeNull();
+        railed++;
+      }
+    }
+    expect(railed).toBeGreaterThan(200);
+    expect(geo.seats.filter((s) => s.tier === 'S').length).toBeGreaterThan(3000);
   });
 
   it('vomitory: cross aisle → concourse is flat and roofed', () => {
@@ -335,40 +374,48 @@ describe('tauron-remake routes are climbable (autostep 0.4 m)', () => {
 
   it('tier A rows sit where the layout says', () => {
     const col = layout().columns.find((c) => c.b === 'box' && c.part === 'E')!;
-    const p = columnPoint(col.index, 0.5, A_D0 + 0.4);
-    expect(groundAt(p.x, p.z, 5)!.y).toBeCloseTo(1.75, 3);
+    const p = columnPoint(col.index, 0.5, A_D0 + A_FIXED_ROW0 * A_ROW_D + 0.4);
+    expect(groundAt(p.x, p.z, 12)!.y).toBeCloseTo(aSeatTop(A_FIXED_ROW0), 3);
   });
 
   it('closed west end: floor reaches the folded-stand facade, balcony on top at the cross-aisle level', () => {
     const col = layout().columns.find((c) => c.closed && c.part === 'W' && c.b === 'box')!;
     const floor = columnPoint(col.index, 0.5, CLOSED_D - 0.5);
     expect(groundAt(floor.x, floor.z, 5)!.y).toBeCloseTo(0, 3);
-    const balcony = columnPoint(col.index, 0.5, CLOSED_D + 2.5);
+    const balcony = columnPoint(col.index, 0.5, CLOSED_LEDGE_D1 + 1.5);
     expect(groundAt(balcony.x, balcony.z, 20)!.y).toBeCloseTo(LEVEL_B, 3);
     // the balcony connects to the concourse through the vomitories
     const vom = layout().columns.find((c) => c.closed && c.part === 'W' && c.b === 'vom' && c.a === 'aisle')!;
-    const pr = profile(vom.index, CLOSED_D + 1, CONC_D1 - 1, () => 12);
+    const pr = profile(vom.index, CLOSED_LEDGE_D1 + 0.6, CONC_D1 - 1, () => 12);
     for (const p of pr) expect(p.y).toBeCloseTo(LEVEL_B, 3);
     expect(geo.props.filter((p) => p.mat === 'drape').length).toBeGreaterThan(20);
   });
 
-  it('closed west end: service tunnels through the folded stands are open, roofed and dressed', () => {
-    const tunnels = layout().columns.filter((c) => isRecessColumn(c) && c.a === 'aisle');
-    expect(tunnels.length).toBe(2);
-    for (const c of tunnels) {
-      for (const d of [CLOSED_D + 0.5, (CLOSED_D + RECESS_D1) / 2, RECESS_D1 - 0.5]) {
+  it('chill-out zone (west) + mentors village (diagonally opposite corner) are open, roofed and dressed', () => {
+    const rooms = layout().columns.filter((c) => isRecessColumn(c) && c.a === 'aisle');
+    expect(rooms.map((c) => c.sector).sort()).toEqual([CHILLOUT_SECTOR, MENTORS_SECTOR].sort());
+    const chill = rooms.find((c) => c.sector === CHILLOUT_SECTOR)!, mentors = rooms.find((c) => c.sector === MENTORS_SECTOR)!;
+    expect(chill.part).toBe('W');
+    // mentors village sits in the south-east corner (opposite the old north-west spot)
+    const mp = columnPoint(mentors.index, 1, STORED_D);
+    expect(mp.x).toBeGreaterThan(20);
+    expect(mp.z).toBeLessThan(-15);
+    for (const c of rooms) {
+      const d0 = recessD0(c);
+      for (const d of [d0 + 0.5, (d0 + RECESS_D1) / 2, RECESS_D1 - 0.5]) {
         const p = columnPoint(c.index, 1, d);
-        // floor level inside, 4.5 m ceiling, balcony / concourse level still on top
-        expect(groundAt(p.x, p.z, 2)!.y, `tunnel floor d=${d}`).toBeCloseTo(0, 3);
+        // floor level inside, RECESS_H ceiling, concourse level still on top
+        expect(groundAt(p.x, p.z, 2)!.y, `room floor d=${d}`).toBeCloseTo(0, 3);
         const up = solid.ray([p.x, 0.1, p.z], [0, 1, 0], 20)!;
-        expect(0.1 + up.t, `tunnel ceiling d=${d}`).toBeCloseTo(RECESS_H, 3);
-        expect(groundAt(p.x, p.z, LEVEL_B + 1.5)!.y).toBeCloseTo(LEVEL_B, 3);
+        expect(0.1 + up.t, `room ceiling d=${d}`).toBeCloseTo(RECESS_H, 3);
       }
-      // walkable in: a 0.8 m wide lane from the facade to the back wall is free of colliders
-      for (let d = CLOSED_D - 1; d < RECESS_D1 - 0.6; d += 0.25) {
+      const back = columnPoint(c.index, 1, RECESS_D1 - 0.5);
+      expect(groundAt(back.x, back.z, LEVEL_B + 1.5)!.y).toBeCloseTo(LEVEL_B, 3);
+      // walkable in: a 0.8 m wide lane from the wall face to the back wall is free of colliders
+      for (let d = d0 - 1; d < RECESS_D1 - 0.6; d += 0.25) {
         const lane = [0.85, 1.2, 1.55].map((f) => columnPoint(c.index, f, d));
         const free = lane.some((p) => !solid.ray([p.x, 0.6, p.z], [0, 1, 0], 1.5) && groundAt(p.x, p.z, 1)!.y < 0.01);
-        expect(free, `tunnel lane d=${d.toFixed(2)}`).toBe(true);
+        expect(free, `room lane sector ${c.sector} d=${d.toFixed(2)}`).toBe(true);
       }
     }
     const mats = new Set(geo.props.map((p) => p.mat));
