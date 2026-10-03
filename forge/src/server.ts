@@ -33,7 +33,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ForgeConfig
   return {
     apiKey: (env.ANTHROPIC_API_KEY ?? '').trim(),
     model: (env.FORGE_MODEL ?? '').trim() || 'claude-haiku-4-5-20251001',
-    rateLimit: Number(env.FORGE_RATE_LIMIT ?? 20),
+    rateLimit: Number(env.FORGE_RATE_LIMIT ?? 40),
     rateWindowMs: Number(env.FORGE_RATE_WINDOW_MS ?? 10 * 60_000),
     timeoutMs: Number(env.FORGE_TIMEOUT_MS ?? 45_000),
     maxBodyBytes: Number(env.FORGE_MAX_BODY ?? 240_000),
