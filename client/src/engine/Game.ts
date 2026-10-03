@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PRESET_WEAPONS, computeWeaponStats } from '@ai-gaem/shared';
+import { MAPS, PRESET_WEAPONS, computeWeaponStats, type MapDef } from '@ai-gaem/shared';
 import { createRenderer, type RenderContext } from './renderer';
 import { initPhysics, FIXED_DT, type PhysicsContext } from './physics';
 import { Input } from './input';
@@ -91,12 +91,25 @@ export class Game {
     this.hud = new Hud();
     if (opts.e2e) this.hud.showClickToPlay(false);
 
+    this.net = opts.net ?? new OfflineNetClient({ bots: opts.bots ?? 0, botCenter: [0, 0, 0] });
+    const online = this.net.authoritative;
+
     // ---- map ----
-    this.map = createTestMapOr(this, opts.mapUrl ? await this.tryLoadMap(opts.mapUrl) : null);
+    const url = opts.mapUrl;
+    const loaded = url ? await this.tryLoadMap(url) : null;
+    const mapFailed = Boolean(url) && loaded === null;
+    this.map = createTestMapOr(this, loaded);
     this.physics.world.step(); // build the query pipeline before the first raycast
     if (this.map.id !== 'testmap') {
-      const guessed = findGroundSpawns(this.map, this.physics);
-      if (guessed.length) this.map.spawns = guessed;
+      const def: MapDef | undefined = url ? Object.values(MAPS).find((m) => m.url === url) : undefined;
+      if (def && def.spawns.length > 0) {
+        this.map.spawns = def.spawns.map((s) => [s.x, s.y, s.z] as Vec3);
+      } else {
+        const guessed = findGroundSpawns(this.map, this.physics);
+        if (guessed.length) this.map.spawns = guessed;
+      }
+    } else if (mapFailed && online) {
+      this.hud.showWarning('Venue map failed to load — playing test map; spawns may be wrong');
     }
 
     // ---- spawn + player (networked: moved to the server's spawn once connected) ----
@@ -104,9 +117,6 @@ export class Game {
     this.player = new PlayerController(this.physics, this.input, new THREE.Vector3(...spawn.pos));
     this.player.yaw = spawn.yaw;
     this.lastSpawn.set(...spawn.pos);
-
-    this.net = opts.net ?? new OfflineNetClient({ bots: opts.bots ?? 0, botCenter: [0, 0, 0] });
-    const online = this.net.authoritative;
 
     // ---- dummies (offline only: the server doesn't know about them) ----
     if (!online) {

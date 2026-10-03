@@ -1,4 +1,9 @@
-import { SPACETIME_DB_NAME, SPACETIME_LOCAL_URI, SPACETIME_MAINCLOUD_URI } from '@ai-gaem/shared';
+import {
+  SPACETIME_DB_NAME,
+  SPACETIME_LOCAL_URI,
+  SPACETIME_MAINCLOUD_URI,
+  activeMap,
+} from '@ai-gaem/shared';
 import { Game } from './engine/Game';
 import { OfflineNetClient, SpacetimeNetClient, type NetClient } from './net';
 import { installTestHook } from './testHook';
@@ -43,8 +48,7 @@ const game = new Game();
 installTestHook(game);
 game
   .start(document.getElementById('app')!, {
-    // multiplayer always uses the procedural test map (server spawn points are test-map positions)
-    mapUrl: net.authoritative ? undefined : (params.get('map') ?? undefined),
+    mapUrl: params.get('map') ?? activeMap().url ?? undefined,
     bots: Number(params.get('bots') ?? 0) || 0,
     net,
     serverLabel: label,

@@ -35,6 +35,7 @@ export class Hud {
   private readonly deathMsg: HTMLElement;
   private readonly genStatus = el('div', 'gen-status');
   private readonly scoreboard = el('div', 'panel scoreboard');
+  private warningEl?: HTMLElement;
   private keepLabel = 'Keep loadout';
   private hitTimer = 0;
   private dmgTimer = 0;
@@ -171,6 +172,20 @@ export class Hud {
       this.scoreboard.textContent = text;
       this.scoreboard.classList.toggle('net-bad', !ok);
     }
+  }
+
+  /** persistent banner (e.g. the venue map failed to load and we play the test map) */
+  showWarning(text: string) {
+    const w = this.warningEl ?? el('div', 'hud-warning');
+    if (!this.warningEl) {
+      w.style.cssText =
+        'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:60;padding:6px 12px;' +
+        'background:#000c;color:#ffcf6b;border:1px solid #ffcf6b;border-radius:6px;' +
+        'font:13px/1.4 ui-monospace,monospace;pointer-events:none';
+      document.body.append(w);
+      this.warningEl = w;
+    }
+    w.textContent = text;
   }
 
   get deathVisible() {
