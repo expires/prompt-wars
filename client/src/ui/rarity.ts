@@ -77,42 +77,26 @@ function hash(s: string): number {
   return h >>> 0;
 }
 
-const FLAVOR_GENERIC = [
-  'Point the loud end at the problem.',
-  'Assembled from a dream and three spare parts.',
-  'Warranty void the moment you pull the trigger.',
-  'It looked better on the whiteboard. It works better in the field.',
-  'Built in a hurry. Feared at leisure.',
-  'The forge said no. We asked again.',
-  'Every scratch is a story. Every story ends badly for someone.',
-  'Ergonomics were discussed. Briefly.',
-];
+const FLAVOR_GENERIC = ['Loud end forward.', 'Some assembly required.', 'No warranty.', 'Built fast.'];
 const FLAVOR_BY_CLASS: Record<string, string[]> = {
-  melee: ['Reach out and touch someone.', 'No reload. No mercy. No refunds.', 'Swing first, ask questions never.'],
-  sniper: ['Patience, measured in heartbeats.', 'One breath. One click. One less problem.'],
-  shotgun: ['Conversation ender at close range.', 'Aim is a suggestion.'],
-  rocket_launcher: ['Subtlety was never on the spec sheet.', 'Area of effect: yes.'],
-  grenade_launcher: ['Lob it, lean back, enjoy the show.'],
-  flamethrower: ['Warm regards, delivered personally.', 'Fire safety is a state of mind.'],
-  bubble_gun: ['Bubbles: fun, bouncy, deeply inconvenient.', 'Pop goes the opposition.'],
-  blowgun: ['Quiet as a whisper. Rude as a shout.'],
-  crossbow: ['Old-school physics, new-school regret.'],
-  smg: ['Why hit once when you can hit forty times?'],
-  lmg: ['Suppression is a love language.'],
-  pistol: ['Small, honest, surprisingly persuasive.'],
-  rifle: ['Reliable as a sunrise. Louder, too.'],
+  melee: ['No reload.', 'Swing first.'],
+  sniper: ['One shot.', 'Patience pays.'],
+  shotgun: ['Close range.', 'Aim optional.'],
+  rocket_launcher: ['Not subtle.'],
+  grenade_launcher: ['Lob and wait.'],
+  flamethrower: ['Warm regards.'],
+  bubble_gun: ['Pop.'],
+  blowgun: ['Quiet.'],
+  crossbow: ['Old school.'],
+  smg: ['Why hit once?'],
+  lmg: ['Keep firing.'],
+  pistol: ['Small. Honest.'],
+  rifle: ['Reliable.'],
 };
 
 /** One-line flavor text, deterministic per weapon name (client-side; no extra forge call). */
 export function flavorFor(name: string, cls = ''): string {
   const h = hash(`${name}|${cls}`);
   const pool = [...(FLAVOR_BY_CLASS[cls] ?? []), ...FLAVOR_GENERIC];
-  const n = name.trim();
-  // sometimes riff on the name itself
-  if (n && h % 4 === 0) {
-    const last = n.split(/\s+/).pop()!;
-    const riffs = [`Ask for the ${last} by name.`, `They will remember the ${last}.`, `Nobody expects the ${last}.`];
-    return riffs[(h >>> 3) % riffs.length];
-  }
   return pool[h % pool.length];
 }

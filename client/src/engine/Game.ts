@@ -628,9 +628,9 @@ export class Game {
     } catch {
       /* storage unavailable */
     }
-    this.hud.toast('Looks like your touchpad stops while keys are held. <b>Trackpad mode</b>: T autorun, toggle crouch / sprint / aim, arrow / Q E turning.', {
+    this.hud.toast('Touchpad stops while keys held? Try <b>trackpad mode</b>.', {
       ms: 12000,
-      action: { label: 'Enable trackpad mode', onClick: () => {
+      action: { label: 'Enable', onClick: () => {
         settings.setTrackpadMode(true);
         this.flow.settingsPanel.sync();
       } },
@@ -872,7 +872,7 @@ export class Game {
     rows.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
     const connected = (this.net as NetClient & { connected?: boolean }).connected !== false;
     const n = rows.length;
-    this.hud.setScoreboardRows(rows, online ? `${connected ? '●' : '○'} ${this.serverLabel} · ${n} player${n === 1 ? '' : 's'}` : 'Offline practice');
+    this.hud.setScoreboardRows(rows, online ? `${connected ? '●' : '○'} ${this.serverLabel} · ${n} player${n === 1 ? '' : 's'}` : 'Offline');
   }
 }
 

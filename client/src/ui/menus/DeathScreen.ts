@@ -26,7 +26,7 @@ export interface DeathHandlers {
   onRemix(weapon: Weapon): void;
 }
 
-const CHIPS = ['a cactus shotgun', 'laser sword made of noodles', 'retro ray gun', 'bubble launcher', 'toaster cannon'];
+const CHIPS = ['cactus shotgun', 'noodle sword', 'retro ray gun', 'bubble launcher', 'toaster cannon'];
 const RING_C = 2 * Math.PI * 28;
 
 export class DeathScreen {
@@ -62,13 +62,13 @@ export class DeathScreen {
       <section class="death-left" data-k="left">
         <span class="ui-micro" data-k="leftLabel">Their weapon</span>
         <div class="death-cardwrap" data-k="card" data-testid="killer-card"></div>
-        <button class="ui-btn ui-btn--forge ui-btn--sm death-remix" data-k="remix" data-testid="remix-killer"><span class="spark">${icon('spark', 'ui-icon ui-icon--sm')}</span><span>Remix this</span></button>
+        <button class="ui-btn ui-btn--forge ui-btn--sm death-remix" data-k="remix" data-testid="remix-killer"><span class="spark">${icon('spark', 'ui-icon ui-icon--sm')}</span><span>Remix</span></button>
       </section>
       <section class="death-right">
-        <h2 class="ui-title">Your next life</h2>
+        <h2 class="ui-title">Respawn</h2>
         <button class="ui-btn ui-btn--primary death-keep" data-k="keep" data-testid="keep-loadout"><span data-k="keepLabel">Keep loadout</span><span class="wname" data-k="keepName"></span></button>
-        <div class="death-or">or forge something new</div>
-        <input class="ui-input death-prompt" data-k="input" data-testid="weapon-prompt" maxlength="200" placeholder="Describe a weapon… “banana-powered sniper”" autocomplete="off">
+        <div class="death-or">or forge a new one</div>
+        <input class="ui-input death-prompt" data-k="input" data-testid="weapon-prompt" maxlength="200" placeholder="Describe a weapon" autocomplete="off">
         <div class="death-chips" data-k="chips">${CHIPS.map((c) => `<button class="ui-chip" data-chip="${esc(c)}"><span>${esc(c)}</span></button>`).join('')}</div>
         <div class="death-actions">
           <button class="ui-btn ui-btn--forge" data-k="quick" data-testid="generate-weapon"><span class="spark">${icon('spark', 'ui-icon ui-icon--sm')}</span><span data-k="quickLabel">Quick forge</span></button>
@@ -133,7 +133,7 @@ export class DeathScreen {
     if (i.killerWeapon && !i.redeploy) bits.push(`<span>${esc(i.killerWeapon.name)}</span>`);
     if (i.damage) bits.push(`<span>${Math.round(i.damage)} dmg</span>`);
     if (i.distance) bits.push(`<span>${Math.round(i.distance)} m</span>`);
-    if (i.redeploy) bits.push('<span>Pick your next weapon — keep it, quick forge or open the forge</span>');
+    if (i.redeploy) bits.push('<span>Pick a weapon</span>');
     $.detail.innerHTML = bits.join('<span>·</span>');
     const kw = i.redeploy ? null : i.killerWeapon;
     $.left.hidden = false;

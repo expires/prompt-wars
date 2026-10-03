@@ -47,5 +47,5 @@ export function weaponCardHtml(d: WeaponCardData, opts: { compact?: boolean; tes
 
 /** Mount / update a card inside `host`. */
 export function renderWeaponCard(host: HTMLElement, d: WeaponCardData | null, opts: { compact?: boolean; testid?: string } = {}) {
-  host.innerHTML = d ? weaponCardHtml(d, opts) : `<article class="wcard wcard--empty tier-1"><div class="wcard-body"><h3 class="wcard-name">No weapon yet</h3><p class="wcard-flavor">Forge one — or quick pick a classic.</p></div></article>`;
+  host.innerHTML = d ? weaponCardHtml(d, opts) : `<article class="wcard wcard--empty tier-1"><div class="wcard-body"><h3 class="wcard-name">No weapon yet</h3><p class="wcard-flavor">Forge one or pick a preset.</p></div></article>`;
 }

@@ -1,4 +1,6 @@
-# ai-gaem
+# Prompt Wars
+
+Multiplayer arena shooter. Prompt a weapon, then use it.
 
 ## Server
 
