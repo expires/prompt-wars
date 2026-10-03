@@ -3,6 +3,7 @@ import {
   SPACETIME_LOCAL_URI,
   SPACETIME_MAINCLOUD_URI,
   activeMap,
+  mapSource,
 } from '@ai-gaem/shared';
 import './ui/tokens.css';
 import { Game } from './engine/Game';
@@ -56,7 +57,7 @@ const game = new Game();
 installTestHook(game);
 game
   .start(document.getElementById('app')!, {
-    mapUrl: resolveMapUrl(params.get('map') ?? activeMap().url ?? undefined),
+    mapUrl: resolveMapUrl(params.get('map') ?? mapSource(activeMap())),
     bots: Number(params.get('bots') ?? 0) || 0,
     net,
     serverLabel: label,

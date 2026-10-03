@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLOCK_MOVE_MULT, MAPS, PRESET_WEAPONS, computeWeaponStats, meleeMetaOf, type MapDef } from '@ai-gaem/shared';
+import { BLOCK_MOVE_MULT, PRESET_WEAPONS, findMapDef, computeWeaponStats, meleeMetaOf, type MapDef } from '@ai-gaem/shared';
 import { createRenderer, type RenderContext } from './renderer';
 import { initPhysics, FIXED_DT, type PhysicsContext } from './physics';
 import { Input } from './input';
@@ -142,7 +142,7 @@ export class Game {
     this.map = createTestMapOr(this, loaded);
     this.physics.world.step(); // build the query pipeline before the first raycast
     if (this.map.id !== 'testmap') {
-      const def: MapDef | undefined = url ? Object.values(MAPS).find((m) => m.url === url) : undefined;
+      const def: MapDef | undefined = findMapDef(url);
       if (def && def.spawns.length > 0) {
         this.map.spawns = def.spawns.map((s) => [s.x, s.y, s.z] as Vec3);
       } else {
@@ -471,7 +471,7 @@ export class Game {
 
   /** Box the invisible wall net wraps for a scanned map: venue MapDef → scan bbox (T-004) → drawn geometry. */
   private boundsBox(url?: string): BoundsBox | null {
-    const def: MapDef | undefined = url ? Object.values(MAPS).find((m) => m.url === url) : undefined;
+    const def: MapDef | undefined = findMapDef(url);
     const meta = (this.map as GameMap & { meta?: { bbox?: unknown } }).meta;
     const box = toBoundsBox(def?.bounds) ?? toBoundsBox(meta?.bbox) ?? this.visualBox();
     return box ? expandBox(box, BOUNDS_MARGIN) : null;

@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./forge": "./src/forge/index.ts",
     "./forge/build": "./src/forge/build.ts",
-    "./forge/examples": "./src/forge/examples.ts"
+    "./forge/examples": "./src/forge/examples.ts",
+    "./tauron-remake": "./src/tauronRemake/index.ts"
   },
   "scripts": {
     "test": "vitest run",

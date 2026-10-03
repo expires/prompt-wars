@@ -1,7 +1,8 @@
 import { TEST_MAP_SPAWN_POINTS } from './net';
 import { TAURON_ARENA_SPAWNS } from './tauron-arena.spawns';
+import { TAURON_REMAKE_SPAWNS } from './tauronRemake/spawns';
 
-export { TAURON_ARENA_SPAWNS };
+export { TAURON_ARENA_SPAWNS, TAURON_REMAKE_SPAWNS };
 
 export interface MapSpawn {
   x: number;
@@ -13,6 +14,8 @@ export interface MapSpawn {
 export interface MapDef {
   id: string;
   url: string | null;
+  /** built in code by the client (`url` is null): `?map=<id>` selects it */
+  procedural?: boolean;
   collisionUrl?: string;
   spawns: readonly MapSpawn[];
   bounds?: { min: [number, number, number]; max: [number, number, number] };
@@ -38,6 +41,16 @@ export const MAPS: Record<string, MapDef> = {
     url: '/maps/tauron-solid.glb',
     spawns: TAURON_ARENA_SPAWNS,
     bounds: { min: [-77.71, 0, -73.31], max: [77.71, 37.94, 73.31] },
+  },
+  // Original procedural remake of TAURON Arena Kraków (no scan data): bowl, boxes, concourse,
+  // tunnels. Built by client/src/map/tauronRemake.ts from shared/src/tauronRemake. `?map=tauron-remake`
+  'tauron-remake': {
+    id: 'tauron-remake',
+    url: null,
+    procedural: true,
+    spawns: TAURON_REMAKE_SPAWNS,
+    bounds: { min: [-68.6, 0, -55.6], max: [68.6, 30, 55.6] },
+    killY: -20,
   },
 };
 
@@ -67,6 +80,17 @@ export function spawnSetsEqual(a: readonly MapSpawn[], b: readonly MapSpawn[], e
     if (!matched) return false;
   }
   return true;
+}
+
+/** what the client loads for a map: its GLB url, or its id for a procedural map */
+export function mapSource(def: MapDef): string | undefined {
+  return def.url ?? (def.procedural ? def.id : undefined);
+}
+
+/** registry entry for a `?map=` value / loaded url: matches a GLB url or a procedural map id */
+export function findMapDef(source: string | undefined): MapDef | undefined {
+  if (!source) return undefined;
+  return Object.values(MAPS).find((m) => m.url === source || (m.procedural === true && m.id === source));
 }
 
 export function effectiveSpawns(def: MapDef): readonly MapSpawn[] {

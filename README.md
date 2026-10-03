@@ -355,6 +355,31 @@ are assembled with its `assembleWeapon()`; parts from the built-in kit use the l
 builder; weapons with no known parts (presets, old rows) use a library recipe for their class.
 Melee weapons (blade toward -Z, handle toward +Z) are tilted blade-up in the viewmodel.
 
+## Procedural arena: `tauron-remake`
+
+`?map=tauron-remake` (also `?offline=1&map=tauron-remake`) loads an **original, procedural model of
+TAURON Arena Kraków**, built in code with no scan data, photos or downloaded textures (all textures
+are drawn on canvases at load time; the map ships as a ~25 kB JS chunk):
+
+- oval bowl around a 72 × 46 m event floor (volleyball court, stage, FOH tower, road cases as cover),
+  lower ring A (15 rows, 33°), cross aisle + glass-fronted boxes (B), upper ring C (15 rows, 35°),
+  ~13,000 instanced seats, vomitories from the cross aisle into a full concourse ring (kiosks, pillars),
+  C stairs from the concourse, four floor-level player tunnels with stairwells up to the concourse,
+  centre-hung scoreboard, lighting truss, catwalk and roof dome; closed shell + invisible bounds.
+- Layout/heights: `shared/src/tauronRemake/layout.ts` (design notes + sources), mesher:
+  `geometry.ts` (watertight column/band interval mesher shared by visuals, colliders and tests),
+  spawns: `spawns.ts` (24: floor 8, tier A 6, tier C 4, concourse 6), three.js build:
+  `client/src/map/tauronRemake.ts`.
+- Tests: `pnpm --filter @ai-gaem/shared test` (spawn validity by raycast, closed shell, climbable
+  routes incl. autostep headroom), `pnpm --filter client exec playwright test tauron-remake`
+  (walkthrough floor → A aisle → vomitory → concourse → C stair → tier C top, and floor → tunnel →
+  concourse; viewpoint screenshots in `client/e2e/screenshots/tauron-remake/`), real-GPU fps:
+  `node client/e2e/tauron-remake-gpu-perf.mjs` against a running Vite on :5181.
+- Sources (facts only): tauronarenakrakow.pl (arena plan: floor 3,900 m², levels 0/A/B/C, ~15,000
+  seated / up to ~22,000; fact sheet seat counts), Wikipedia "Tauron Arena Kraków", and
+  OpenStreetMap way 292867512 (`height=27`) — © OpenStreetMap contributors, ODbL
+  (https://www.openstreetmap.org/copyright). No OSM footprint geometry is used.
+
 ## Venue map
 
 The multiplayer map is a GLB derived from a scan of the real venue. This is the whole path from a

@@ -86,9 +86,15 @@ function countVisualTriangles(root: THREE.Object3D): number {
   return Math.round(tris);
 }
 
+/** Maps built in code (MapDef.procedural): id -> lazy builder chunk */
+const PROCEDURAL: Record<string, () => Promise<(physics: PhysicsContext, scene: THREE.Scene) => GameMap>> = {
+  'tauron-remake': () => import('./tauronRemake').then((m) => m.createTauronRemake),
+};
+
 /**
  * Load a GLB map. Visuals come from `url`; colliders are built from
  * `<name>_collision.glb` if present, otherwise from the visual meshes.
+ * A procedural map id (e.g. `tauron-remake`) is built in code instead.
  */
 export async function loadMap(
   url: string,
@@ -96,6 +102,8 @@ export async function loadMap(
   scene: THREE.Scene,
   opts: { spawns?: Vec3[]; collisionUrl?: string; shell?: boolean } = {},
 ): Promise<GameMap> {
+  const procedural = PROCEDURAL[url];
+  if (procedural) return (await procedural())(physics, scene);
   const visual = await tryLoad(url);
   if (!visual) throw new Error(`Map not found: ${url}`);
 
