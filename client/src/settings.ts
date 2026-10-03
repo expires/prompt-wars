@@ -113,7 +113,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fov: 75,
   keyTurnSpeed: 150,
   crouchToggle: false,
-  adsToggle: false,
+  adsToggle: true,
   sprintToggle: false,
   trackpadMode: false,
   gamepadSensitivity: 1,
@@ -144,6 +144,7 @@ export const DEFAULT_SETTINGS: Settings = {
 export const BASE_MOUSE_SENS = 0.0022;
 
 const KEY = 'ai-gaem.settings';
+const ADS_TOGGLE_MIGRATION = 'ai-gaem.settings.adsToggleDefault';
 type Listener = (s: Settings) => void;
 
 function load(): Settings {
@@ -160,6 +161,11 @@ function load(): Settings {
       if (k === 'crosshairColor' && !/^#[0-9a-f]{6}$/i.test(v as string)) continue;
       const range = SETTING_RANGES[k];
       (out as Record<string, unknown>)[k] = range ? Math.min(range[1], Math.max(range[0], v as number)) : v;
+    }
+    // one-time migration: ADS became a toggle by default
+    if (!localStorage.getItem(ADS_TOGGLE_MIGRATION)) {
+      out.adsToggle = true;
+      localStorage.setItem(ADS_TOGGLE_MIGRATION, '1');
     }
     return out;
   } catch {
