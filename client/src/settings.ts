@@ -16,6 +16,19 @@ export interface Settings {
   crouchToggle: boolean;
   /** true: tap right mouse to toggle ADS; false: hold */
   adsToggle: boolean;
+  /** true: tap Shift to toggle sprint (cancelled when you stop moving forward); false: hold */
+  sprintToggle: boolean;
+  /**
+   * Trackpad mode (laptops / ThinkPads whose touchpad is disabled while keys are held): autorun
+   * hints, toggle crouch / sprint / aim, slightly higher sensitivity, arrow / Q E turning.
+   */
+  trackpadMode: boolean;
+  /** gamepad right-stick look speed multiplier (1 = 200 deg/s at full deflection) */
+  gamepadSensitivity: number;
+  /** gamepad stick deadzone (0..0.5) */
+  gamepadDeadzone: number;
+  /** gamepad: slow the look down while the crosshair is over an enemy */
+  gamepadAimSlowdown: boolean;
   /** camera head bob + landing dip */
   headBob: boolean;
   /** master volume 0..1 */
@@ -30,6 +43,11 @@ export const DEFAULT_SETTINGS: Settings = {
   keyTurnSpeed: 150,
   crouchToggle: false,
   adsToggle: false,
+  sprintToggle: false,
+  trackpadMode: false,
+  gamepadSensitivity: 1,
+  gamepadDeadzone: 0.15,
+  gamepadAimSlowdown: true,
   headBob: true,
   volume: 0.6,
 };
@@ -71,6 +89,27 @@ class SettingsStore {
     }
     this.listeners.forEach((l) => l(this.current));
   }
+
+  /**
+   * Turn trackpad mode on / off. On: toggle crouch / sprint / aim and +25% sensitivity (the
+   * previous values are restored when it is turned off again).
+   */
+  setTrackpadMode(on: boolean) {
+    if (on === this.current.trackpadMode) return;
+    if (on) {
+      this.saved = { crouchToggle: this.current.crouchToggle, sprintToggle: this.current.sprintToggle, adsToggle: this.current.adsToggle, sensitivity: this.current.sensitivity };
+      this.set('crouchToggle', true);
+      this.set('sprintToggle', true);
+      this.set('adsToggle', true);
+      this.set('sensitivity', Math.min(4, +(this.current.sensitivity * 1.25).toFixed(2)));
+    } else if (this.saved) {
+      for (const [k, v] of Object.entries(this.saved)) this.set(k as keyof Settings, v as never);
+      this.saved = undefined;
+    }
+    this.set('trackpadMode', on);
+  }
+
+  private saved?: Partial<Settings>;
 
   reset() {
     for (const k of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) this.set(k, DEFAULT_SETTINGS[k]);

@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { PhysicsContext } from '../engine/physics';
 import type { Input } from '../engine/input';
-import { HIT_ZONE_BODY, HIT_ZONE_HEAD, directHitDamage, zoneDamage } from '@ai-gaem/shared';
+import { HIT_ZONE_BODY, HIT_ZONE_HEAD, directHitDamage, zoneDamage, type MeleeMeta } from '@ai-gaem/shared';
+import { MeleeSystem, type MeleeIntent, type MeleeView } from './MeleeSystem';
 import { Effects } from './effects';
 import { Viewmodel } from './Viewmodel';
 import type { HitInfo, HitTarget, TargetRegistry } from './targets';
@@ -38,8 +39,14 @@ export interface WeaponEvents {
   onExplosion?(pos: THREE.Vector3, remote: boolean): void;
   onAmmoChanged?(ammo: number, mag: number, reloading: boolean): void;
   onFire?(weapon: Weapon): void;
-  /** a shot left the gun: returns the network shot sequence number */
-  onShot?(origin: THREE.Vector3, dir: THREE.Vector3): number;
+  /** a shot left the gun: returns the network shot sequence number (melee: charge + combo) */
+  onShot?(origin: THREE.Vector3, dir: THREE.Vector3, melee?: { charge: number; combo: number }): number;
+  /** melee swing started (sound, camera shake) */
+  onMeleeSwing?(meta: MeleeMeta, charge: number, combo: number): void;
+  /** first contact of a melee swing with a target (hit-stop camera punch, impact sound, lunge) */
+  onMeleeContact?(meta: MeleeMeta, charge: number, dir: THREE.Vector3, point: THREE.Vector3, head: boolean): void;
+  /** melee swing hit the world */
+  onMeleeWorld?(meta: MeleeMeta, point: THREE.Vector3): void;
   /** the shot's immediate hits (hitscan / stream / melee) have all been reported */
   onShotEnd?(): void;
   /** a reload started */
@@ -71,6 +78,7 @@ export class WeaponSystem {
   perfectAim = false;
   /** movement state for the spread model (set by the game) */
   moveState: MoveState = { speed: 0, grounded: true, crouched: false, ads: 0 };
+  readonly melee: MeleeSystem;
 
   constructor(
     private readonly physics: PhysicsContext,
@@ -84,6 +92,53 @@ export class WeaponSystem {
   ) {
     this.effects = new Effects(scene);
     this.viewmodel = new Viewmodel(viewScene, viewCamera);
+    const ballCache = new Map<number, RAPIER.Ball>();
+    this.melee = new MeleeSystem(
+      {
+        camera,
+        targets,
+        castBall: (origin, dir, len, radius) => {
+          const { RAPIER: R, world } = this.physics;
+          let ball = ballCache.get(radius);
+          if (!ball) ballCache.set(radius, (ball = new R.Ball(radius)));
+          const hit = world.castShape(origin, { x: 0, y: 0, z: 0, w: 1 }, dir, ball, 0, len, true, R.QueryFilterFlags.EXCLUDE_SENSORS, undefined, this.ownCollider);
+          if (!hit) return null;
+          // centre of the ball at contact, pushed onto the surface
+          const d = Math.min(len + radius, hit.time_of_impact + radius);
+          return { collider: hit.collider, point: origin.clone().addScaledVector(dir, d), distance: d };
+        },
+      },
+      {
+        onSwingStart: (meta, charge, combo) => {
+          this.events.onFire?.(this.weapon);
+          this.events.onMeleeSwing?.(meta, charge, combo);
+        },
+        onStrike: (o, d, charge, combo) => (this.curSeq = this.events.onShot?.(o, d, { charge, combo }) ?? 0),
+        onContact: (t, zone, point, damage, info) => {
+          if (!t.alive()) return;
+          const killed = t.applyDamage(damage, this.weaponId, { seq: info.seq, pellets: 1, point: [point.x, point.y, point.z], zone, charge: info.charge });
+          this.events.onHit?.(t, damage, killed, zone);
+          this.effects.meleeImpact(point, zone === HIT_ZONE_HEAD ? 0xffd040 : 0xffffff, this.melee.meta.weight);
+          this.lastContact = { point, head: zone === HIT_ZONE_HEAD };
+        },
+        onFirstContact: (meta, charge, dir) => {
+          const c = this.lastContact;
+          this.events.onMeleeContact?.(meta, charge, dir, c?.point ?? new THREE.Vector3(), !!c?.head);
+        },
+        onWorldHit: (point) => {
+          this.effects.impact(point, undefined, 0xfff0c0);
+          this.events.onMeleeWorld?.(this.melee.meta, point);
+        },
+        onStrikeEnd: () => this.events.onShotEnd?.(),
+      },
+    );
+  }
+
+  private lastContact?: { point: THREE.Vector3; head: boolean };
+
+  /** melee state for the viewmodel */
+  meleeView(): MeleeView | undefined {
+    return this.fireMode === 'melee' ? this.melee.view() : undefined;
   }
 
   get weaponId() {
@@ -105,6 +160,8 @@ export class WeaponSystem {
     this.viewmodel.reloadProgress = -1;
     this.cooldown = 0.2;
     this.viewmodel.setWeapon(w);
+    if (this.fireMode === 'melee') this.melee.setWeapon(w);
+    else this.melee.cancel();
     this.emitAmmo();
   }
 
@@ -133,6 +190,7 @@ export class WeaponSystem {
    * check that the *server* enforces fire rate). Still consumes ammo; returns false when empty.
    */
   fireOnce(): boolean {
+    if (this.fireMode === 'melee') return this.melee.startSwing(0, true);
     if (this.reloading) return false;
     if (!this.infiniteAmmo && this.ammo <= 0) {
       this.startReload();
@@ -151,7 +209,21 @@ export class WeaponSystem {
     return effectiveSpread(this.weapon, this.handling, this.moveState, this.bloom, WALK_SPEED);
   }
 
-  update(dt: number, input: Input, canFire: boolean) {
+  /**
+   * `actions` (merged keyboard / mouse / gamepad) defaults to the mouse + R key.
+   * Melee weapons: fire = light attack, heavy = charge (hold), block.
+   */
+  update(dt: number, input: Input, canFire: boolean, actions?: { fire: boolean; reload: boolean; heavy?: boolean; block?: boolean; blockForced?: boolean }) {
+    const act = actions ?? { fire: input.mouseDown, reload: input.wasPressed('KeyR') };
+    if (this.fireMode === 'melee') {
+      const intent: MeleeIntent = canFire
+        ? { attack: act.fire, heavy: !!act.heavy, block: !!act.block }
+        : { attack: false, heavy: false, block: !!act.blockForced && !!act.block };
+      this.melee.update(dt, intent);
+      this.updateProjectiles(dt);
+      this.effects.update(dt);
+      return;
+    }
     const w = this.weapon;
     this.cooldown -= dt;
     this.bloom = Math.max(0, this.bloom - this.handling.bloomRecovery * dt);
@@ -167,9 +239,9 @@ export class WeaponSystem {
       }
     }
 
-    if (canFire && input.wasPressed('KeyR')) this.startReload();
+    if (canFire && act.reload) this.startReload();
 
-    const wantsFire = canFire && input.mouseDown;
+    const wantsFire = canFire && act.fire;
     if (wantsFire && !this.reloading) {
       if (!this.infiniteAmmo && this.ammo <= 0) {
         this.startReload();
@@ -260,9 +332,7 @@ export class WeaponSystem {
         this.fireStream(eye, muzzle);
         break;
       case 'melee':
-        this.viewmodel.meleeSwing();
-        this.fireMelee(eye);
-        break;
+        break; // MeleeSystem handles swings
     }
     // hits found synchronously above travel with the shot in one network call
     this.events.onShotEnd?.();
@@ -415,34 +485,6 @@ export class WeaponSystem {
       const hit = this.raycast(eye, to, dist + 0.5);
       if (hit && this.targets.fromCollider(hit.collider) !== t) continue;
       this.damageTarget(t, w.damage, this.info(t.getCenter(new THREE.Vector3())));
-    }
-  }
-
-  private fireMelee(eye: THREE.Vector3) {
-    const w = this.weapon;
-    const fwd = this.camera.getWorldDirection(new THREE.Vector3());
-    const reach = Math.max(1.5, w.range);
-    let best: HitTarget | undefined;
-    let bestD = Infinity;
-    const c = new THREE.Vector3();
-    for (const t of this.targets.all()) {
-      if (!t.alive()) continue;
-      const to = t.getCenter(c).sub(eye);
-      // compare against capsule surface roughly: subtract radius
-      const dist = to.length() - 0.35;
-      if (dist > reach) continue;
-      if (to.normalize().dot(fwd) < Math.cos(50 * DEG)) continue;
-      if (dist < bestD) {
-        best = t;
-        bestD = dist;
-      }
-    }
-    if (best) {
-      this.damageTarget(best, w.damage, this.info(best.getCenter(new THREE.Vector3())));
-      this.effects.impact(best.getCenter(c), undefined, 0xff3030);
-    } else {
-      const hit = this.raycast(eye, fwd, reach);
-      if (hit) this.effects.impact(hit.point, hit.normal);
     }
   }
 

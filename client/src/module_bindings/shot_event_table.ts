@@ -20,4 +20,6 @@ export default __t.row({
   dx: __t.f32(),
   dy: __t.f32(),
   dz: __t.f32(),
+  charge: __t.f32(),
+  combo: __t.u8(),
 });

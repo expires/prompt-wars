@@ -13,6 +13,7 @@ import {
   type WeaponColors,
   type WeaponPart,
 } from './weapon';
+import { effectiveReach, sanitizeMeleeMeta, type MeleeMeta } from './melee';
 
 export const NUMERIC_STATS = [
   'damage',
@@ -449,13 +450,16 @@ export function clampWeapon(input: RawWeapon | Weapon | unknown): Weapon {
   }
 
   const name = sanitizeName(raw.name, cls);
+  const parts = sanitizeParts(raw.parts);
+  let melee: MeleeMeta | undefined;
   const build = (): Weapon => ({
     name,
     class: cls,
     fireMode: mode,
     ...v,
-    parts: sanitizeParts(raw.parts),
+    parts,
     colors: sanitizeColors(raw.colors),
+    ...(melee ? { melee } : {}),
   });
 
   // (5) DPS budget: first pass splits the reduction between damage and fire rate,
@@ -479,6 +483,12 @@ export function clampWeapon(input: RawWeapon | Weapon | unknown): Weapon {
   v.damage = Math.max(0.1, floorTo(v.damage, 0.1));
   v.dotDamage = floorTo(v.dotDamage, 0.1);
   v.fireRate = Math.max(0.1, floorTo(v.fireRate, 0.01));
+  // (6) Melee metadata (swing / hand->tip reach / weight; inferred when missing). The stored
+  // range becomes the effective hit reach (eye -> impact) so stats and validation agree.
+  if (mode === 'melee') {
+    melee = sanitizeMeleeMeta(raw.melee, { name, parts, damage: v.damage, fireRate: v.fireRate, range: v.range });
+    v.range = clamp(roundTo(effectiveReach(melee.reach), 0.1), b.range[0], b.range[1]);
+  }
   for (const k of NUMERIC_STATS) v[k] = fix(v[k]);
 
   return build();

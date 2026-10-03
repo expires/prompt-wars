@@ -49,6 +49,10 @@ export class Hud {
   /** test hook: keep the hitmarker on screen (screenshots) */
   holdHitmarker = false;
   readonly settingsPanel: SettingsPanel;
+  private readonly chargeEl = el('div', 'charge-meter');
+  private readonly statusEl = el('div', 'status-line');
+  private readonly toastEl = el('div', 'toast');
+  private toastTimer = 0;
   deathHandlers?: DeathScreenHandlers;
 
   constructor(parent: HTMLElement = document.body) {
@@ -87,6 +91,14 @@ export class Hud {
     this.hpValue.dataset.testid = 'hp';
     this.weaponName.dataset.testid = 'weapon-name';
     this.root.append(hp, ammo, this.killfeed, this.debugEl, this.spawnEditorEl, this.scoreboard);
+    this.chargeEl.innerHTML = '<i></i>';
+    this.chargeEl.hidden = true;
+    this.chargeEl.dataset.testid = 'charge-meter';
+    this.statusEl.dataset.testid = 'status-line';
+    this.toastEl.hidden = true;
+    this.toastEl.dataset.testid = 'toast';
+    this.root.append(this.chargeEl, this.statusEl);
+    parent.append(this.toastEl);
 
     // click-to-play
     this.clickOverlay = el('div', 'overlay click');
@@ -95,14 +107,17 @@ export class Hud {
       <p>Click to play</p>
       <div class="controls">
         <kbd>WASD</kbd><span>move</span>
-        <kbd>Shift</kbd><span>sprint (forward)</span>
+        <kbd>T</kbd><span>autorun (W / S cancels; A D strafe)</span>
+        <kbd>Shift</kbd><span>sprint (forward; hold or toggle)</span>
         <kbd>C / Ctrl</kbd><span>crouch (hold, or toggle in settings)</span>
         <kbd>Space</kbd><span>jump</span>
-        <kbd>Mouse</kbd><span>look / fire</span>
-        <kbd>Right mouse</kbd><span>aim down sights</span>
+        <kbd>Mouse</kbd><span>look / fire · melee: swing (slash combo x3)</span>
+        <kbd>Right mouse</kbd><span>aim down sights · melee: hold to charge a heavy attack</span>
+        <kbd>F</kbd><span>melee: block (60% less melee damage from the front)</span>
         <kbd>Arrows / Q E</kbd><span>turn (trackpad fallback)</span>
         <kbd>R</kbd><span>reload</span>
-        <kbd>1-6</kbd><span>debug: swap sample weapon</span>
+        <kbd>Gamepad</kbd><span>sticks move / look · RT fire · LT aim / heavy · A jump · B crouch · X reload · L3 sprint · RB block · Start menu</span>
+        <kbd>1-0</kbd><span>debug: swap sample weapon (7-0 melee)</span>
         <kbd>K</kbd><span>debug: die</span>
         <kbd>F2</kbd><span>spawn editor (P = save spawn)</span>
         <kbd>F3</kbd><span>debug info</span>
@@ -276,6 +291,41 @@ export class Hud {
     setTimeout(() => e.remove(), 6000);
   }
 
+  /** heavy-attack charge 0..1 (hidden at 0) */
+  setCharge(f: number) {
+    this.chargeEl.hidden = f <= 0;
+    if (f > 0) {
+      (this.chargeEl.firstChild as HTMLElement).style.width = `${Math.round(f * 100)}%`;
+      this.chargeEl.classList.toggle('full', f >= 1);
+    }
+  }
+
+  /** small status line under the crosshair (BLOCKING / AUTORUN) */
+  setStatus(text: string) {
+    if (this.statusEl.textContent !== text) this.statusEl.textContent = text;
+  }
+
+  /** one-off toast with an optional action button */
+  toast(html: string, opts: { ms?: number; action?: { label: string; onClick: () => void } } = {}) {
+    this.toastEl.innerHTML = `<span>${html}</span>`;
+    if (opts.action) {
+      const b = el('button', 'btn primary', esc(opts.action.label)) as HTMLButtonElement;
+      b.dataset.testid = 'toast-action';
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        opts.action!.onClick();
+        this.toastEl.hidden = true;
+      });
+      this.toastEl.append(b);
+    }
+    this.toastEl.hidden = false;
+    this.toastTimer = (opts.ms ?? 9000) / 1000;
+  }
+
+  get toastVisible() {
+    return !this.toastEl.hidden;
+  }
+
   setDebug(text: string | null) {
     this.debugEl.hidden = text === null;
     if (text !== null) this.debugEl.textContent = text;
@@ -287,6 +337,7 @@ export class Hud {
   }
 
   update(dt: number) {
+    if (this.toastTimer > 0 && (this.toastTimer -= dt) <= 0) this.toastEl.hidden = true;
     if (!this.holdHitmarker && this.hitTimer > 0 && (this.hitTimer -= dt) <= 0) this.hitmarker.classList.remove('show');
     if (this.dmgTimer > 0 && (this.dmgTimer -= dt) <= 0) this.vignette.classList.remove('show');
     if (!this.holdHitmarker && this.killTimer > 0 && (this.killTimer -= dt) <= 0) this.killX.classList.remove('show');

@@ -726,7 +726,7 @@ function meleeName(r: Rng, t: Theme, noun: string, extra: string[] = []): string
   return out;
 }
 
-function meleeDraft(b: Build, r: Rng, t: Theme, names: string[] | (() => string[]), noun: string, swing: Swing, weight: MeleeWeight, reach: number, extraKw: string[] = []): Draft {
+function meleeDraft(b: Build, _r: Rng, t: Theme, names: string[] | (() => string[]), noun: string, swing: Swing, weight: MeleeWeight, reach: number, extraKw: string[] = []): Draft {
   if (typeof names === 'function') names = names();
   const melee: MeleeMeta = { swing, reach: Math.min(2.5, Math.max(0.3, round05(reach))), weight };
   const heavy = weight === 'heavy' ? ' with crushing force' : weight === 'light' ? ' with quick strikes' : '';

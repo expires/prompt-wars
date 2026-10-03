@@ -9,11 +9,16 @@ const SLIDERS: { key: NumKey; label: string; min: number; max: number; step: num
   { key: 'fov', label: 'Field of view', min: 60, max: 100, step: 1, fmt: (v) => `${v}°` },
   { key: 'keyTurnSpeed', label: 'Key turn speed (arrows / Q E)', min: 30, max: 360, step: 5, fmt: (v) => `${v}°/s` },
   { key: 'volume', label: 'Volume', min: 0, max: 1, step: 0.05, fmt: (v) => `${Math.round(v * 100)}%` },
+  { key: 'gamepadSensitivity', label: 'Gamepad look speed', min: 0.2, max: 3, step: 0.05, fmt: (v) => `${v.toFixed(2)}x` },
+  { key: 'gamepadDeadzone', label: 'Gamepad deadzone', min: 0, max: 0.5, step: 0.01, fmt: (v) => v.toFixed(2) },
 ];
 
 const TOGGLES: { key: BoolKey; label: string }[] = [
+  { key: 'trackpadMode', label: 'Trackpad mode (T autorun, toggles, arrows / Q E turn)' },
   { key: 'crouchToggle', label: 'Toggle crouch (instead of hold)' },
+  { key: 'sprintToggle', label: 'Toggle sprint (instead of hold)' },
   { key: 'adsToggle', label: 'Toggle aim (instead of hold)' },
+  { key: 'gamepadAimSlowdown', label: 'Gamepad aim slowdown over enemies' },
   { key: 'invertY', label: 'Invert mouse Y' },
   { key: 'headBob', label: 'Head bob' },
 ];
@@ -57,7 +62,12 @@ export class SettingsPanel {
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.dataset.testid = `setting-${t.key}`;
-      input.addEventListener('change', () => settings.set(t.key, input.checked));
+      input.addEventListener('change', () => {
+        if (t.key === 'trackpadMode') {
+          settings.setTrackpadMode(input.checked);
+          this.sync(); // the preset changed other settings too
+        } else settings.set(t.key, input.checked);
+      });
       grid.append(label, input);
       this.inputs.set(t.key, { input });
     }

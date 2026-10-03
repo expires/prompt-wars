@@ -1,5 +1,14 @@
-/** Keyboard + mouse state with pointer lock. */
+import { GamepadPoller, emptyPad, type PadState } from './gamepad';
+
+/** Keyboard + mouse state with pointer lock, plus a polled gamepad. */
 export class Input {
+  private readonly poller = new GamepadPoller();
+  /** this frame's gamepad state (see pollGamepad) */
+  pad: PadState = emptyPad();
+  /** playing with the gamepad without pointer lock (Start / A on the pause screen) */
+  padPlaying = false;
+  /** performance.now() of the last mouse movement while locked (trackpad hint heuristic) */
+  lastMouseMoveAt = 0;
   private keys = new Set<string>();
   private pressed = new Set<string>();
   mouseDX = 0;
@@ -34,6 +43,7 @@ export class Input {
       if (!this.locked) return;
       this.mouseDX += e.movementX;
       this.mouseDY += e.movementY;
+      if (e.movementX || e.movementY) this.lastMouseMoveAt = performance.now();
     });
     document.addEventListener('mousedown', (e) => {
       if (!this.locked) return;
@@ -61,6 +71,23 @@ export class Input {
       }
       this.lockListeners.forEach((cb) => cb(this.locked));
     });
+  }
+
+  /** poll the gamepad once per frame (before reading `pad`) */
+  pollGamepad(deadzone: number): PadState {
+    this.pad = this.poller.poll(deadzone);
+    return this.pad;
+  }
+
+  /** player input is live: pointer locked, or playing on a gamepad */
+  get active() {
+    return this.locked || this.padPlaying;
+  }
+
+  /** any of the movement keys held */
+  movementKeysHeld() {
+    for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'Space']) if (this.keys.has(k)) return true;
+    return false;
   }
 
   requestLock() {

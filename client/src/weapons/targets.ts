@@ -9,6 +9,8 @@ export interface HitInfo {
   point: [number, number, number];
   /** 0 body, 1 head */
   zone: number;
+  /** melee: charge fraction of the swing */
+  charge?: number;
 }
 
 /** Something weapons can damage (dummy, remote player, ...). */

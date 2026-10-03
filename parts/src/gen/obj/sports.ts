@@ -2,7 +2,7 @@
 import type { Kit, Pt } from '../../lib/kit';
 import { circlePts } from '../../lib/kit';
 import type { Vec3 } from '../../types';
-import type { Anchors, ObjSpec, P } from './objkit';
+import type { ObjSpec, P } from './objkit';
 
 const PI = Math.PI;
 const CORK = '#c8a26b';

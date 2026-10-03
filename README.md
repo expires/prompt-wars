@@ -58,8 +58,16 @@ spacetime call --server maincloud prompt-wars-63xhe set_api_key '"sk-ant-..."'
 spacetime call --server maincloud prompt-wars-63xhe set_llm_model '"claude-haiku-4-5-20251001"'   # default
 ```
 
-Without a key, `generate_weapon` rolls a random (still balanced) weapon and gives it the parts of
-a random `@ai-gaem/parts` recipe for its class, so it still renders a real model. Parts are drawn
+Templates: the 20k-template library (`@ai-gaem/parts` `searchTemplates`) is too big for the module,
+so the client searches it with the player's prompt and passes the best <= 5 matches as compact JSON
+(`generate_weapon(prompt, weaponClass, templatesJson)`, shape in `shared/src/templates.ts`). The
+server re-validates their part ids against the synced catalog, picks the class from the best
+template (unless one was requested), and uses them as few-shot examples in the LLM prompt. Melee
+results keep the template's `melee` meta (swing / reach / weight) so animations match.
+
+Without a key, `generate_weapon` turns the best template into the weapon (class preset stats
+scaled by its `statHints`, its parts and melee meta, then `clampWeapon`); with no templates it
+rolls a random (still balanced) weapon with a random class recipe. Parts are drawn
 from `parts/catalog.json`; `server/scripts/sync-catalog.mjs` bundles a compact copy of the catalog
 plus the recipes (`parts/src/recipes.ts`) into the module on every build/publish, so **republish
 after the catalog changes**.
@@ -79,17 +87,47 @@ SpacetimeDB bills per reducer call and per byte written / broadcast, so the hot 
 | Table | Visibility | What |
 | --- | --- | --- |
 | `player` | public | rarely-changing state: name, online, hp, alive, kills, deaths, weaponId, respawnAt, slow, `slot`; `x/y/z/yaw` = spawn / resume point. Some columns are legacy (ammo, reload, dot, crouching...): an automatic migration can't drop columns, they are just no longer written |
-| `player_pose` | public | hot: one ~45-byte row per online player keyed by a u32 `slot` (assigned on connect): position, yaw/pitch, velocity, flags (crouch / grounded / teleport), sender clock `sendT` |
-| `player_combat` | private | ammo, reload, fire-rate token bucket, previous pose + timestamps (lag compensation), DoT. One row per online player |
+| `player_pose` | public | hot: one ~45-byte row per online player keyed by a u32 `slot` (assigned on connect): position, yaw/pitch, velocity, flags (crouch / grounded / teleport / melee block), sender clock `sendT` |
+| `player_combat` | private | ammo, reload, fire-rate token bucket, previous pose + timestamps (lag compensation), DoT, `lastSwingAt` (melee charge bound). One row per online player |
 | `weapon` | public | presets + generated weapons; clients subscribe to presets and fetch other rows on demand by id |
 | `shot` | private | recent projectile shots (for `report_hit`); expired rows are cleaned up inside `fire` |
 | `dot_timer` | private, scheduled | one row per victim while a damage-over-time effect is active (250 ms ticks, deleted on expiry) |
-| `shot_event`, `hit_event` | public events | remote shot visuals, damage / kills |
+| `shot_event`, `hit_event` | public events | remote shot visuals (+ melee `charge` / `combo` for the third-person swing), damage / kills (+ `blocked`) |
 | `tick_timer` | private | legacy, always empty (kept so the auto-migration doesn't have to drop a table) |
 
 There is no always-on scheduled reducer: an idle server does nothing. Slows expire client-side
 from `slowUntil`. Clients subscribe to `player`, `player_pose`, `spawn_point`, the event tables and
 preset weapons only (not `subscribeToAllTables`), with `withConfirmedReads(false)`.
+
+### Melee
+
+Melee weapons carry `melee: { swing: 'slash'|'overhead'|'thrust'|'bash'|'spin', reach, weight }`
+(`shared/src/melee.ts`; `clampWeapon` always sets it for melee, inferring it from the name / parts /
+stats when missing; reach is the template's hand -> tip length, 0.3-3 m). Hit reach (eye ->
+impact) = reach + 0.75 m arm, clamped to 1.2-3 m, so tiny objects still connect.
+
+- Timing by weight: light 0.35 s, medium 0.55 s, heavy 0.9 s per swing (charged x1.35, slash
+  finisher x1.15); the swing rate is min(fireRate, 1 / swing time) (token bucket, `effectiveFireRate`).
+  Phases (`MELEE_PHASES`): anticipation -> strike window (hits swept only here) -> follow-through ->
+  recovery.
+- Slash: 3-hit combo (right->left, left->right, wide finisher) when the next swing starts within
+  0.45 s of the previous one ending.
+- Heavy attack (right mouse / LT, hold up to 1 s): damage x(1 + 0.75 charge), +25% reach, slower;
+  charged hits are capped at 75 body / 100 head (never below the plain hit). The server grants
+  at most (time since the last swing + 0.15 s) / 1 s of charge (`grantedCharge`, `lastSwingAt`).
+- Block (F / RB; right mouse with shields): 40% damage from melee hits inside the front 120 deg
+  cone, 55% move speed, no knockback; replicated as `POSE_FLAG_BLOCK`; only counts while holding a
+  melee weapon.
+- Hits: during the strike window the client sweeps the swing arc every frame with 0.1 m sphere
+  casts spaced <= 3 deg apart (`sampleMeleeArc`), each target once per swing, head zone counts.
+  All hits of a swing go out in one `fire(seq, origin, dir, hits, charge, combo)` (sent when the
+  strike window closes). The server checks origin near the attacker's eye (1 m + speed x 0.15 s),
+  eye -> impact <= charged reach + 0.4 m, impact on the swept hitbox (round 2), applies
+  `meleeHitDamage` (block x0.4) and knockback x(1 + charge) (heavy x1.2, max 15 m/s).
+- Feel: procedural keyframed viewmodel (`client/src/weapons/meleeAnim.ts`), 70 ms hit-stop,
+  camera punch / shake by weight, blade vs blunt impact sounds, stylized star + spark impacts,
+  forward lunge on heavy / charged hits. Remote players play the matching third-person swing
+  (arm / torso keys, skipping the wind-up), a gun recoil pose, block pose and crouch.
 
 ### Balance
 
@@ -207,6 +245,17 @@ drive the game through `window.__game` (`getState()`, `teleport`, `aimAt(id)`, `
 - **h** blowgun (projectile -> `report_hit`) direct hit + damage over time from the per-victim
   `dot_timer` (exact total, timer row gone afterwards, no `tick_timer`)
 
+`client/e2e/melee.spec.ts` (two more players):
+
+- **i** melee preset: a swing at 1.5 m does exactly the server damage and replicates (B sees A's
+  slash); beyond reach the sweep finds nothing and a forged hit is rejected; A saw B's gun recoil
+- **j** charged swing (after > 1 s) does more damage, within the 75 body cap
+- **k** block: 40% from the front, full damage from behind; block flag replicates (screenshots)
+- **l** "Generate new weapon" from templates: "grandma's umbrella sword" -> umbrella sword (thrust,
+  umbrella parts, melee meta) that hits; sledgehammer (overhead), frying pan (bash), nunchucks (spin);
+  first-person + third-person screenshots of every swing type mid-strike (`l-*.png`)
+- **m** fake gamepad moves / looks, T autorun, trackpad mode preset + hint toast
+
 Screenshots of every step go to `client/e2e/screenshots/` (`maincloud-*` for the smoke run). The
 Playwright config uses Playwright's Chromium if installed (`npx playwright install chromium`),
 else the newest cached Chrome for Testing in `~/Library/Caches/ms-playwright`, or `PW_CHROMIUM_PATH`.
@@ -233,24 +282,33 @@ URL params:
 | --- | --- |
 | Click | lock mouse / play |
 | WASD | move (Source-style accel + friction: walk 4.5 m/s) |
-| Shift | sprint, forward only (6.5 m/s, +6° FOV; firing cancels it) |
+| T | autorun (W or S cancels; A / D still strafe) |
+| Shift | sprint, forward only (6.5 m/s, +6° FOV; firing cancels it; hold or toggle in settings) |
 | C / Ctrl | crouch (hold, or toggle in settings): 2.2 m/s, 1.2 m tall, tighter spread; crouch in the air to tuck your legs (crouch-jump) |
 | Space | jump (1.1 m, 100 ms coyote time + 100 ms buffer) |
 | Mouse / LMB | look / fire (hold for auto) |
-| RMB | aim down sights (hold or toggle): ~0.75x FOV (sniper 0.4x scope), centred viewmodel, less spread, 62% move speed |
+| RMB | aim down sights (hold or toggle): ~0.75x FOV (sniper 0.4x scope), centred viewmodel, less spread, 62% move speed. Melee: hold to charge a heavy attack (shields: block) |
+| LMB (melee) | swing (slash weapons: 3-hit combo) |
+| F | melee block |
+| Gamepad | left stick move, right stick look (deadzone + curve + sensitivity in settings, aim slowdown over enemies), RT fire, LT aim / heavy, A jump, B crouch, X reload, L3 sprint, RB block, Start = play / menu (no pointer lock needed) |
 | Arrows / Q E | keyboard turning (trackpad / palm-rejection fallback; speed in settings) |
 | R | reload |
-| 1-6 | debug (offline only): swap sample weapon (rifle, shotgun, rocket, grenade arc, flamethrower stream, sword) |
+| 1-0 | debug (offline only): swap sample weapon (rifle, shotgun, rocket, grenade arc, flamethrower stream, sword; 7-0: template katana, sledgehammer, spear, frying pan) |
 | K | debug (offline only): kill yourself (death screen) |
 | F2 | spawn editor: **P** save current position as spawn, **Backspace** undo, **Delete** clear |
 | F3 | debug overlay (fps, position, grounded; net: RTT, interp delay, jitter, send Hz, buffered snapshots, reducer calls) |
-| Esc | release mouse; the pause screen has a **Settings** panel (sensitivity, ADS sensitivity, FOV, key-turn speed, volume, toggle crouch / aim, invert Y, head bob; saved in `localStorage` `ai-gaem.settings`) |
+| Esc | release mouse; the pause screen has a **Settings** panel (sensitivity, ADS sensitivity, FOV, key-turn speed, volume, toggle crouch / sprint / aim, invert Y, head bob, gamepad look speed / deadzone / aim slowdown, **Trackpad mode**; saved in `localStorage` `ai-gaem.settings`) |
 
 Feel: spread per weapon class (`src/weapons/handling.ts`): base spread x ADS / crouch / movement /
 airborne multipliers + per-shot bloom that recovers over time; recoil is a CS-style aim punch with
 spring recovery (`src/player/CameraRig.ts`, which also does speed-scaled head bob, landing dip and
 FOV). Procedural WebAudio sounds (`src/audio/Sfx.ts`): gunshots by class (remote ones panned and
 attenuated), hit tick, headshot ding, kill chime, footsteps, jump / land, reload.
+
+Trackpad / ThinkPad support (the OS disables the touchpad while keys are held): T autorun,
+**Trackpad mode** preset (toggle crouch / sprint / aim, +25% sensitivity, autorun hint, arrow / Q E
+turning; turning it off restores the previous values). If movement keys are held > 400 ms with no
+mouse movement and the mouse moves right after release, three times, a one-time toast offers it.
 
 Spawn points saved with the editor go to `localStorage` (`ai-gaem.spawns.<mapId>`) and are logged
 as JSON in the console so they can be pasted into code / the server.

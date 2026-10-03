@@ -17,6 +17,20 @@ import {
   POSE_FLAG_CROUCH,
   POSE_FLAG_GROUNDED,
   POSE_FLAG_TELEPORT,
+  POSE_FLAG_BLOCK,
+  CROUCH_EYE_OFFSET,
+  STAND_EYE_OFFSET,
+  MELEE_ORIGIN_TOLERANCE,
+  blockCovers,
+  grantedCharge,
+  isMeleeReachValid,
+  meleeHitDamage,
+  meleeKnockback,
+  meleeMetaOf,
+  meleeReach,
+  parseTemplateSummaries,
+  templateToRawWeapon,
+  type TemplateSummary,
   PRESET_WEAPONS,
   RESPAWN_DELAY_SECONDS,
   SLOW_DURATION,
@@ -146,6 +160,8 @@ const playerCombat = table(
     dotUntil: t.timestamp(),
     dotSource: t.identity(),
     dotWeaponId: t.u64(),
+    /** server time of the last accepted melee swing (bounds the claimed charge of the next one) */
+    lastSwingAt: t.timestamp().default(new Timestamp(0n)),
   },
 );
 
@@ -208,6 +224,10 @@ const shotEvent = table(
     dx: t.f32(),
     dy: t.f32(),
     dz: t.f32(),
+    /** melee: granted charge fraction (0 = normal swing) */
+    charge: t.f32().default(0),
+    /** melee: slash combo index (0..2) */
+    combo: t.u8().default(0),
   },
 );
 
@@ -230,6 +250,8 @@ const hitEvent = table(
     slowPercent: t.f32(),
     /** Direct hit on the head hitbox (multiplier applied). */
     headshot: t.bool().default(false),
+    /** melee hit reduced by the target's block */
+    blocked: t.bool().default(false),
   },
 );
 
@@ -471,6 +493,7 @@ function applyDamage(
     knock?: [number, number, number];
     slow?: number;
     headshot?: boolean;
+    blocked?: boolean;
     /** extra fields to write in the same player row update (e.g. slow) */
     patch?: Partial<PlayerRow>;
   } = {},
@@ -512,6 +535,7 @@ function applyDamage(
     knockZ: knock[2],
     slowPercent: opts.slow ?? 0,
     headshot: !!opts.headshot,
+    blocked: !!opts.blocked,
   });
   return next;
 }
@@ -603,6 +627,7 @@ function newCombatRow(ctx: Ctx, identity: Identity, slot: number): CombatRow {
     dotUntil: EPOCH,
     dotSource: identity,
     dotWeaponId: 0n,
+    lastSwingAt: EPOCH,
   };
 }
 
@@ -747,6 +772,8 @@ interface ShotCtx {
   weaponId: bigint;
   /** shot origin (eye) */
   o: [number, number, number];
+  /** melee: granted charge fraction */
+  charge?: number;
 }
 
 /**
@@ -766,12 +793,28 @@ function applyHit(ctx: Ctx, s: ShotCtx, slot: number, zone: number, impact: [num
 
   let damage: number;
   let headshot = false;
-  if (w.splashRadius > 0) {
+  let blocked = false;
+  let knockSpeed = w.knockback;
+  if (w.fireMode === 'melee') {
+    // reach (eye -> impact, charged reach + tolerance) and the impact on the swept hitbox
+    const charge = s.charge ?? 0;
+    if (!isMeleeReachValid(o, impact, meleeReach(w, charge))) return false;
+    const z = classifyHit(swept, impact, zone);
+    if (z < 0) return false;
+    headshot = z === HIT_ZONE_HEAD;
+    // block: the victim holds a melee weapon, has the block flag set and faces the attacker
+    if ((pose.flags & POSE_FLAG_BLOCK) !== 0 && blockCovers([pose.x, pose.y, pose.z], pose.yaw, o)) {
+      const vw = ctx.db.weapon.id.find(victim.weaponId);
+      blocked = !!vw && vw.fireMode === 'melee';
+    }
+    damage = meleeHitDamage(w, charge, z, blocked);
+    knockSpeed = blocked ? 0 : meleeKnockback(w, charge, meleeMetaOf(w).weight);
+  } else if (w.splashRadius > 0) {
     if (dist(o[0], o[1], o[2], impact[0], impact[1], impact[2]) > maxRange) return false;
     damage = splashDamageAt(w, splashDistance(swept, impact));
   } else {
     if (dist(o[0], o[1], o[2], pose.x, pose.y, pose.z) > maxRange) return false;
-    const claimed = w.fireMode === 'stream' || w.fireMode === 'melee' ? 0 : zone;
+    const claimed = w.fireMode === 'stream' ? 0 : zone;
     const z = classifyHit(swept, impact, claimed);
     if (z < 0) return false;
     headshot = z === HIT_ZONE_HEAD;
@@ -783,14 +826,14 @@ function applyHit(ctx: Ctx, s: ShotCtx, slot: number, zone: number, impact: [num
 
   // Knockback away from the shooter (or blast centre).
   let knock: [number, number, number] = [0, 0, 0];
-  if (w.knockback > 0) {
+  if (knockSpeed > 0) {
     const c = w.splashRadius > 0 ? impact : o;
     const len = Math.max(0.001, dist(pose.x, pose.y, pose.z, c[0], c[1], c[2]));
-    knock = [((pose.x - c[0]) / len) * w.knockback, ((pose.y - c[1]) / len) * w.knockback + w.knockback * 0.3, ((pose.z - c[2]) / len) * w.knockback];
+    knock = [((pose.x - c[0]) / len) * knockSpeed, ((pose.y - c[1]) / len) * knockSpeed + knockSpeed * 0.3, ((pose.z - c[2]) / len) * knockSpeed];
   }
   // Slow rides along in the same row update (refresh, don't stack); the client lets it expire.
   const patch: Partial<PlayerRow> = w.slowPercent > 0 ? { slowPercent: w.slowPercent, slowUntil: addSeconds(ctx.timestamp, SLOW_DURATION) } : {};
-  const v = applyDamage(ctx, victim, damage, ctx.sender, s.weaponId, { at: impact, knock, slow: w.slowPercent, headshot, patch });
+  const v = applyDamage(ctx, victim, damage, ctx.sender, s.weaponId, { at: impact, knock, slow: w.slowPercent, headshot, blocked, patch });
   if (v.alive && w.dotDamage > 0) {
     ctx.db.playerCombat.identity.update({
       ...vc,
@@ -814,9 +857,13 @@ function applyHit(ctx: Ctx, s: ShotCtx, slot: number, zone: number, impact: [num
  * report_hit. Shots that violate fire rate or ammo are silently dropped (with their hits).
  */
 export const fire = spacetimedb.reducer(
-  { seq: t.u32(), ox: t.f32(), oy: t.f32(), oz: t.f32(), dx: t.f32(), dy: t.f32(), dz: t.f32(), hits: t.array(HitReport) },
-  (ctx, { seq, ox, oy, oz, dx, dy, dz, hits }) => {
+  {
+    seq: t.u32(), ox: t.f32(), oy: t.f32(), oz: t.f32(), dx: t.f32(), dy: t.f32(), dz: t.f32(), hits: t.array(HitReport),
+    charge: t.f32(), combo: t.u8(),
+  },
+  (ctx, { seq, ox, oy, oz, dx, dy, dz, hits, charge, combo }) => {
     finite(ox, oy, oz, dx, dy, dz);
+    if (!Number.isFinite(charge)) charge = 0;
     const p = requirePlayer(ctx);
     if (!p.alive) return;
     let c = ctx.db.playerCombat.identity.find(ctx.sender);
@@ -845,9 +892,17 @@ export const fire = spacetimedb.reducer(
       return;
     }
 
-    // Origin must be near the player.
+    // Origin must be near the player (melee: near the eye).
     const pose = ctx.db.playerPose.slot.find(c.slot);
     if (pose && dist(ox, oy, oz, pose.x, pose.y, pose.z) > MAX_ORIGIN_OFFSET) return;
+    const melee = w.fireMode === 'melee';
+    if (melee && pose) {
+      const eyeY = pose.y + ((pose.flags & POSE_FLAG_CROUCH) !== 0 ? CROUCH_EYE_OFFSET : STAND_EYE_OFFSET);
+      const tol = MELEE_ORIGIN_TOLERANCE + Math.hypot(pose.vx, pose.vy, pose.vz) * 0.15;
+      if (dist(ox, oy, oz, pose.x, eyeY, pose.z) > tol) return;
+    }
+    // Melee charge: bounded by the time since the previous swing (it had to be held that long).
+    const granted = melee ? grantedCharge(charge, secondsBetween(c.lastSwingAt, now)) : 0;
 
     const projectile = w.fireMode === 'projectile' || w.fireMode === 'arc';
     // Projectile shots are remembered for report_hit; clean up this shooter's expired ones.
@@ -856,7 +911,7 @@ export const fire = spacetimedb.reducer(
       else if (s.seq === seq) return; // duplicate seq
     }
 
-    let next: CombatRow = { ...c, fireCredits: spend.credits, creditsAt: now };
+    let next: CombatRow = { ...c, fireCredits: spend.credits, creditsAt: now, ...(melee ? { lastSwingAt: now } : {}) };
     if (usesAmmo) {
       const ammo = c.ammo - 1;
       next = ammo === 0 ? { ...next, ammo, reloading: true, reloadUntil: addSeconds(now, w.reloadTime) } : { ...next, ammo };
@@ -865,10 +920,10 @@ export const fire = spacetimedb.reducer(
     if (projectile) {
       ctx.db.shot.insert({ id: 0n, shooter: ctx.sender, seq, weaponId: wRow.id, firedAt: now, ox, oy, oz, hitTargets: [] });
     }
-    ctx.db.shotEvent.insert({ shooter: ctx.sender, seq, weaponId: wRow.id, ox, oy, oz, dx, dy, dz });
+    ctx.db.shotEvent.insert({ shooter: ctx.sender, seq, weaponId: wRow.id, ox, oy, oz, dx, dy, dz, charge: granted, combo: melee ? combo % 3 : 0 });
 
     if (projectile || hits.length === 0) return;
-    const s: ShotCtx = { w, weaponId: wRow.id, o: [ox, oy, oz] };
+    const s: ShotCtx = { w, weaponId: wRow.id, o: [ox, oy, oz], charge: granted };
     const done = new Set<number>();
     for (const h of hits.slice(0, MAX_HITS_PER_SHOT)) {
       if (done.has(h.slot)) continue;
@@ -1033,24 +1088,38 @@ const GenerateResult = t.object('GenerateResult', {
   message: t.string(),
 });
 
+/** Client-provided templates with unknown part ids removed (templates left with no parts are dropped). */
+function knownTemplates(json: string): TemplateSummary[] {
+  return parseTemplateSummaries(json)
+    .map(tp => ({ ...tp, parts: filterKnownParts(tp.parts, KNOWN_PART_IDS) }))
+    .filter(tp => tp.parts.length > 0);
+}
+
 /**
- * Generate a weapon from a text prompt. `weaponClass` may be '' to infer it from the prompt.
- * Calls Anthropic if an API key is configured (set_api_key), otherwise rolls random stats.
- * The result is clamped, stored in `weapon`, and auto-equipped if the caller is dead.
+ * Generate a weapon from a text prompt. `weaponClass` may be '' to infer it from the prompt (or
+ * from the best template). `templatesJson`: up to 5 matching @ai-gaem/parts templates found by
+ * the client (searchTemplates), as compact JSON summaries (see shared/src/templates.ts); they are
+ * few-shot examples for the LLM and, without an API key, the best one becomes the weapon.
+ * Calls Anthropic if an API key is configured (set_api_key), otherwise uses a template / random
+ * stats. The result is clamped, stored in `weapon`, and auto-equipped if the caller is dead.
  */
 export const generate_weapon = spacetimedb.procedure(
-  { prompt: t.string(), weaponClass: t.string() },
+  { prompt: t.string(), weaponClass: t.string(), templatesJson: t.string() },
   GenerateResult,
-  (ctx, { prompt, weaponClass }) => {
+  (ctx, { prompt, weaponClass, templatesJson }) => {
     const cleanPrompt = prompt.slice(0, 300);
+    const allTemplates = knownTemplates(templatesJson);
     const setup = ctx.withTx(tx => {
       const cfg = tx.db.config.id.find(0);
-      const cls = chooseClassFromPrompt(cleanPrompt, weaponClass, () => tx.random());
+      const cls = weaponClass.trim() || !allTemplates.length
+        ? chooseClassFromPrompt(cleanPrompt, weaponClass, () => tx.random())
+        : allTemplates[0].class;
       const seed = tx.random();
       const recipeRoll = tx.random();
       return { recipeRoll, apiKey: cfg?.anthropicApiKey ?? '', model: cfg?.llmModel || DEFAULT_LLM_MODEL, cls, seed };
     });
 
+    const templates = allTemplates.filter(tp => tp.class === setup.cls);
     let raw: unknown;
     let message = 'ok';
     if (setup.apiKey) {
@@ -1067,7 +1136,7 @@ export const generate_weapon = spacetimedb.procedure(
             model: setup.model,
             max_tokens: 2000,
             system: WEAPON_GEN_SYSTEM,
-            messages: [{ role: 'user', content: buildWeaponGenUserPrompt(setup.cls, cleanPrompt, subset) }],
+            messages: [{ role: 'user', content: buildWeaponGenUserPrompt(setup.cls, cleanPrompt, subset, templates) }],
           }),
           timeout: TimeDuration.fromMillis(30_000),
         });
@@ -1087,13 +1156,24 @@ export const generate_weapon = spacetimedb.procedure(
     }
 
     if (!raw || typeof raw !== 'object') {
-      let s = setup.seed * 2147483646 + 1;
-      const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
-      raw = randomRawWeapon(setup.cls, cleanPrompt, rnd);
+      if (templates.length) {
+        // best matching template: class preset stats scaled by its hints, its parts + melee meta
+        raw = templateToRawWeapon(templates[0]);
+        message = message === 'ok' ? `template ${templates[0].id}` : `${message} (template ${templates[0].id})`;
+      } else {
+        let s = setup.seed * 2147483646 + 1;
+        const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+        raw = randomRawWeapon(setup.cls, cleanPrompt, rnd);
+      }
     } else {
       // Keep the class we chose (and pre-filtered parts for) unless the LLM picked a valid one.
       const r = raw as Record<string, unknown>;
       if (!r.class) r.class = setup.cls;
+      // melee without animation metadata: borrow the closest melee template's
+      if (!r.melee) {
+        const mt = allTemplates.find(tp => tp.melee && tp.class === r.class);
+        if (mt) r.melee = mt.melee;
+      }
     }
 
     const w = clampWeapon(raw);

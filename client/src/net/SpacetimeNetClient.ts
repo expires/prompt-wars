@@ -1,4 +1,5 @@
-import { POSE_FLAG_CROUCH, POSE_FLAG_GROUNDED, POSE_FLAG_TELEPORT, clampWeapon } from '@ai-gaem/shared';
+import { POSE_FLAG_BLOCK, POSE_FLAG_CROUCH, POSE_FLAG_GROUNDED, POSE_FLAG_TELEPORT, clampWeapon } from '@ai-gaem/shared';
+import { templatesJsonFor } from '../weapons/templates';
 import type { Identity } from 'spacetimedb';
 import { DbConnection, tables } from '../module_bindings';
 import type { Weapon } from '../weapons/types';
@@ -63,6 +64,8 @@ interface PendingShot {
   seq: number;
   origin: Vec3;
   dir: Vec3;
+  charge: number;
+  combo: number;
   hits: { slot: number; zone: number; ix: number; iy: number; iz: number; pellets: number }[];
 }
 
@@ -95,6 +98,7 @@ function toSnapshot(r: PoseRow, arrival: number): PoseSnapshot {
     crouching: (r.flags & POSE_FLAG_CROUCH) !== 0,
     grounded: (r.flags & POSE_FLAG_GROUNDED) !== 0,
     teleport: (r.flags & POSE_FLAG_TELEPORT) !== 0,
+    blocking: (r.flags & POSE_FLAG_BLOCK) !== 0,
     sendT: r.sendT,
     arrival,
   };
@@ -296,7 +300,7 @@ export class SpacetimeNetClient implements NetClient {
     db.shotEvent.onInsert((_ctx, e) => {
       const shooterId = e.shooter.toHexString();
       if (shooterId === this.localId) return;
-      const ev: ShotEvent = { shooterId, weaponId: String(e.weaponId), origin: [e.ox, e.oy, e.oz], dir: [e.dx, e.dy, e.dz] };
+      const ev: ShotEvent = { shooterId, weaponId: String(e.weaponId), origin: [e.ox, e.oy, e.oz], dir: [e.dx, e.dy, e.dz], charge: e.charge, combo: e.combo };
       this.shotCbs.forEach((cb) => cb(ev));
     });
 
@@ -314,11 +318,12 @@ export class SpacetimeNetClient implements NetClient {
           knock: [e.knockX, e.knockY, e.knockZ],
           slowPercent: e.slowPercent,
           headshot: e.headshot,
+          blocked: e.blocked,
         };
         this.localHitCbs.forEach((cb) => cb(ev));
       }
       if (shooterId === this.localId && targetId !== this.localId) {
-        const ev: HitConfirmEvent = { targetId, damage: e.damage, killed: e.killed, headshot: e.headshot, dot: e.dot, point: [e.x, e.y, e.z] };
+        const ev: HitConfirmEvent = { targetId, damage: e.damage, killed: e.killed, headshot: e.headshot, dot: e.dot, point: [e.x, e.y, e.z], blocked: e.blocked };
         this.confirmCbs.forEach((cb) => cb(ev));
       }
       if (e.killed) {
@@ -448,7 +453,7 @@ export class SpacetimeNetClient implements NetClient {
   sendTransform(pose: LocalPose) {
     if (!this.conn || !this.connected) return;
     this.sendTimes.push(performance.now());
-    const flags = (pose.crouching ? POSE_FLAG_CROUCH : 0) | (pose.grounded ? POSE_FLAG_GROUNDED : 0) | (pose.teleport ? POSE_FLAG_TELEPORT : 0);
+    const flags = (pose.crouching ? POSE_FLAG_CROUCH : 0) | (pose.grounded ? POSE_FLAG_GROUNDED : 0) | (pose.teleport ? POSE_FLAG_TELEPORT : 0) | (pose.blocking ? POSE_FLAG_BLOCK : 0);
     this.call(
       'update_transform',
       this.conn.reducers.updateTransform({
@@ -467,10 +472,10 @@ export class SpacetimeNetClient implements NetClient {
     );
   }
 
-  fire(origin: Vec3, dir: Vec3): number {
+  fire(origin: Vec3, dir: Vec3, melee?: { charge: number; combo: number }): number {
     this.flushShot(); // a previous shot that was never flushed
     const seq = (this.seq = (this.seq + 1) >>> 0);
-    this.pendingShot = { seq, origin, dir, hits: [] };
+    this.pendingShot = { seq, origin, dir, charge: melee?.charge ?? 0, combo: melee?.combo ?? 0, hits: [] };
     return seq;
   }
 
@@ -481,7 +486,7 @@ export class SpacetimeNetClient implements NetClient {
     if (!this.conn || !this.connected) return;
     this.call(
       'fire',
-      this.conn.reducers.fire({ seq: s.seq, ox: s.origin[0], oy: s.origin[1], oz: s.origin[2], dx: s.dir[0], dy: s.dir[1], dz: s.dir[2], hits: s.hits }),
+      this.conn.reducers.fire({ seq: s.seq, ox: s.origin[0], oy: s.origin[1], oz: s.origin[2], dx: s.dir[0], dy: s.dir[1], dz: s.dir[2], hits: s.hits, charge: s.charge, combo: s.combo }),
       true,
     );
   }
@@ -544,7 +549,9 @@ export class SpacetimeNetClient implements NetClient {
   async generateWeapon(prompt: string, weaponClass = ''): Promise<GenerateWeaponResult> {
     if (!this.conn) throw new Error('not connected');
     this.callCounts.generate_weapon = (this.callCounts.generate_weapon ?? 0) + 1;
-    const res = await this.conn.procedures.generateWeapon({ prompt, weaponClass });
+    // the template library lives on the client (too big for the module): send the best matches
+    const templatesJson = await templatesJsonFor(prompt, weaponClass);
+    const res = await this.conn.procedures.generateWeapon({ prompt, weaponClass, templatesJson });
     const weaponId = String(res.weaponId);
     this.ensureWeapon(weaponId);
     // the weapon row arrives through the (on-demand) subscription; wait briefly for it

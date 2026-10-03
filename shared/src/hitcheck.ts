@@ -12,6 +12,7 @@ import {
   type FireMode,
   type Weapon,
 } from './weapon';
+import { meleeSwingRate } from './melee';
 
 // ---------------------------------------------------------------------------
 // Pose flags (player_pose.flags)
@@ -21,6 +22,8 @@ export const POSE_FLAG_CROUCH = 1;
 export const POSE_FLAG_GROUNDED = 2;
 /** the pose is a teleport / spawn: remote clients snap instead of interpolating */
 export const POSE_FLAG_TELEPORT = 4;
+/** blocking with a melee weapon (front melee hits do BLOCK_DAMAGE_MULT damage) */
+export const POSE_FLAG_BLOCK = 8;
 
 // ---------------------------------------------------------------------------
 // Damage falloff
@@ -55,9 +58,13 @@ export function directHitDamage(w: Pick<Weapon, 'damage' | 'range' | 'fireMode'>
 // Fire rate: token bucket
 // ---------------------------------------------------------------------------
 
-/** Shots per second actually allowed (fire rate + charge time). */
-export function effectiveFireRate(w: Pick<Weapon, 'fireRate' | 'chargeTime'>): number {
-  return 1 / (1 / Math.max(0.05, w.fireRate) + Math.max(0, w.chargeTime));
+/**
+ * Shots per second actually allowed (fire rate + charge time). Melee: never faster than the swing
+ * animation of its weight class (see meleeSwingRate).
+ */
+export function effectiveFireRate(w: Pick<Weapon, 'fireRate' | 'chargeTime'> & Partial<Pick<Weapon, 'fireMode' | 'melee'>>): number {
+  const rate = w.fireMode === 'melee' && w.melee ? meleeSwingRate(w as Pick<Weapon, 'fireRate'>, w.melee) : w.fireRate;
+  return 1 / (1 / Math.max(0.05, rate) + Math.max(0, w.chargeTime));
 }
 
 /**

@@ -235,6 +235,49 @@ export class Sfx {
     this.noiseBurst(c, dest, t + 0.18, 'bandpass', 1800, 3, 0.04, 1);
   }
 
+  /** melee swoosh: lower and longer for heavy weapons, with a rising whoosh for charged swings */
+  meleeSwing(weight: 'light' | 'medium' | 'heavy', charged: boolean, pos?: THREE.Vector3) {
+    const c = this.ready();
+    if (!c) return;
+    const dest = this.out(c, weight === 'heavy' ? 0.35 : 0.25, pos);
+    if (!dest) return;
+    const t = c.currentTime;
+    const f = weight === 'heavy' ? 500 : weight === 'light' ? 1500 : 900;
+    const d = weight === 'heavy' ? 0.3 : weight === 'light' ? 0.12 : 0.18;
+    this.noiseBurst(c, dest, t, 'bandpass', f, 0.8, d, 0.7, d * 0.4);
+    if (charged) this.noiseBurst(c, dest, t, 'bandpass', f * 0.6, 0.6, d * 1.6, 0.8, d * 0.6);
+  }
+
+  /** melee impact: 'blade' = bright slice, 'blunt' = low thud; head hits get a ring */
+  meleeImpact(material: 'blade' | 'blunt', weight: 'light' | 'medium' | 'heavy', head = false, pos?: THREE.Vector3) {
+    const c = this.ready();
+    if (!c) return;
+    const k = weight === 'heavy' ? 1 : weight === 'light' ? 0.6 : 0.8;
+    const dest = this.out(c, 0.45 * k + 0.1, pos);
+    if (!dest) return;
+    const t = c.currentTime;
+    if (material === 'blade') {
+      this.noiseBurst(c, dest, t, 'highpass', 3000, 0.7, 0.09, 1, 0.003);
+      this.tone(c, dest, t, 2400, 1800, 0.12, 0.25, 'triangle');
+    } else {
+      this.noiseBurst(c, dest, t, 'lowpass', 500, 1, 0.14, 1, 0.003);
+      this.tone(c, dest, t, 140 * (1.3 - 0.4 * k), 50, 0.16, 0.9);
+    }
+    if (head) this.tone(c, dest, t, 1320, 1320, 0.2, 0.25);
+  }
+
+  /** melee hit absorbed by a block: metallic clang */
+  blockClang(pos?: THREE.Vector3) {
+    const c = this.ready();
+    if (!c) return;
+    const dest = this.out(c, 0.4, pos);
+    if (!dest) return;
+    const t = c.currentTime;
+    this.tone(c, dest, t, 880, 860, 0.35, 0.5, 'square');
+    this.tone(c, dest, t, 1330, 1300, 0.25, 0.3);
+    this.noiseBurst(c, dest, t, 'bandpass', 3500, 2, 0.05, 1);
+  }
+
   dryFire() {
     const c = this.ready();
     if (!c) return;

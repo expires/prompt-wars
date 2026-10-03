@@ -5,6 +5,8 @@ import { Humanoid } from '../player/humanoid';
 import { CENTER_OFFSET } from '../player/PlayerController';
 import { Hitboxes } from '../player/hitboxes';
 import { buildWeaponModel } from '../weapons/buildWeaponModel';
+import { MELEE_PHASES, meleeMetaOf, meleeSwingDuration } from '@ai-gaem/shared';
+import type { Weapon } from '../weapons/types';
 import type { HitTarget, TargetRegistry } from '../weapons/targets';
 import type { NetClient, NetPlayer, PoseSnapshot } from './NetClient';
 import { RemoteInterpolator, type InterpStats } from './interp';
@@ -26,6 +28,9 @@ interface Remote {
   modelWeaponId: string;
   target: HitTarget;
   lastPos: THREE.Vector3;
+  /** melee swings / gun recoils played (tests) */
+  melees: number;
+  recoils: number;
   nameTag: THREE.Sprite;
   tagText: string;
 }
@@ -63,7 +68,16 @@ export class RemotePlayers {
   }
 
   get(id: string):
-    | { state: NetPlayer; position: THREE.Vector3; visible: boolean; hasWeaponModel: boolean; crouchT: number; head: THREE.Vector3 }
+    | {
+        state: NetPlayer;
+        position: THREE.Vector3;
+        visible: boolean;
+        hasWeaponModel: boolean;
+        crouchT: number;
+        head: THREE.Vector3;
+        /** third-person animation state */
+        anim: { action: string; swing: string; combo: number; charge: number; u: number; blocking: boolean; armX: number; armY: number; twist: number; melees: number; recoils: number };
+      }
     | undefined {
     const r = this.remotes.get(id);
     if (!r) return undefined;
@@ -74,7 +88,38 @@ export class RemotePlayers {
       hasWeaponModel: r.model.hand.children.length > 0,
       crouchT: r.crouchT,
       head: this.headOf(id)!,
+      anim: {
+        action: r.model.action?.kind ?? 'none',
+        swing: r.model.action?.swing ?? '',
+        combo: r.model.action?.combo ?? 0,
+        charge: r.model.action?.charge ?? 0,
+        u: r.model.armPose.u,
+        blocking: r.model.blocking,
+        armX: r.model.armPose.x,
+        armY: r.model.armPose.y,
+        twist: r.model.armPose.twist,
+        melees: r.melees,
+        recoils: r.recoils,
+      },
     };
+  }
+
+  /**
+   * A remote player fired: melee weapons play their swing (skipping the wind-up, since the shot
+   * is sent when the strike window opens), guns a recoil pose.
+   */
+  playShot(id: string, w: Weapon, charge = 0, combo = 0) {
+    const r = this.remotes.get(id);
+    if (!r) return;
+    if (w.fireMode === 'melee') {
+      const meta = meleeMetaOf(w);
+      const ph = MELEE_PHASES[meta.swing];
+      r.model.playMelee(meta.swing, combo, charge, meleeSwingDuration(meta.weight, charge, combo), ph.strikeStart);
+      r.melees++;
+    } else {
+      r.model.playRecoil(Math.min(1.5, 0.4 + (w.damage * w.pellets) / 40));
+      r.recoils++;
+    }
   }
 
   /** colliders of a remote player (shot raycasts exclude the shooter's own hitboxes) */
@@ -127,6 +172,7 @@ export class RemotePlayers {
     if (!r) return; // roster arrives first (or replays the pose via create)
     r.interp.push(snap);
     r.state = { ...r.state, pos: [...snap.pos], yaw: snap.yaw, pitch: snap.pitch, crouching: snap.crouching };
+    r.model.blocking = !!snap.blocking;
   }
 
   /** interpolation debug for one remote (tests) */
@@ -166,6 +212,8 @@ export class RemotePlayers {
       modelWeaponId: '',
       nameTag,
       tagText: '',
+      melees: 0,
+      recoils: 0,
       lastPos: new THREE.Vector3(...p.pos),
       target: {
         id: p.id,
@@ -192,6 +240,12 @@ export class RemotePlayers {
     r.model.hand.clear();
     r.modelWeaponId = weaponId ?? '';
     const m = buildWeaponModel(w).root;
+    // third person: keep weapons hand-sized (huge LLM guns would hide the body)
+    const bb = new THREE.Box3().setFromObject(m);
+    const size = bb.getSize(new THREE.Vector3());
+    const maxLen = w.fireMode === 'melee' ? 1.6 : 0.9;
+    const s = Math.min(1, maxLen / Math.max(size.x, size.y, size.z, 0.001));
+    m.scale.multiplyScalar(s);
     if (w.fireMode === 'melee') m.rotation.x = 1.0; // blade up/forward, handle in the hand
     r.model.hand.add(m);
   }

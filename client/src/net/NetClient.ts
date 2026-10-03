@@ -43,6 +43,9 @@ export interface ShotEvent {
   weaponId: string;
   origin: Vec3;
   dir: Vec3;
+  /** melee: granted charge (0 = normal swing) and slash combo index */
+  charge?: number;
+  combo?: number;
 }
 
 /** Damage the server applied to the local player. */
@@ -55,6 +58,8 @@ export interface LocalHitEvent {
   knock: Vec3;
   slowPercent: number;
   headshot: boolean;
+  /** melee hit reduced by our block */
+  blocked?: boolean;
 }
 
 /**
@@ -70,6 +75,8 @@ export interface LocalPose {
   grounded: boolean;
   /** discontinuity (teleport / respawn): remotes snap */
   teleport: boolean;
+  /** blocking with a melee weapon */
+  blocking?: boolean;
   /** sender clock, ms */
   sendT: number;
 }
@@ -83,6 +90,7 @@ export interface PoseSnapshot {
   crouching: boolean;
   grounded: boolean;
   teleport: boolean;
+  blocking?: boolean;
   /** sender clock (ms, may wrap at 2^32) */
   sendT: number;
   /** local arrival time (performance.now()) */
@@ -106,6 +114,8 @@ export interface HitInfo {
   point: Vec3;
   /** 0 body, 1 head (server re-validates and applies the weapon's headshot multiplier) */
   zone: number;
+  /** melee: charge fraction of the swing */
+  charge?: number;
 }
 
 /** Damage the server applied to someone else, from a shot by the local player. */
@@ -118,6 +128,8 @@ export interface HitConfirmEvent {
   dot?: boolean;
   /** impact point (world) */
   point?: Vec3;
+  /** melee hit reduced by the target's block */
+  blocked?: boolean;
 }
 
 export interface GenerateWeaponResult {
@@ -143,7 +155,7 @@ export interface NetClient {
    * A shot was fired locally; returns the shot sequence number. Hits reported (reportHit) with
    * this seq before `flushShot()` travel in the same network call (hitscan / stream / melee).
    */
-  fire(origin: Vec3, dir: Vec3): number;
+  fire(origin: Vec3, dir: Vec3, melee?: { charge: number; combo: number }): number;
   /** send the shot started by `fire` together with its batched hits */
   flushShot?(): void;
   /** client-detected hit on another player; server validates & applies damage */

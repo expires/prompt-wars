@@ -16,6 +16,8 @@ export interface PoseInput {
   pitch: number;
   crouching: boolean;
   grounded: boolean;
+  /** blocking with a melee weapon (replicated in the pose flags) */
+  blocking?: boolean;
 }
 
 /**
@@ -81,9 +83,9 @@ export class PoseSender {
       const since = sendT - l.t;
       const stopped = l.moving && !moving;
       if (alone) {
-        send = stopped || (moving && since >= ALONE_SEND_MS - 1) || (looked && since >= ALONE_SEND_MS - 1) || l.pose.crouching !== p.crouching;
+        send = stopped || (moving && since >= ALONE_SEND_MS - 1) || (looked && since >= ALONE_SEND_MS - 1) || l.pose.crouching !== p.crouching || !!l.pose.blocking !== !!p.blocking;
       } else {
-        const discrete = stopped || (!l.moving && moving) || l.pose.crouching !== p.crouching || (l.pose.grounded !== p.grounded && (moving || l.moving));
+        const discrete = stopped || (!l.moving && moving) || l.pose.crouching !== p.crouching || !!l.pose.blocking !== !!p.blocking || (l.pose.grounded !== p.grounded && (moving || l.moving));
         send = discrete || (moving && since >= MOVE_SEND_MS - 1) || (looked && since >= LOOK_SEND_MS - 1);
       }
     }

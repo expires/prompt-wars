@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { clampWeapon } from '@ai-gaem/shared';
 import type { Game } from './engine/Game';
+import { Humanoid } from './player/humanoid';
+import { settings } from './settings';
+import { getDefaultWeapons } from './weapons/defaultWeapons';
 
 /**
  * `window.__game`: a small deterministic control surface for e2e tests (and console
@@ -41,6 +44,20 @@ export interface GameTestHook {
   traceRemote(playerId: string, ms: number): Promise<{ t: number; x: number; y: number; z: number; d?: unknown }[]>;
   /** while dead: equip the preset weapon of a class (resolves when the server accepted it) */
   equipPreset(weaponClass: string): Promise<string>;
+  /** melee: start a swing now (charge 0..1; bypasses the local cooldown, the server still checks) */
+  meleeSwing(charge?: number): boolean;
+  /** melee: force the block on / off (null = keyboard / gamepad) */
+  setBlock(on: boolean | null): void;
+  /** hold local swings and remote third-person actions at progress u (screenshots); null = run */
+  freezeAnims(u: number | null): void;
+  /** offline: equip a sample weapon by index (debug keys 1-0) */
+  equipSample(i: number): string;
+  /** show the trackpad-mode hint toast (tests / screenshots) */
+  showTrackpadHint(): void;
+  /** play with the gamepad / keyboard without pointer lock (as after pressing Start) */
+  setPadPlaying(on: boolean): void;
+  /** trackpad mode preset on / off */
+  setTrackpadMode(on: boolean): void;
   /** reducer call counters / network stats */
   netStats(): { rtt: number; sendHz: number; calls: Record<string, number>; interp?: unknown } | null;
 }
@@ -51,7 +68,28 @@ function getState(game: Game) {
   const w = ready ? game.weapons.weapon : undefined;
   const net = game.net as (typeof game.net & { connected?: boolean }) | undefined;
   const p = ready ? game.player : undefined;
+  const ws = ready ? game.weapons : undefined;
+  const mv = ws?.meleeView();
   return {
+    melee: ws && ws.fireMode === 'melee'
+      ? {
+          meta: ws.melee.meta,
+          view: mv?.kind ?? 'idle',
+          u: mv && mv.kind === 'swing' ? mv.u : -1,
+          combo: mv && mv.kind === 'swing' ? mv.combo : -1,
+          charge: mv && (mv.kind === 'swing' || mv.kind === 'charge') ? mv.charge : 0,
+          blocking: ws.melee.blocking,
+          swings: ws.melee.swings,
+          last: ws.melee.last,
+          offset: ws.viewmodel.meleeOffset,
+        }
+      : null,
+    autoRun: p?.autoRun ?? false,
+    trackpadMode: settings.current.trackpadMode,
+    settings: { ...settings.current },
+    pad: ready ? { connected: game.input.pad.connected, move: game.input.pad.move, look: game.input.pad.look, playing: game.input.padPlaying } : null,
+    toastVisible: ready ? game.hud.toastVisible : false,
+    serverBlocking: (ready && game.net.getPose?.(game.net.localId)?.blocking) || false,
     crouching: p?.crouched ?? false,
     eyeHeight: p?.eyeHeight ?? 0,
     ceilingBlocked: p?.ceilingBlocked() ?? false,
@@ -106,6 +144,8 @@ function getState(game: Game) {
             crouchT: r.crouchT,
             /** rendered head hitbox centre */
             head: [r.head.x, r.head.y, r.head.z] as [number, number, number],
+            /** third-person animation (melee swing / recoil / block) */
+            anim: r.anim,
           };
         })
       : [],
@@ -198,6 +238,39 @@ export function installTestHook(game: Game) {
       if (!id || !game.net.equipWeapon) throw new Error(`no preset ${cls}`);
       await game.net.equipWeapon(id);
       return id;
+    },
+    meleeSwing(charge = 0) {
+      if (!game.alive || game.weapons.fireMode !== 'melee') return false;
+      game.rc.camera.updateMatrixWorld();
+      return game.weapons.melee.startSwing(charge, true);
+    },
+    setBlock(on) {
+      game.forceBlock = on;
+      game.sendTransformNow();
+    },
+    freezeAnims(u) {
+      game.weapons.melee.freezeU = u;
+      Humanoid.freezeU = u;
+    },
+    equipSample(i) {
+      const w = getDefaultWeapons()[i];
+      game.equip(w);
+      return w.name;
+    },
+    showTrackpadHint() {
+      try {
+        localStorage.removeItem('ai-gaem.trackpadHint');
+      } catch {
+        /* ignore */
+      }
+      game.showTrackpadHint();
+    },
+    setPadPlaying(on) {
+      game.input.padPlaying = on;
+    },
+    setTrackpadMode(on) {
+      settings.setTrackpadMode(on);
+      game.hud.settingsPanel.sync();
     },
     netStats() {
       const st = game.net.stats?.();

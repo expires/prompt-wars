@@ -25,4 +25,6 @@ export default {
   get hits() {
     return __t.array(HitReport);
   },
+  charge: __t.f32(),
+  combo: __t.u8(),
 };

@@ -25,4 +25,5 @@ export default __t.row({
   knockZ: __t.f32().name("knock_z"),
   slowPercent: __t.f32().name("slow_percent"),
   headshot: __t.bool(),
+  blocked: __t.bool(),
 });

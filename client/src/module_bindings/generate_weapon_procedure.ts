@@ -17,5 +17,6 @@ import {
 export const params = {
   prompt: __t.string(),
   weaponClass: __t.string(),
+  templatesJson: __t.string(),
 };
 export const returnType = GenerateResult

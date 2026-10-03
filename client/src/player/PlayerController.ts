@@ -75,6 +75,14 @@ export class PlayerController {
   forceCrouch: boolean | null = null;
   /** smoothed eye height above the feet (crouch transitions) */
   eyeHeight = EYE_HEIGHT;
+  /** autorun (T): move forward without holding W; W or S cancels */
+  autoRun = false;
+  /** extra movement multiplier (blocking with a melee weapon) */
+  moveMult = 1;
+  /** gamepad look multiplier (aim slowdown over enemies), 1 = none */
+  aimSlow = 1;
+  /** sprint latched by toggle-sprint (Shift tap) or the gamepad's L3 */
+  private sprintLatch = false;
 
   /** fired on takeoff */
   onJump?: () => void;
@@ -137,13 +145,25 @@ export class PlayerController {
     if (i.isDown('ArrowRight') || i.isDown('KeyE')) this.yaw -= turn;
     if (i.isDown('ArrowUp')) this.pitch += turn * 0.7;
     if (i.isDown('ArrowDown')) this.pitch -= turn * 0.7;
+    // gamepad right stick: rad/s at full deflection (after the response curve)
+    const pad = i.pad;
+    if (pad.connected && (pad.look[0] !== 0 || pad.look[1] !== 0)) {
+      const rate = ((200 * Math.PI) / 180) * s.gamepadSensitivity * fovScale * this.aimSlow * (this.aiming ? s.adsSensitivity * 0.8 : 1);
+      this.yaw -= pad.look[0] * rate * dt;
+      this.pitch += pad.look[1] * rate * 0.75 * dt * (s.invertY ? -1 : 1);
+    }
     const lim = Math.PI / 2 - 0.01;
     this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
 
-    if (i.wasPressed('Space')) this.jumpBuffer = JUMP_BUFFER;
-    if (s.crouchToggle && (i.wasPressed('KeyC') || i.wasPressed('ControlLeft') || i.wasPressed('ControlRight'))) {
+    if (i.wasPressed('Space') || pad.jumpPressed) this.jumpBuffer = JUMP_BUFFER;
+    if (s.crouchToggle && (i.wasPressed('KeyC') || i.wasPressed('ControlLeft') || i.wasPressed('ControlRight') || pad.crouchPressed)) {
       this.crouchToggled = !this.crouchToggled;
     }
+    // autorun: T toggles, W / S (or pulling the stick back) cancels
+    if (i.wasPressed('KeyT')) this.autoRun = !this.autoRun;
+    else if (this.autoRun && (i.wasPressed('KeyW') || i.wasPressed('KeyS') || pad.move[1] < -0.5)) this.autoRun = false;
+    // toggle sprint (Shift tap) / gamepad L3 click
+    if ((s.sprintToggle && (i.wasPressed('ShiftLeft') || i.wasPressed('ShiftRight'))) || pad.sprintPressed) this.sprintLatch = !this.sprintLatch;
     return d;
   }
 
@@ -163,7 +183,7 @@ export class PlayerController {
     if (!this.inputEnabled) return false;
     if (settings.current.crouchToggle) return this.crouchToggled;
     const i = this.input;
-    return i.isDown('KeyC') || i.isDown('ControlLeft') || i.isDown('ControlRight');
+    return i.isDown('KeyC') || i.isDown('ControlLeft') || i.isDown('ControlRight') || i.pad.crouch;
   }
 
   /** One fixed physics step. Call before world.step(). */
@@ -184,25 +204,36 @@ export class PlayerController {
     // ---- wish direction ----
     const wish = this.tmp.set(0, 0, 0);
     let fwd = 0;
+    let analog = 1;
     if (this.inputEnabled) {
-      if (i.isDown('KeyW')) fwd += 1;
+      if (i.isDown('KeyW') || this.autoRun) fwd += 1;
       if (i.isDown('KeyS')) fwd -= 1;
-      wish.z -= fwd;
       if (i.isDown('KeyA')) wish.x -= 1;
       if (i.isDown('KeyD')) wish.x += 1;
+      // gamepad left stick (analog: partial deflection walks slower)
+      const pm = i.pad.move;
+      if (pm[0] !== 0 || pm[1] !== 0) {
+        const mag = Math.min(1, Math.hypot(pm[0], pm[1]));
+        if (fwd === 0 && wish.x === 0) analog = Math.max(0.3, mag);
+        fwd += pm[1];
+        wish.x += pm[0];
+      }
+      fwd = Math.max(-1, Math.min(1, fwd));
+      wish.z -= fwd;
     }
-    const hasWish = wish.lengthSq() > 0;
+    const hasWish = wish.lengthSq() > 1e-6;
     if (hasWish) wish.normalize().applyAxisAngle(THREE.Object3D.DEFAULT_UP, this.yaw);
 
     // sprint: forward only (W, optionally diagonal), not crouched / aiming / just fired
-    const sprintKey = i.isDown('ShiftLeft') || i.isDown('ShiftRight');
+    if (fwd <= 0.3 || this.crouched) this.sprintLatch = false;
+    const sprintKey = (!settings.current.sprintToggle && (i.isDown('ShiftLeft') || i.isDown('ShiftRight'))) || this.sprintLatch;
     const canSprint = this.inputEnabled && sprintKey && fwd > 0 && !this.crouched && !this.aiming && this.sprintBlock <= 0;
     // keep sprint state through a jump, but only start sprinting on the ground
     this.sprinting = canSprint && (this.grounded || this.sprinting);
 
     let wishSpeed = this.crouched && this.grounded ? CROUCH_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED;
     if (this.aiming) wishSpeed = Math.min(wishSpeed, WALK_SPEED * ADS_SPEED_MULT);
-    wishSpeed *= this.speedScale;
+    wishSpeed *= this.speedScale * this.moveMult * analog;
 
     // ---- jump (coyote time + buffer) ----
     const canJump = this.grounded || (this.airTime < COYOTE_TIME && this.time - this.jumpedAt > COYOTE_TIME + 0.05);

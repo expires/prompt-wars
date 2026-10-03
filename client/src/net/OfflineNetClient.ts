@@ -1,4 +1,4 @@
-import { zoneDamage } from '@ai-gaem/shared';
+import { meleeHitDamage, zoneDamage } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
 import type { HitInfo, KillEvent, LocalPose, NetClient, NetPlayer, PoseSnapshot, Vec3 } from './NetClient';
 
@@ -110,7 +110,7 @@ export class OfflineNetClient implements NetClient {
     if (!bot || !bot.alive) return;
     const w = this.weapons.get(weaponId);
     const body = (w?.damage ?? 20) * Math.max(1, info?.pellets ?? 1);
-    bot.hp -= w ? zoneDamage(w, body, info?.zone ?? 0) : body;
+    bot.hp -= w ? (w.fireMode === 'melee' ? meleeHitDamage(w, info?.charge ?? 0, info?.zone ?? 0) : zoneDamage(w, body, info?.zone ?? 0)) : body;
     if (bot.hp <= 0) {
       bot.alive = false;
       bot.hp = 0;

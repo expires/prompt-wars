@@ -1,6 +1,8 @@
 // Weapon schema shared by the client, the SpacetimeDB module and weapon generation.
 // Keep this file free of runtime dependencies: it is bundled into the server module.
 
+import type { MeleeMeta } from './melee';
+
 export const WEAPON_CLASSES = [
   'pistol',
   'smg',
@@ -97,6 +99,11 @@ export interface Weapon {
   headshotMultiplier: number;
   parts: WeaponPart[];
   colors: WeaponColors;
+  /**
+   * Melee only (always set on clamped melee weapons): swing animation type, hand -> tip reach and
+   * weight class (swing timing). See shared/src/melee.ts.
+   */
+  melee?: MeleeMeta;
 }
 
 /** Loose input shape: anything an LLM or client might send. */
@@ -125,6 +132,9 @@ export const HEAD_RADIUS = 0.16;
 /** head sphere centre above the feet */
 export const HEAD_CENTER_STANDING = 1.66;
 export const HEAD_CENTER_CROUCHED = HEAD_CENTER_STANDING - (PLAYER_HEIGHT - PLAYER_CROUCH_HEIGHT);
+/** eye height above the feet (client camera; server melee origin check) */
+export const STAND_EYE_OFFSET = 1.62;
+export const CROUCH_EYE_OFFSET = STAND_EYE_OFFSET - (PLAYER_HEIGHT - PLAYER_CROUCH_HEIGHT);
 
 /** Damage of a direct hit: body = `bodyDamage`, head = bodyDamage * multiplier, capped at 150. */
 export function zoneDamage(weapon: Pick<Weapon, 'headshotMultiplier'>, bodyDamage: number, zone: number): number {

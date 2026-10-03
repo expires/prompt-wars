@@ -1,4 +1,6 @@
-import { clampWeapon } from '@ai-gaem/shared';
+import { clampWeapon, templateToRawWeapon } from '@ai-gaem/shared';
+import { searchTemplates } from '@ai-gaem/parts';
+import { toTemplateSummary } from './templates';
 import type { Weapon } from './types';
 
 /** Hand-made sample weapons covering every fire mode (debug keys 1-6 cycle). */
@@ -133,15 +135,43 @@ const RAW_DEFAULT_WEAPONS: (Partial<Weapon> & { id: string })[] = [
   },
 ];
 
-/** Offline sample weapons, run through the shared balance clamp like everything the server stores. */
-export const DEFAULT_WEAPONS: Weapon[] = RAW_DEFAULT_WEAPONS.map((w) => ({ ...clampWeapon(w), id: w.id }));
+/** Offline melee samples: the best @ai-gaem/parts template for each query (one per swing type). */
+const MELEE_SAMPLE_QUERIES: [string, string][] = [
+  ['local-katana', 'katana'],
+  ['local-sledgehammer', 'sledgehammer'],
+  ['local-spear', 'spear'],
+  ['local-frying-pan', 'frying pan'],
+];
+
+let cached: Weapon[] | null = null;
+
+/**
+ * Offline sample weapons (debug keys 1-0), run through the shared balance clamp like everything
+ * the server stores. The melee samples come from the template library (generated on first use).
+ */
+export function getDefaultWeapons(): Weapon[] {
+  if (cached) return cached;
+  const base = RAW_DEFAULT_WEAPONS.map((w) => ({ ...clampWeapon(w), id: w.id }));
+  const melee: Weapon[] = [];
+  for (const [id, q] of MELEE_SAMPLE_QUERIES) {
+    try {
+      const t = searchTemplates(q, { melee: true, limit: 1 })[0];
+      if (t) melee.push({ ...clampWeapon(templateToRawWeapon(toTemplateSummary(t))), id });
+    } catch (err) {
+      console.warn('[weapons] template lookup failed', q, err);
+    }
+  }
+  cached = [...base, ...melee];
+  return cached;
+}
 
 /**
  * STUB for the LLM weapon generator. Returns a randomized variant of a
  * default weapon. Replace with a call to the server/LLM endpoint.
  */
 export async function generateWeaponStub(prompt: string): Promise<Weapon> {
-  const base = DEFAULT_WEAPONS[Math.floor(Math.random() * DEFAULT_WEAPONS.length)];
+  const all = getDefaultWeapons();
+  const base = all[Math.floor(Math.random() * all.length)];
   const hue = Math.floor(Math.random() * 360);
   return {
     ...structuredClone(base),

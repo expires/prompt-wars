@@ -3,6 +3,7 @@
 
 import { CLASS_TEMPLATES, describeTemplateForPrompt, normalizeClass } from './balance';
 import { WEAPON_CLASSES, type WeaponClass } from './weapon';
+import { templatesPromptBlock, type TemplateSummary } from './templates';
 
 export interface CatalogEntry {
   id: string;
@@ -25,7 +26,7 @@ const KEYWORDS: [RegExp, WeaponClass][] = [
   [/\bsmg\b|uzi|sub ?machine|spray/i, 'smg'],
   [/rifle|\bar\b|carbine|assault/i, 'rifle'],
   [/pistol|revolver|handgun|deagle/i, 'pistol'],
-  [/sword|knife|axe|hammer|bat|katana|melee|club|fish|baguette|spoon/i, 'melee'],
+  [/sword|knife|axe|hammer|bat|katana|melee|club|fish|baguette|spoon|spear|\bpan\b|umbrella|\bmace\b|scythe/i, 'melee'],
 ];
 
 /** Pick a weapon class from a free-text prompt. `rand01` must be deterministic in the module (ctx.random). */
@@ -104,16 +105,19 @@ Reply with ONE JSON object and nothing else (no markdown fences). Shape:
   "gravityScale": number, "fuseTime": number (s), "dotDamage": number (total), "dotDuration": number (s),
   "knockback": number, "slowPercent": number, "chargeTime": number (s), "headshotMultiplier": number (1-3),
   "colors": { "primary": "#rrggbb", "secondary": "#rrggbb", "accent": "#rrggbb" },
-  "parts": [ { "partId": string from the catalog, "scale"?: number | [x,y,z], "color"?: "#rrggbb", "offset"?: [x,y,z] } ]
+  "parts": [ { "partId": string from the catalog, "scale"?: number | [x,y,z], "color"?: "#rrggbb", "offset"?: [x,y,z] } ],
+  "melee"?: { "swing": "slash"|"overhead"|"thrust"|"bash"|"spin", "reach": number (m, hand to tip), "weight": "light"|"medium"|"heavy" }  (melee only)
 }
 Rules: use ONLY partIds from the provided catalog. Use 4-14 parts. Offsets are metres, weapon points down -Z,
 grip at the origin. Stay inside the given stat ranges; the server re-balances anything overpowered anyway
 (sustained DPS budget ~55, max 95 damage per shot), so prefer interesting trade-offs over maxing stats.`;
 
-export function buildWeaponGenUserPrompt(cls: WeaponClass, playerPrompt: string, catalogSubset: readonly CatalogEntry[]): string {
+export function buildWeaponGenUserPrompt(cls: WeaponClass, playerPrompt: string, catalogSubset: readonly CatalogEntry[], templates: readonly TemplateSummary[] = []): string {
+  const ref = templatesPromptBlock(templates);
   return [
     `Player request: ${JSON.stringify(playerPrompt.slice(0, 300))}`,
     '',
+    ...(ref ? [ref, ''] : []),
     'Stat template:',
     describeTemplateForPrompt(cls),
     '',

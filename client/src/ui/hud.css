@@ -105,3 +105,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
 .dmg-num { position: absolute; left: 0; top: 0; font-weight: 700; font-size: 18px; color: #fff; white-space: nowrap; will-change: transform, opacity; }
 .dmg-num.headshot { color: var(--hud-gold); font-size: 22px; }
 .dmg-num.kill { color: var(--hud-danger); }
+/* melee heavy-attack charge meter (under the crosshair) */
+.charge-meter { position: absolute; left: 50%; top: calc(50% + 28px); transform: translateX(-50%); width: 90px; height: 5px; background: rgba(0,0,0,0.5); border-radius: 3px; overflow: hidden; }
+.charge-meter[hidden] { display: none; }
+.charge-meter i { display: block; height: 100%; width: 0; background: var(--hud-accent); }
+.charge-meter.full i { background: #fff; box-shadow: 0 0 8px #fff; }
+.status-line { position: absolute; left: 50%; top: calc(50% + 40px); transform: translateX(-50%); font: 600 11px/1 system-ui, sans-serif; letter-spacing: 0.12em; color: rgba(255,255,255,0.8); text-shadow: 0 1px 2px #000; }
+.toast { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 40; display: flex; gap: 12px; align-items: center; max-width: min(560px, calc(100vw - 32px)); padding: 10px 14px; border-radius: 8px; background: rgba(10,12,16,0.88); color: #fff; font: 13px/1.4 system-ui, sans-serif; box-shadow: 0 4px 20px rgba(0,0,0,0.4); pointer-events: auto; }
+.toast[hidden] { display: none; }
+.toast .btn { white-space: nowrap; }

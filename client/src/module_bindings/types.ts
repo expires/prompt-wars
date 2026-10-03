@@ -47,6 +47,7 @@ export const HitEvent = __t.object("HitEvent", {
   knockZ: __t.f32(),
   slowPercent: __t.f32(),
   headshot: __t.bool(),
+  blocked: __t.bool(),
 });
 export type HitEvent = __Infer<typeof HitEvent>;
 
@@ -108,6 +109,7 @@ export const PlayerCombat = __t.object("PlayerCombat", {
   dotUntil: __t.timestamp(),
   dotSource: __t.identity(),
   dotWeaponId: __t.u64(),
+  lastSwingAt: __t.timestamp(),
 });
 export type PlayerCombat = __Infer<typeof PlayerCombat>;
 
@@ -149,6 +151,8 @@ export const ShotEvent = __t.object("ShotEvent", {
   dx: __t.f32(),
   dy: __t.f32(),
   dz: __t.f32(),
+  charge: __t.f32(),
+  combo: __t.u8(),
 });
 export type ShotEvent = __Infer<typeof ShotEvent>;
 

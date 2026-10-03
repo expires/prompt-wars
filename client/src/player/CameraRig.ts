@@ -54,7 +54,16 @@ export class CameraRig {
     this.punchYawVel += yawDeg * DEG * w * Math.E;
   }
 
+  private shakeAmt = 0;
+  private shakeT = 0;
+
+  /** camera shake (degrees of jitter), decays over ~0.25 s; melee strikes scale it by weight */
+  shake(amountDeg: number) {
+    this.shakeAmt = Math.max(this.shakeAmt, amountDeg * DEG);
+  }
+
   resetPunch() {
+    this.shakeAmt = 0;
     this.punchPitch = this.punchYaw = this.punchPitchVel = this.punchYawVel = 0;
   }
 
@@ -89,6 +98,8 @@ export class CameraRig {
       [this.dip, this.dipVel] = spring(this.dip, this.dipVel, DIP_STIFFNESS, DIP_DAMPING);
     }
 
+    this.shakeT += dt;
+    this.shakeAmt *= Math.exp(-dt * 14);
     // ---- FOV ----
     const base = settings.current.fov;
     const sprintKick = s.sprinting && s.speed > SPRINT_SPEED * 0.75 ? SPRINT_FOV_KICK : 0;
@@ -114,6 +125,11 @@ export class CameraRig {
     }
     camera.rotation.x += this.punchPitch;
     camera.rotation.y += this.punchYaw;
+    if (this.shakeAmt > 1e-5) {
+      camera.rotation.x += Math.sin(this.shakeT * 71) * this.shakeAmt;
+      camera.rotation.y += Math.sin(this.shakeT * 53 + 1.3) * this.shakeAmt * 0.7;
+      camera.rotation.z += Math.sin(this.shakeT * 37 + 0.4) * this.shakeAmt * 0.5;
+    }
     if (Math.abs(camera.fov - this.fov) > 1e-3) {
       camera.fov = this.fov;
       camera.updateProjectionMatrix();
