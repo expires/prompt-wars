@@ -185,6 +185,14 @@ export const CLOSED_PARTS = new Set(['NW', 'W', 'SW']);
 export const CLOSED_D = A_D0 + 24 * (A_ROW_D / 2); // 11.8 (an existing band boundary)
 /** balcony railing band on top of the facade */
 export const CLOSED_RAIL_D1 = A_D0 + 25 * (A_ROW_D / 2); // 12.225
+/**
+ * service tunnels through the folded stands on the closed west side (one per vomitory pair):
+ * a floor-level opening from the facade to the back of the box ring (white walls, dark ceiling,
+ * fluorescent tubes), dressed as the mentors village / chill-out rooms
+ */
+export const RECESS_H = 4.5;
+export const RECESS_D1 = RING_B_END;
+export const isRecessColumn = (c: Pick<Column, 'part' | 'b'>) => c.part === 'W' && c.b === 'vom';
 /** drapes hang just in front of the upper ring, from the box-ring ceiling up to the roof */
 export const DRAPE_D = CROSS_END - 0.12;
 export const DRAPE_Y0 = BOX_CEIL;

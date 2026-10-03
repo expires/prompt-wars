@@ -24,6 +24,9 @@ import {
   CLOSED_D,
   CLOSED_RAIL_D1,
   DRAPE_D,
+  RECESS_D1,
+  RECESS_H,
+  isRecessColumn,
   DRAPE_Y0,
   FLOOR_HALF_X,
   FLOOR_HALF_Z,
@@ -82,6 +85,8 @@ export type SurfaceMat =
   | 'ceiling'
   /** aisle stair risers (concrete, painted row numbers) */
   | 'riser'
+  /** telescopic tier A risers: steel nosing over purple under-lighting */
+  | 'shelf'
   /** folded retractable stands + service doors on the closed end */
   | 'stands'
   /** upper bowl wall: cracked mosaic pattern (visual only where above reach) */
@@ -111,7 +116,35 @@ export type PropMat =
   | 'vending'
   | 'glassdoor'
   | 'drape'
-  | 'metal';
+  | 'metal'
+  /** purple HackYeah fabric banners hung from balcony rails (tag = text variant) */
+  | 'banner'
+  /** pink neon "INFO" sign on the folded stands */
+  | 'neon'
+  /** roll-up banner on a foot (tag = variant) */
+  | 'rollup'
+  /** bean bag (tag = colour) */
+  | 'beanbag'
+  /** black flight case with aluminium edges */
+  | 'case'
+  /** white electrical distribution box */
+  | 'ebox'
+  /** red fire-hose cabinet */
+  | 'cabinet'
+  /** yellow / black cable ramp protector (flat on the floor) */
+  | 'ramp'
+  /** pink TAURON | ARENA KRAKÓW fence banner */
+  | 'fence'
+  /** TV screen on a stand */
+  | 'screen'
+  /** wooden table (mentors village) */
+  | 'wood'
+  /** blue plastic chair (mentors village) */
+  | 'chairblue'
+  /** purple cardboard stand-up sign */
+  | 'standee'
+  /** grey steel service doors (tag 0) / lift doors (tag 1) */
+  | 'greydoor';
 
 interface Iv {
   y0: number;
@@ -198,7 +231,7 @@ function baseCell(col: Column, dm: number): Iv[] {
   if (dm < A_D0) return [{ y0: GROUND, y1: A_WALK_Y, top: 'walk', side: 'concrete' }];
   if (dm < A_END) {
     const aisle = col.a === 'aisle';
-    return [{ y0: GROUND, y1: aTop(dm, aisle), top: aisle ? 'aisle' : 'tier', side: aisle ? 'riser' : 'tier' }];
+    return [{ y0: GROUND, y1: aTop(dm, aisle), top: aisle ? 'aisle' : 'tier', side: aisle ? 'riser' : 'shelf' }];
   }
   if (dm < CROSS_END) return [{ y0: GROUND, y1: LEVEL_B, top: 'walk', side: 'concrete' }];
   if (dm < RING_B_END) return ringB(col, dm);
@@ -214,6 +247,19 @@ function baseCell(col: Column, dm: number): Iv[] {
 
 function cellIntervals(col: Column, d0: number, d1: number): Iv[] {
   const dm = (d0 + d1) / 2;
+  if (col.closed) {
+    // closed end: everything under the balcony is painted white (recess walls, facade returns)
+    const base = baseCell(col, dm).map((iv) => (iv.side === 'concrete' && iv.y1 <= LEVEL_B + EPS ? { ...iv, side: 'wall' as SurfaceMat } : iv));
+    if (!isRecessColumn(col) || dm < CLOSED_D || dm >= RECESS_D1) return base;
+    // service tunnel through the folded stands: concrete floor, solid above RECESS_H
+    const out: Iv[] = [{ y0: GROUND, y1: 0, top: 'walk', side: 'wall' }];
+    for (const iv of base) {
+      const y0 = Math.max(iv.y0, RECESS_H);
+      if (iv.y1 - y0 < 0.3) continue;
+      out.push({ ...iv, y0 });
+    }
+    return out;
+  }
   if (col.a === 'tunnel' && dm < TUN_STAIR_D1) {
     const base = baseCell({ ...col, a: 'seat', b: 'vom' }, dm);
     const ceil = tunnelCeil(dm);
@@ -406,7 +452,9 @@ export function floorClear(x: number, z: number, margin: number): boolean {
 export const TABLE_DEPTH = 0.8;
 export const TABLE_H = 0.75;
 /** hackathon desk rows run along z; x of each row (E block, W block) */
-export const TABLE_ROWS_X = [11, 14.4, 17.8, 21.2, 24.6, 28, -11, -14.4, -17.8, -21.2, -24.6, -28, -31.4, -34.8, -38.2, -41.6];
+export const TABLE_ROWS_X = [11, 14.4, 17.8, 21.2, 24.6, 28, -11, -14.4, -17.8, -21.2, -24.6, -28, -31.4, -34.8, -38.2];
+/** facade plane of the folded stands on the closed (west) end */
+export const FACADE_X = -(FLOOR_HALF_X + CLOSED_D);
 /** centre lane |z| < TABLE_LANE stays open (E tunnel, stage sightline); cross lane gap around |z| ≈ 11.5 */
 const TABLE_LANE = 3.5;
 const CROSS_GAP: [number, number] = [10.6, 12.6];
@@ -490,6 +538,50 @@ function floorProps(): Prop[] {
   }
   // short rows along x beside the stage (north / south of the frame)
   for (const sgn of [1, -1]) for (const z of [11.6, 15.0, 18.4]) box(0, sgn * z, 12, TABLE_H, TABLE_DEPTH, 'table');
+
+  // ---- closed-end lounge between the folded stands (x = FACADE_X) and the last desk row:
+  // pink neon INFO sign + info desk, bean bags, flight cases, red emergency doors, power box
+  const FX = FACADE_X;
+  const IN = -Math.PI / 2; // faces +x (into the arena)
+  box(FX + 0.06, 5.2, 3.4, 1.15, 0.1, 'neon', 2.05, IN, false);
+  box(-45.3, 5.2, 3.6, 0.9, 0.8, 'table', 0, Math.PI / 2);
+  for (const [x, z, t] of [[-43.0, 3.4, 0], [-42.7, 6.9, 1], [-43.4, 8.5, 2], [-41.6, -1.6, 1], [-42.4, -3.2, 0]] as const) {
+    box(x, z, 0.95, 0.55, 0.95, 'beanbag', 0, x * 1.7 + z, true, { tag: t });
+  }
+  box(-46.8, -5.6, 1.2, 0.85, 0.8, 'case', 0, IN);
+  box(-46.8, -5.6, 1.0, 0.7, 0.7, 'case', 0.85, IN + 0.2);
+  box(-46.7, -6.75, 0.8, 1.15, 0.8, 'case', 0, IN);
+  // red quad emergency doors with push bars on the facade, exit sign + fire-hose cabinet beside
+  box(FX + 0.05, -8.4, 3.6, 2.45, 0.08, 'door', 0, IN, false);
+  box(FX + 0.06, -8.4, 0.62, 0.22, 0.05, 'exit', 2.7, IN, false);
+  box(FX + 0.07, -10.6, 0.7, 0.9, 0.12, 'cabinet', 0.55, IN, false);
+  // power distribution box on a blue stand, red bins with black bags
+  box(-46.4, -11.7, 0.9, 0.7, 0.35, 'ebox', 0.45, IN, false);
+  box(-46.4, -11.7, 0.8, 0.45, 0.3, 'metal', 0, IN, false);
+  for (const [x, z] of [[-46.9, -10.0], [-46.3, -9.9], [-44.6, 10.4]] as const) box(x, z, 0.55, 0.85, 0.55, 'bin', 0, 0, false, { cyl: true });
+  // roll-up banners + a TV on a stand
+  for (const [x, z, t] of [[-45.2, 9.3, 0], [-44.6, -4.5, 1], [-41.0, 12.8, 2]] as const) {
+    box(x, z, 0.85, 2.0, 0.04, 'rollup', 0.08, IN + (z > 0 ? 0.35 : -0.25), false, { tag: t });
+    box(x, z, 0.9, 0.08, 0.28, 'metal', 0, IN + (z > 0 ? 0.35 : -0.25), false);
+  }
+  box(-44.0, 1.4, 1.4, 0.82, 0.06, 'screen', 1.15, IN + 0.3, false);
+  box(-44.0, 1.4, 0.06, 1.2, 0.06, 'metal', 0, IN + 0.3, false);
+  box(-44.0, 1.4, 0.7, 0.04, 0.5, 'metal', 0, IN + 0.3, false);
+  // pink TAURON fence banner on the east floor + bins along the tier fronts
+  box(32.4, -16.2, 3.2, 1.1, 0.06, 'fence', 0.1, Math.atan2(32.4, -16.2), false);
+  box(32.4, -16.2, 3.3, 0.06, 0.4, 'metal', 0, Math.atan2(32.4, -16.2), false);
+  for (const [x, z] of [[22.3, 20.9], [-22.3, -20.9], [6.8, 21.0], [-6.8, -21.0], [33.6, 6.6], [24.2, -20.9]] as const) box(x, z, 0.55, 0.85, 0.55, 'bin', 0, 0, false, { cyl: true });
+  // cable ramp protectors across the walking lanes (flat, no collision)
+  const ramp = (x: number, z: number, len: number, alongZ: boolean) => box(x, z, len, 0.05, 0.5, 'ramp', 0, alongZ ? Math.PI / 2 : 0, false);
+  ramp(19.5, 0, 7.2, true);
+  ramp(-24.6 + 1.7, 0, 7.2, true);
+  ramp(-36.5, 0, 7.2, true);
+  ramp(-42.0, -2.0, 9.0, true);
+  ramp(12.7, 11.6, 2.4, true);
+  ramp(-19.5, -11.6, 2.4, true);
+  ramp(-30.0, 11.6, 2.4, true);
+  ramp(4.0, -9.6, 6.0, false);
+  ramp(-4.0, 9.6, 6.0, false);
   return P;
 }
 
@@ -536,7 +628,7 @@ function bowlProps(): Prop[] {
       P.push(propAt(j, fEnd, 19.62, LEVEL_B + 1.95, span, 0.1, 0.12, 'door', false));
       P.push(propAt(j, fEnd, 19.55, LEVEL_B + 2.07, 0.5, 0.17, 0.05, 'exit', false));
       // fire-hose cabinet on the left wall
-      P.push(propAt(j, 0.035, 17.3, LEVEL_B + 0.55, 0.1, 0.95, 0.7, 'door', false));
+      P.push(propAt(j, 0.035, 17.3, LEVEL_B + 0.55, 0.1, 0.95, 0.7, 'cabinet', false));
       // hanging red sector sign in the concourse in front of the vomitory
       P.push({ ...propAt(j, fEnd, 22.4, LEVEL_B + 2.7, 2.8, 0.7, 0.08, 'sign', false), tag: col.sector % 2 });
       // glass entrance doors + turnstiles on the outer wall behind every other sector
@@ -557,12 +649,40 @@ function bowlProps(): Prop[] {
     // ---- vending machine against the outer wall, every few sectors
     if (col.b === 'box' && columns[(j - 1 + n) % n]!.b === 'door' && columns[(j - 1 + n) % n]!.a === 'aisle') {
       P.push(propAt(j, 0.5, 29.35, LEVEL_B, 0.95, 1.9, 0.8, 'vending'));
+      // steel lift doors next to it on every other kiosk
+      if (j % 2 === 0) P.push({ ...propAt(j, 0.5, CONC_D1 - 0.03, LEVEL_B, 1.6, 2.3, 0.06, 'greydoor', false), tag: 1 });
+    }
+    // ---- service tunnels through the folded stands (mentors village / chill-out rooms)
+    if (isRecessColumn(col) && col.a === 'aisle') {
+      const mentors = col.sector % 2 === 1;
+      // grey double doors + exit signs on the back wall, purple banner over the opening
+      P.push({ ...propAt(j, 1, RECESS_D1 - 0.05, 0, 2.4, 2.4, 0.08, 'greydoor', false), tag: 0 });
+      P.push(propAt(j, 1, RECESS_D1 - 0.08, 2.6, 0.62, 0.22, 0.05, 'exit', false));
+      P.push({ ...propAt(j, 1, CLOSED_D - 0.04, LEVEL_B - 1.85, 3.2, 1.8, 0.03, 'banner', false), tag: mentors ? 0 : 1 });
+      P.push(propAt(j, 1, CLOSED_D - 0.05, RECESS_H + 0.15, 0.62, 0.22, 0.05, 'exit', false));
+      if (mentors) {
+        // wooden tables + blue chairs along one wall
+        for (const d of [14.2, 17.4]) {
+          P.push(propAt(j, 0.33, d, 0, 0.8, 0.75, 2.4, 'wood'));
+          for (const dd of [-0.7, 0, 0.7]) P.push(propAt(j, 0.83, d + dd, 0, 0.45, 0.85, 0.45, 'chairblue', false));
+        }
+        P.push(propAt(j, 1.7, CLOSED_D - 1.2, 0, 0.8, 1.7, 0.05, 'standee', false));
+      } else {
+        P.push({ ...propAt(j, 0.6, 14.8, 0, 0.95, 0.55, 0.95, 'beanbag'), tag: 0 });
+        P.push({ ...propAt(j + 1, 0.4, 16.6, 0, 0.95, 0.55, 0.95, 'beanbag'), tag: 1 });
+      }
     }
     // ---- closed end: black drapes in front of the upper ring, box-ring ceiling → roof
     if (col.closed) {
       const top = roofYAt(DRAPE_D) + 0.3;
       P.push(propAt(j, 0.5, DRAPE_D, DRAPE_Y0, columnWidth(j, DRAPE_D) + 0.03, top - DRAPE_Y0, 0.15, 'drape'));
     }
+  }
+  // ---- purple HackYeah banners hung from the C walkway rail over the LED fascia
+  const byPart = (part: string, n: number) => columns.filter((c) => c.part === part && c.b === 'box')[n]!;
+  for (const [part, n, tag] of [['N', 7, 2], ['S', 3, 3], ['E', 1, 4], ['N', 2, 5]] as const) {
+    const c = byPart(part, n);
+    P.push({ ...propAt(c.index, 0.5, CROSS_END - 0.06, C_WALK_Y + 0.95 - 2.3, 3.0, 2.3, 0.03, 'banner', false), tag });
   }
   return P;
 }

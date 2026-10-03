@@ -19,6 +19,9 @@ import {
   C_WALK_Y,
   FLOOR_STAIR_D0,
   LEVEL_B,
+  RECESS_D1,
+  RECESS_H,
+  isRecessColumn,
   TUN_STAIR_D0,
   TUN_STAIR_D1,
   columnPoint,
@@ -347,6 +350,32 @@ describe('tauron-remake routes are climbable (autostep 0.4 m)', () => {
     const pr = profile(vom.index, CLOSED_D + 1, CONC_D1 - 1, () => 12);
     for (const p of pr) expect(p.y).toBeCloseTo(LEVEL_B, 3);
     expect(geo.props.filter((p) => p.mat === 'drape').length).toBeGreaterThan(20);
+  });
+
+  it('closed west end: service tunnels through the folded stands are open, roofed and dressed', () => {
+    const tunnels = layout().columns.filter((c) => isRecessColumn(c) && c.a === 'aisle');
+    expect(tunnels.length).toBe(2);
+    for (const c of tunnels) {
+      for (const d of [CLOSED_D + 0.5, (CLOSED_D + RECESS_D1) / 2, RECESS_D1 - 0.5]) {
+        const p = columnPoint(c.index, 1, d);
+        // floor level inside, 4.5 m ceiling, balcony / concourse level still on top
+        expect(groundAt(p.x, p.z, 2)!.y, `tunnel floor d=${d}`).toBeCloseTo(0, 3);
+        const up = solid.ray([p.x, 0.1, p.z], [0, 1, 0], 20)!;
+        expect(0.1 + up.t, `tunnel ceiling d=${d}`).toBeCloseTo(RECESS_H, 3);
+        expect(groundAt(p.x, p.z, LEVEL_B + 1.5)!.y).toBeCloseTo(LEVEL_B, 3);
+      }
+      // walkable in: a 0.8 m wide lane from the facade to the back wall is free of colliders
+      for (let d = CLOSED_D - 1; d < RECESS_D1 - 0.6; d += 0.25) {
+        const lane = [0.85, 1.2, 1.55].map((f) => columnPoint(c.index, f, d));
+        const free = lane.some((p) => !solid.ray([p.x, 0.6, p.z], [0, 1, 0], 1.5) && groundAt(p.x, p.z, 1)!.y < 0.01);
+        expect(free, `tunnel lane d=${d.toFixed(2)}`).toBe(true);
+      }
+    }
+    const mats = new Set(geo.props.map((p) => p.mat));
+    for (const m of ['banner', 'neon', 'greydoor', 'rollup', 'beanbag', 'case', 'ramp', 'wood'] as const) expect(mats.has(m), m).toBe(true);
+    expect(geo.props.filter((p) => p.mat === 'banner').length).toBeGreaterThanOrEqual(6);
+    // decorative clutter never collides; only big items do
+    for (const p of geo.props) if (['banner', 'neon', 'rollup', 'ramp', 'screen', 'fence', 'ebox', 'cabinet', 'standee', 'chairblue'].includes(p.mat)) expect(p.collide, p.mat).toBe(false);
   });
 
   it('hackathon desks leave the floor routes open', () => {

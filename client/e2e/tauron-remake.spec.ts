@@ -199,6 +199,16 @@ test('tauron-remake: viewpoints + perf', async ({ page }) => {
     { name: '10-c-stair-from-concourse', feet: pt(cs.index, 25.5, LEVEL_B + 0.05, 0.5), look: pt(cs.index, 17.5, 12.5) },
     { name: '11-desk-rows-floor-level', feet: [-12.7, 0.05, -8], look: [-30, 1, -14] },
     { name: '12-balcony-closed-end', feet: pt(closedBox.index, 13.6, LEVEL_B + 0.05), look: [10, 4, 0] },
+    // HackYeah 2026 photo set 2: bowl from the red door, telescopic tiers, jumbotron, ceiling,
+    // closed-end lounge (INFO neon, red emergency doors), service tunnel / mentors village
+    { name: '13-bowl-wide-from-red-door', feet: [-33, 0.05, -18.5], look: [12, 10, 4] },
+    { name: '14-under-telescopic-tiers', feet: [-4, 0.05, -20.6], look: [22, 3.2, -23.2] },
+    { name: '15-jumbotron-close', feet: [15, 0.05, 7], look: [0, 16.5, 0] },
+    { name: '16-ceiling-truss-ducts', feet: [8, 0.05, -14], look: [-2, 30, -2] },
+    { name: '17-closed-end-red-doors', feet: [-38, 0.05, -4], look: [-47.8, 2.2, -9.5] },
+    { name: '18-info-lounge', feet: [-37.5, 0.05, 3.5], look: [-47.8, 3.0, 4.0] },
+    { name: '19-mentors-village-tunnel', feet: [-39.5, 0.05, 8.5], look: [-47.8, 3.5, 11.3] },
+    { name: '20-inside-mentors-room', feet: [-48.6, 0.05, 11.2], look: [-55.5, 1.6, 11.3] },
   ];
   for (const v of views) {
     await page.evaluate(
@@ -215,31 +225,49 @@ test('tauron-remake: viewpoints + perf', async ({ page }) => {
     await page.screenshot({ path: resolve(OUT, `${v.name}.png`) });
   }
 
-  // ---- perf: rAF rate over 3 s from the floor (whole bowl in view) + draw calls of one frame
-  await page.evaluate(() => {
-    const h = (window as unknown as Win).__game;
-    h.teleport(30, 0.05, 0);
-    h.lookAt(-30, 6, 0);
-  });
-  await page.waitForTimeout(500);
-  const perf = await page.evaluate(
-    () =>
-      new Promise<{ fps: number; calls: number; triangles: number }>((res) => {
-        const g = (window as unknown as Win).game;
-        let n = 0;
-        const t0 = performance.now();
-        const tick = () => {
-          n++;
-          if (performance.now() - t0 < 3000) return requestAnimationFrame(tick);
-          const r = g.rc.renderer;
-          r.info.reset();
-          r.render(g.rc.scene, g.rc.camera);
-          res({ fps: (n * 1000) / (performance.now() - t0), calls: r.info.render.calls, triangles: r.info.render.triangles });
-        };
-        requestAnimationFrame(tick);
-      }),
-  );
-  console.log(`[perf] fps=${perf.fps.toFixed(1)} (SwiftShader software GL) drawCalls=${perf.calls} triangles=${perf.triangles}`);
+  // ---- perf: rAF rate over 3 s + draw calls / triangles of one frame at several viewpoints
+  // (SwiftShader software GL here; real-GPU numbers: e2e/tauron-remake-gpu-perf.mjs)
+  const perfViews: [string, [number, number, number], [number, number, number]][] = [
+    ['floor east → bowl', [30, 0.05, 0], [-30, 6, 0]],
+    ['floor → jumbotron', [19, 0.05, 1.8], [0, 14, -1]],
+    ['desk rows west', [-12.7, 0.05, -8], [-30, 1, -14]],
+    ['closed-end lounge', [-37.5, 0.05, 3.5], [-47.8, 3.0, 4.0]],
+    ['concourse', [0, 9.5, 46], [20, 10.5, 46]],
+  ];
+  const perf: { view: string; fps: number; calls: number; triangles: number }[] = [];
+  for (const [view, f, l] of perfViews) {
+    await page.evaluate(
+      ([f, l]) => {
+        const h = (window as unknown as Win).__game;
+        h.teleport(f[0], f[1], f[2]);
+        h.lookAt(l[0], l[1], l[2]);
+      },
+      [f, l] as const,
+    );
+    await page.waitForTimeout(500);
+    const r = await page.evaluate(
+      ([l]) =>
+        new Promise<{ fps: number; calls: number; triangles: number }>((res) => {
+          const w = window as unknown as Win;
+          const g = w.game;
+          let n = 0;
+          const t0 = performance.now();
+          const tick = () => {
+            n++;
+            if (performance.now() - t0 < 3000) return requestAnimationFrame(tick);
+            w.__game.lookAt(l[0], l[1], l[2]);
+            const r = g.rc.renderer;
+            r.info.reset();
+            r.render(g.rc.scene, g.rc.camera);
+            res({ fps: (n * 1000) / (performance.now() - t0), calls: r.info.render.calls, triangles: r.info.render.triangles });
+          };
+          requestAnimationFrame(tick);
+        }),
+      [l] as const,
+    );
+    perf.push({ view, ...r });
+    console.log(`[perf] ${view}: fps=${r.fps.toFixed(1)} drawCalls=${r.calls} triangles=${r.triangles}`);
+  }
   writeFileSync(resolve(OUT, 'perf.json'), JSON.stringify(perf, null, 2));
-  expect(perf.calls).toBeLessThan(150);
+  for (const p of perf) expect(p.calls, p.view).toBeLessThan(150);
 });

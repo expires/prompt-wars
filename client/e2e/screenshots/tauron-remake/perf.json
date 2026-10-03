@@ -1,5 +1,32 @@
-{
-  "fps": 2.4247567665780907,
-  "calls": 107,
-  "triangles": 486206
-}
+[
+  {
+    "view": "floor east → bowl",
+    "fps": 2.813731007320944,
+    "calls": 108,
+    "triangles": 405860
+  },
+  {
+    "view": "floor → jumbotron",
+    "fps": 1.858390633714637,
+    "calls": 103,
+    "triangles": 419216
+  },
+  {
+    "view": "desk rows west",
+    "fps": 2.7755504841589547,
+    "calls": 78,
+    "triangles": 441396
+  },
+  {
+    "view": "closed-end lounge",
+    "fps": 3.318400530944085,
+    "calls": 72,
+    "triangles": 428776
+  },
+  {
+    "view": "concourse",
+    "fps": 3.1704765226273413,
+    "calls": 86,
+    "triangles": 367544
+  }
+]
