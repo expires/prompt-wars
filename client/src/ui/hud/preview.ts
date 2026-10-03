@@ -50,7 +50,7 @@ if (view === 'hud' || view === 'both') {
   hud.setCharge(melee ? 1 : 0);
   hud.setStatus(q.get('status') ?? 'Sprinting');
   if (q.get('toast') !== '0' && view !== 'both')
-    hud.toast('Weapon forged: <b>Banana Sniper MK-II</b> is ready.', { type: 'forge', ms: 1e9, action: { label: 'Equip', onClick: () => {} } });
+    hud.toast('Forged <b>Banana Sniper MK-II</b>', { type: 'forge', ms: 1e9, action: { label: 'Equip', onClick: () => {} } });
   if (q.get('toasts') === '2') hud.toast('Connection restored.', { type: 'success', ms: 1e9 });
   if (q.get('debug') === '1') hud.setDebug('pos 12.3 4.0 -8.1\nvel 0.0 0.0 0.0\nstate grounded');
   hud.setScoreboardRows(
@@ -61,7 +61,7 @@ if (view === 'hud' || view === 'both') {
       { id: '4', name: 'Kaboomer', weapon: 'Thunder Kazoo', tier: 2, kills: 6, deaths: 9, hsPct: 12, ping: 178, you: false, alive: true },
       { id: '5', name: 'Pixel_Pete', weapon: 'Rusty Pistol', tier: 1, kills: 2, deaths: 12, hsPct: 8, ping: null, you: false, alive: true },
     ],
-    'ai-gaem · EU-1 · 5 players online',
+    'Prompt Wars · EU-1 · 5 players online',
   );
   hud.forceScoreboard = q.get('sb') === '1';
   hud.update(0.2); // status line delay

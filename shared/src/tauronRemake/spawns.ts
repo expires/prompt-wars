@@ -25,6 +25,9 @@ function nthColumn(part: string, pred: (c: Column) => boolean, n: number): Colum
   return c;
 }
 
+/** spawn only on the central event floor (around the stage) */
+const CENTRAL_ONLY = true;
+
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 function at(col: Column, d: number, y: number): RemakeSpawn {
@@ -40,6 +43,9 @@ function buildSpawns(): RemakeSpawn[] {
     [31.5, 0, -10], [31.5, 0, 10], [9, 0, 0], [12.7, 0, -15], [12.7, 0, 15], [-12.7, 0, -8], [-27.5, 0, 0], [-2, 1.2, 2],
   ];
   for (const [x, y, z] of floor) out.push({ x, y: r3(y + LIFT), z, yaw: r3(faceCentre(x, z)) });
+  // Everyone spawns on the central event floor for now; the tier / concourse spawns below are
+  // kept for later (set CENTRAL_ONLY = false to re-enable them).
+  if (CENTRAL_ONLY) return out;
 
   const box = (c: Column) => c.b === 'box';
   // ---- tier A (6): on seat rows (seats are visual only), mid-row

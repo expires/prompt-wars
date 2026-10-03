@@ -56,7 +56,7 @@ export class Landing {
       <div class="landing-left">
         <div class="landing-status" data-k="status"><span class="dot"></span><span></span></div>
         <h1 class="landing-logo">Prompt<br><span class="accent">Wars</span></h1>
-        <p class="landing-tagline">prompt your weapon. <b>frag your friends.</b></p>
+        <p class="landing-tagline">Prompt a weapon. <b>Win the arena.</b></p>
         <div class="landing-field">
           <label class="ui-micro" for="callsign-input">Callsign</label>
           <div class="landing-callsign">
@@ -68,16 +68,16 @@ export class Landing {
         <p class="landing-hint" data-k="hint"></p>
         <div class="landing-controls">
           <span class="ui-kbd"><span>WASD</span></span><span>move · <span class="ui-kbd"><span>Space</span></span> jump · <span class="ui-kbd"><span>Shift</span></span> sprint · <span class="ui-kbd"><span>C</span></span> crouch</span>
-          <span class="ui-kbd"><span>Mouse</span></span><span>aim / fire · right mouse ADS · <span class="ui-kbd"><span>R</span></span> reload</span>
-          <span class="ui-kbd"><span>Esc</span></span><span>menu · redeploy · weapon forge · settings</span>
+          <span class="ui-kbd"><span>Mouse</span></span><span>aim · LMB fire · RMB ADS · <span class="ui-kbd"><span>R</span></span> reload</span>
+          <span class="ui-kbd"><span>Esc</span></span><span>menu</span>
         </div>
       </div>
       <div class="landing-right">
-        <div class="ui-micro"><span>Your loadout</span></div>
+        <div class="ui-micro"><span>Loadout</span></div>
         <div data-k="card" data-testid="landing-loadout"></div>
-        <button class="ui-btn ui-btn--forge landing-forge" data-k="forge" data-testid="landing-forge"><span class="spark">${icon('spark')}</span><span>Weapon Forge</span></button>
+        <button class="ui-btn ui-btn--forge landing-forge" data-k="forge" data-testid="landing-forge"><span class="spark">${icon('spark')}</span><span>Forge weapon</span></button>
         <div class="landing-quick">
-          <span class="ui-micro">Impatient? Quick pick a classic</span>
+          <span class="ui-micro">Or pick a preset</span>
           <div class="landing-quick-row" data-k="quick"></div>
         </div>
       </div>`;
@@ -131,8 +131,8 @@ export class Landing {
     this.play.disabled = !!s.busy;
     this.forgeBtn.disabled = !!s.busy;
     this.hint.innerHTML = s.needsLoadout
-      ? 'New here? <b>Forge your first weapon</b> — describe anything and it’s built from scratch. PLAY takes you to the Forge.'
-      : `Deploying with <b>${esc(s.weapon?.name ?? 'your weapon')}</b>. Change it any time from the Forge.`;
+      ? '<b>Forge a weapon</b> to start.'
+      : `Deploying with <b>${esc(s.weapon?.name ?? 'your weapon')}</b>`;
     renderWeaponCard(this.card, s.weapon ? cardDataFor(s.weapon, s.weapon.owner ? s.callsign : undefined) : null);
     const st = this.statusEl;
     st.className = `landing-status ${s.statusKind ?? 'ok'}`;
@@ -140,7 +140,7 @@ export class Landing {
     const presets = QUICK.map((c) => s.presets.find((p) => p.cls === c)).filter(Boolean) as LandingState['presets'];
     this.quick.innerHTML = presets.length
       ? presets.map((p) => `<button class="ui-chip" data-preset="${esc(p.id)}" data-cls="${esc(p.cls)}" data-testid="quick-pick-${esc(p.cls)}" ${s.busy ? 'disabled' : ''}><span>${esc(p.name)}</span></button>`).join('')
-      : '<span class="ui-micro">connecting…</span>';
+      : '<span class="ui-micro">Connecting…</span>';
   }
 
   hide() {

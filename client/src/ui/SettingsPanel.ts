@@ -125,7 +125,7 @@ export class SettingsPanel {
     this.buildAudio(this.tabs.get('audio')!.panel);
 
     const foot = el('div', 'st-foot');
-    foot.append(el('span', 'st-foot__note', `${icon('check', 'ui-icon')}<span>Changes save automatically</span>`));
+    foot.append(el('span', 'st-foot__note', `${icon('check', 'ui-icon')}<span>Saves automatically</span>`));
     const reset = el('button', 'ui-btn ui-btn--secondary ui-btn--sm st-reset', `${icon('reset', 'ui-icon')}<span>Reset to defaults</span>`);
     reset.type = 'button';
     reset.dataset.testid = 'settings-reset';
@@ -163,9 +163,9 @@ export class SettingsPanel {
 
   private buildControls(p: HTMLElement) {
     this.section(p, 'Movement & actions');
-    this.row(p, 'Trackpad mode', 'Autorun on T, toggle crouch / sprint / aim, arrow & Q E turning, +25% sensitivity', this.toggle('trackpadMode', 'Trackpad mode'));
+    this.row(p, 'Trackpad mode', 'T autorun, toggles, key turning', this.toggle('trackpadMode', 'Trackpad mode'));
     this.row(p, 'Crouch', 'C / Ctrl', this.toggle('crouchToggle', 'Crouch mode', ['Hold', 'Toggle']));
-    this.row(p, 'Sprint', 'Shift — toggle cancels when you stop moving forward', this.toggle('sprintToggle', 'Sprint mode', ['Hold', 'Toggle']));
+    this.row(p, 'Sprint', 'Shift', this.toggle('sprintToggle', 'Sprint mode', ['Hold', 'Toggle']));
     this.row(p, 'Aim down sights', 'Right mouse', this.toggle('adsToggle', 'Aim mode', ['Hold', 'Toggle']));
     this.slider(p, { key: 'keyTurnSpeed', label: 'Key turn speed', desc: 'Arrow keys / Q E', min: 30, max: 360, step: 5, unit: '°/s' });
 
@@ -181,8 +181,8 @@ export class SettingsPanel {
 
   private buildMouse(p: HTMLElement) {
     this.section(p, 'Mouse');
-    this.slider(p, { key: 'sensitivity', label: 'Sensitivity', desc: 'Look speed (hip fire)', min: 0.1, max: 4, step: 0.05, decimals: 2 });
-    this.slider(p, { key: 'adsSensitivity', label: 'ADS sensitivity', desc: 'Multiplier while aiming down sights', min: 0.3, max: 2, step: 0.05, decimals: 2, unit: '×' });
+    this.slider(p, { key: 'sensitivity', label: 'Sensitivity', desc: 'Hip fire', min: 0.1, max: 4, step: 0.05, decimals: 2 });
+    this.slider(p, { key: 'adsSensitivity', label: 'ADS sensitivity', desc: 'While aiming', min: 0.3, max: 2, step: 0.05, decimals: 2, unit: '×' });
     this.row(p, 'Invert Y', 'Mouse up looks down', this.toggle('invertY', 'Invert mouse Y'));
 
     this.section(p, 'Crosshair');
@@ -202,21 +202,21 @@ export class SettingsPanel {
     this.section(p, 'Gamepad');
     this.slider(p, { key: 'gamepadSensitivity', label: 'Look speed', desc: 'Right stick', min: 0.2, max: 3, step: 0.05, decimals: 2, unit: '×' });
     this.slider(p, { key: 'gamepadDeadzone', label: 'Deadzone', desc: 'Ignore small stick movement', min: 0, max: 0.5, step: 0.01, decimals: 2 });
-    this.row(p, 'Aim slowdown', 'Slow the look over enemies', this.toggle('gamepadAimSlowdown', 'Gamepad aim slowdown'));
+    this.row(p, 'Aim slowdown', 'Slower look over enemies', this.toggle('gamepadAimSlowdown', 'Gamepad aim slowdown'));
   }
 
   private buildVideo(p: HTMLElement) {
     this.section(p, 'Display');
     this.slider(p, { key: 'fov', label: 'Field of view', desc: 'Vertical, degrees', min: 60, max: 100, step: 1, unit: '°' });
-    this.row(p, 'Head bob', 'Camera sway while moving + landing dip', this.toggle('headBob', 'Head bob'));
-    this.row(p, 'Show FPS', 'Ping / FPS in the top-left corner', this.toggle('showFps', 'Show FPS'));
+    this.row(p, 'Head bob', 'Camera sway', this.toggle('headBob', 'Head bob'));
+    this.row(p, 'Show FPS', 'Top-left corner', this.toggle('showFps', 'Show FPS'));
 
     this.section(p, 'Accessibility');
-    this.row(p, 'Enemy color', 'Names, damage indicators, death screen', this.enemySwatches());
+    this.row(p, 'Enemy color', 'Names and indicators', this.enemySwatches());
     this.row(
       p,
       'Color vision',
-      'Swaps health / damage colors for distinguishable ones',
+      'Colorblind-safe colors',
       this.radio('colorblind', 'Color vision preset', [
         { value: 'off', label: 'Off' },
         { value: 'protanopia', label: 'Protan' },
@@ -227,7 +227,7 @@ export class SettingsPanel {
     this.row(
       p,
       'Reduced motion',
-      'Auto follows your system setting',
+      'Auto follows system',
       this.radio('reducedMotion', 'Reduced motion', [
         { value: 'auto', label: 'Auto' },
         { value: 'off', label: 'Off' },
@@ -235,7 +235,7 @@ export class SettingsPanel {
       ]),
     );
     this.slider(p, { key: 'screenShake', label: 'Screen shake', min: 0, max: 1, step: 0.05, scale: 100, unit: '%' });
-    this.slider(p, { key: 'vignetteIntensity', label: 'Damage vignette', desc: 'Low-health and hit edge glow', min: 0, max: 1, step: 0.05, scale: 100, unit: '%' });
+    this.slider(p, { key: 'vignetteIntensity', label: 'Damage vignette', desc: 'Edge glow on hits', min: 0, max: 1, step: 0.05, scale: 100, unit: '%' });
     this.row(
       p,
       'Text size',

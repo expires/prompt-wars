@@ -38,14 +38,14 @@ export class PauseMenu {
         <p class="pause-sub" data-k="sub"></p>
         <button class="pause-item primary" data-k="resume" data-testid="pause-resume">${icon('play')}<span class="grow">Resume</span><span class="ui-kbd"><span>Esc</span></span></button>
         <button class="pause-item" data-k="redeploy" data-testid="pause-redeploy">${icon('redeploy')}<span class="grow">Redeploy</span><span class="note">change loadout</span></button>
-        <button class="pause-item pause-item--forge" data-k="forge" data-testid="pause-forge">${icon('spark')}<span class="grow">Weapon Forge</span><span class="note">next deploy</span></button>
+        <button class="pause-item pause-item--forge" data-k="forge" data-testid="pause-forge">${icon('spark')}<span class="grow">Forge weapon</span><span class="note">next deploy</span></button>
         <button class="pause-item" data-k="settings" data-testid="pause-settings" aria-expanded="false">${icon('gear')}<span class="grow">Settings</span>${icon('chevron', 'ui-icon ui-icon--sm')}</button>
         <div class="pause-spacer"></div>
         <button class="pause-item leave" data-k="leave" data-testid="pause-leave">${icon('exit')}<span class="grow">Leave</span></button>
       </nav>
       <section class="pause-main">
         <div class="pause-summary" data-k="summary">
-          <span class="ui-micro">Current loadout</span>
+          <span class="ui-micro">Loadout</span>
           <div data-k="card"></div>
         </div>
         <div class="pause-settings" data-k="settingsHost" hidden></div>

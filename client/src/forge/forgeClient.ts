@@ -43,10 +43,10 @@ export function describeForgeError(e: unknown): string {
       const m = Math.floor(e.retryAfter / 60);
       const s = e.retryAfter % 60;
       const wait = e.retryAfter > 0 ? ` Try again in ${m ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`}.` : '';
-      return `The forge is cooling down (20 forges per 10 min).${wait}`;
+      return `Forge limit reached (20 per 10 min).${wait}`;
     }
-    if (e.kind === 'timeout') return 'The forge took too long to answer. Try again.';
-    if (e.kind === 'network') return 'Can’t reach the forge right now. Check your connection and retry.';
+    if (e.kind === 'timeout') return 'Forge timed out. Try again.';
+    if (e.kind === 'network') return 'Can’t reach the forge. Check your connection.';
     if (e.kind === 'aborted') return 'Cancelled.';
     return e.message;
   }
@@ -112,7 +112,7 @@ export async function streamForge(req: ForgeGenerateRequest, onEvent: (ev: Forge
       try {
         onEvent(JSON.parse(line) as ForgeEvent);
       } catch (e) {
-        if (e instanceof SyntaxError) throw new ForgeError('bad response from the forge', 'stream');
+        if (e instanceof SyntaxError) throw new ForgeError('Bad response from the forge. Try again.', 'stream');
         throw e;
       }
     };
@@ -123,7 +123,7 @@ export async function streamForge(req: ForgeGenerateRequest, onEvent: (ev: Forge
       } catch {
         if (timedOut) throw new ForgeError('forge timeout', 'timeout');
         if (ac.signal.aborted) throw new ForgeError('cancelled', 'aborted');
-        throw new ForgeError('connection to the forge was lost', 'network');
+        throw new ForgeError('Lost connection to the forge.', 'network');
       }
       if (chunk.done) break;
       bump();

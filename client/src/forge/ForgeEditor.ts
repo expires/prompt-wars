@@ -41,20 +41,19 @@ export interface ForgeEditorHandle {
 
 const LETTERS = ['A', 'B', 'C'];
 const STARTERS = [
-  'a banana-powered sniper rifle',
+  'banana sniper rifle',
   'steampunk crocodile revolver',
-  'jellyfish plasma rifle with dangling glow tendrils',
-  'giant squeaky rubber duck war hammer',
-  'medieval flail with a spiked disco ball',
-  'pirate blunderbuss that fires seashells',
+  'jellyfish plasma rifle',
+  'rubber duck war hammer',
+  'disco ball flail',
+  'seashell blunderbuss',
 ];
-const MODIFIERS_GUN = ['make it chrome', 'more glow', 'add a scope', 'shorter barrel, faster fire', 'heavier hits, slower fire', 'make it sillier', 'add a drum magazine', 'gold and black palette'];
-const MODIFIERS_MELEE = ['longer reach', 'make it chrome', 'add glowing runes', 'heavier head, slower swing', 'make it sillier', 'add spikes', 'gold and black palette'];
+const MODIFIERS_GUN = ['make it chrome', 'more glow', 'add a scope', 'faster fire', 'harder hits', 'make it sillier', 'add a drum magazine', 'gold and black palette'];
+const MODIFIERS_MELEE = ['longer reach', 'make it chrome', 'add glowing runes', 'heavier swing', 'make it sillier', 'add spikes', 'gold and black palette'];
 const PLACEHOLDERS = [
-  'Describe a weapon… “a toaster that shoots flaming bagels”',
-  'Describe a weapon… “a cactus shotgun with needle pellets”',
-  'Describe a weapon… “an ice-cream cone mace”',
-  'Describe a weapon… “a retro ray gun with tail fins”',
+  'Describe a weapon, e.g. “cactus shotgun”',
+  'Describe a weapon, e.g. “ice-cream mace”',
+  'Describe a weapon, e.g. “retro ray gun”',
 ];
 
 const COMPONENT_DESC = (c: Component): string => {
@@ -142,7 +141,7 @@ class ForgeEditor implements ForgeEditorHandle {
           <div><span class="ui-kbd"><span>1</span></span> keep · <span class="ui-kbd"><span>2</span></span> lock · <span class="ui-kbd"><span>3</span></span> reject the focused part</div>
           <div><span class="ui-kbd"><span>↑</span></span><span class="ui-kbd"><span>↓</span></span> move between parts</div>
           <div><span class="ui-kbd"><span>⌘/Ctrl</span></span> + <span class="ui-kbd"><span>Enter</span></span> reforge · <span class="ui-kbd"><span>Esc</span></span> cancel / close</div>
-          <div class="forge-help-dim">LOCK keeps a part verbatim. KEEP asks the forge to keep it. REJECT removes it on the next reforge.</div>
+          <div class="forge-help-dim">Lock: exact. Keep: similar. Reject: removed.</div>
         </div>
       </header>
       <section class="forge-comps" aria-label="Components">
@@ -157,8 +156,8 @@ class ForgeEditor implements ForgeEditorHandle {
         <div class="forge-stage-frame" data-k="frame"></div>
         <div class="forge-empty" data-k="empty">
           <div class="forge-empty-mark">${icon('spark', 'ui-icon ui-icon--lg')}</div>
-          <div class="forge-empty-title">Describe it. We’ll forge it.</div>
-          <div class="forge-empty-sub">Every part is designed from scratch by the forge — then you keep, lock or reject pieces and reforge.</div>
+          <div class="forge-empty-title">Describe a weapon</div>
+          <div class="forge-empty-sub">Then keep, lock or reject parts and reforge.</div>
         </div>
         <div class="forge-status" data-k="status" data-testid="forge-status" aria-live="polite"></div>
         <div class="forge-stage-tools">
@@ -609,7 +608,7 @@ class ForgeEditor implements ForgeEditorHandle {
       list.append(sk);
     }
     if (!comps.length && !skeletons) {
-      if (!list.querySelector('.forge-list-empty')) list.append(el('div', 'forge-list-empty', 'Parts appear here as the forge builds them.'));
+      if (!list.querySelector('.forge-list-empty')) list.append(el('div', 'forge-list-empty', 'Parts appear here.'));
     } else list.querySelector('.forge-list-empty')?.remove();
     this.$.count.textContent = comps.length ? (s.busy && !draft?.design ? `${comps.length}` : `${comps.length}/${comps.length}`) : '';
   }
@@ -634,7 +633,7 @@ class ForgeEditor implements ForgeEditorHandle {
   private renderStats(_s: ForgeSessionState, design: ForgeDesign | null, draft: ForgeDraft | null) {
     if (!design) {
       renderWeaponCard(this.$.card, null);
-      this.$.stats.innerHTML = `<div class="forge-stats-empty ui-micro">Stats appear once the forge picks a class</div>`;
+      this.$.stats.innerHTML = `<div class="forge-stats-empty ui-micro">Stats appear here</div>`;
       return;
     }
     const raw = draft?.stats ?? design.stats;
@@ -679,7 +678,7 @@ class ForgeEditor implements ForgeEditorHandle {
       <div class="forge-budget ${over ? 'over' : ''}">
         <div class="forge-budget-head"><span class="ui-micro">Balance budget</span><span class="ui-num">${Math.round(budget.usage * 100)}%</span></div>
         <div class="forge-budget-bar">${bh}</div>
-        ${over ? `<div class="forge-nerf" data-testid="forge-nerf">${icon('warning', 'ui-icon ui-icon--sm')}<span>server will nerf${budget.nerfs.length ? `: ${esc(budget.nerfs.join(' · '))}` : ' to fit the budget'}</span></div>` : ''}
+        ${over ? `<div class="forge-nerf" data-testid="forge-nerf">${icon('warning', 'ui-icon ui-icon--sm')}<span>Over budget, nerfed${budget.nerfs.length ? `: ${esc(budget.nerfs.join(' · '))}` : ''}</span></div>` : ''}
       </div>`;
   }
 
@@ -688,7 +687,7 @@ class ForgeEditor implements ForgeEditorHandle {
     const host = this.$.tiles;
     this.root.classList.toggle('has-variants', drafts.length > 1);
     if (drafts.length <= 1) {
-      host.innerHTML = `<div class="forge-variants-hint">${icon('compare', 'ui-icon ui-icon--sm')}<span>Pick <b>×2</b> or <b>×3</b> to forge variants side by side.</span></div>`;
+      host.innerHTML = `<div class="forge-variants-hint">${icon('compare', 'ui-icon ui-icon--sm')}<span>Pick <b>×2</b> or <b>×3</b> for variants</span></div>`;
       (this.$.compare as HTMLButtonElement).disabled = true;
       return;
     }
@@ -728,7 +727,7 @@ class ForgeEditor implements ForgeEditorHandle {
     this.root.querySelector('.forge-reforge .ui-kbd')?.toggleAttribute('hidden', s.busy);
     if (s.busy) {
       label.textContent = 'Cancel';
-      sub.textContent = 'stop forging';
+      sub.textContent = 'stop';
       this.$.reforge.classList.add('cancel');
     } else {
       this.$.reforge.classList.remove('cancel');
@@ -744,7 +743,7 @@ class ForgeEditor implements ForgeEditorHandle {
           else if (m === 'reject') rej++;
         }
         const reroll = d.components.length - keep - lock - rej;
-        sub.textContent = `keeping ${keep} · locked ${lock} · rerolling ${reroll}${rej ? ` · rejecting ${rej}` : ''}`;
+        sub.textContent = `keep ${keep} · locked ${lock} · reroll ${reroll}${rej ? ` · reject ${rej}` : ''}`;
       } else sub.textContent = this.variantCount > 1 ? `${this.variantCount} variants` : 'from scratch';
     }
     const equip = this.$.equip as HTMLButtonElement;
@@ -757,7 +756,7 @@ class ForgeEditor implements ForgeEditorHandle {
     if (s.busy) {
       const n = draft?.components.length ?? 0;
       const last = draft?.components[n - 1]?.label;
-      st.innerHTML = `<span class="forge-pulse"></span>FORGING · ${last ? `${esc(last)} (${n})` : draft?.name ? esc(draft.name) : s.drafts.length > 1 ? `${s.drafts.length} variants` : 'warming up the anvil'}…`;
+      st.innerHTML = `<span class="forge-pulse"></span>FORGING · ${last ? `${esc(last)} (${n})` : draft?.name ? esc(draft.name) : s.drafts.length > 1 ? `${s.drafts.length} variants` : 'starting'}…`;
       st.hidden = false;
     } else if (s.design && s.drafts.length && !this.equipping) {
       st.innerHTML = `${icon('check', 'ui-icon ui-icon--sm')}<span>FORGED · ${s.design.components.length} parts${s.mock ? ' · mock forge' : ''}</span>`;
@@ -794,7 +793,7 @@ class ForgeEditor implements ForgeEditorHandle {
   private rotatePlaceholder() {
     let i = 0;
     const set = () => {
-      this.prompt.placeholder = this.session.design ? 'What should change? “make it chrome, add a scope”' : PLACEHOLDERS[i++ % PLACEHOLDERS.length];
+      this.prompt.placeholder = this.session.design ? 'What to change? e.g. “add a scope”' : PLACEHOLDERS[i++ % PLACEHOLDERS.length];
     };
     set();
     this.phTimer = window.setInterval(set, 4000);

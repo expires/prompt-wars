@@ -125,7 +125,7 @@ export class GameFlow {
       needsLoadout: this.needsLoadout,
       weapon: this.needsLoadout ? null : this.currentWeapon(),
       presets: this.online ? (this.game.net.presetIds?.() ?? []) : offlinePresets(),
-      status: this.online ? (connected ? `Online · ${this.game.serverLabel}` : 'Disconnected') : 'Offline practice',
+      status: this.online ? (connected ? `Online · ${this.game.serverLabel}` : 'Disconnected') : 'Offline',
       statusKind: (this.online ? (connected ? 'ok' : 'bad') : 'off') as 'ok' | 'off' | 'bad',
       alive: this.game.alive,
       busy: this.busy,
@@ -233,11 +233,21 @@ export class GameFlow {
   private lockAndPlay() {
     this.syncHud();
     if (this.game.opts.e2e) return;
-    this.game.input.requestLock();
-    // no pointer lock (gesture expired / denied): offer the pause menu's RESUME button
-    setTimeout(() => {
-      if (this.game.alive && !this.game.input.locked && !this.game.input.padPlaying && !this.blocking) this.openPause();
-    }, 700);
+    void this.tryLock();
+  }
+
+  /**
+   * Lock the pointer. Chrome refuses a re-lock for ~1s after the user pressed Esc to leave it,
+   * so retry once after that cooldown (the Esc/click gesture is still active) before falling
+   * back to the pause menu's RESUME button.
+   */
+  private async tryLock() {
+    const input = this.game.input;
+    if (await input.requestLock()) return;
+    await new Promise((r) => setTimeout(r, 1100));
+    if (input.locked || this.pause.visible || this.blocking || !this.game.alive) return;
+    if (await input.requestLock()) return;
+    if (this.game.alive && !input.locked && !input.padPlaying && !this.blocking) this.openPause();
   }
 
   // ------------------------------------------------------------------ pause
@@ -288,7 +298,7 @@ export class GameFlow {
     if (this.game.hp < 100) {
       const ok = await confirmDialog({
         title: 'Redeploy?',
-        body: `You’re at ${Math.round(this.game.hp)} HP — redeploying now counts as a death.`,
+        body: `Counts as a death (${Math.round(this.game.hp)} HP left).`,
         yes: 'Redeploy',
         danger: true,
       });
@@ -307,11 +317,11 @@ export class GameFlow {
   }
 
   private async leave() {
-    const ok = await confirmDialog({ title: 'Leave match?', body: 'You’ll disconnect from the server. Your weapons stay in your library.', yes: 'Leave', danger: true });
+    const ok = await confirmDialog({ title: 'Leave match?', body: 'Your weapons are saved.', yes: 'Leave', danger: true });
     if (!ok) return;
     this.game.net.disconnect();
     this.pause.hide();
-    this.landing.show({ ...this.landingState(), status: 'Left the match — PLAY to reconnect', statusKind: 'off' });
+    this.landing.show({ ...this.landingState(), status: 'Left match. Play to rejoin.', statusKind: 'off' });
     this.landing.handlers = {
       onPlay: () => location.reload(),
       onForge: () => location.reload(),
@@ -398,7 +408,7 @@ export class GameFlow {
           await this.legacyGenerate(text);
           return;
         }
-        this.death.setStatus(esc(fe ? describeForgeError(fe) : (session.state.error ?? 'the forge produced nothing')), true);
+        this.death.setStatus(esc(fe ? describeForgeError(fe) : (session.state.error ?? 'Forge returned nothing. Try again.')), true);
         void ForgeError;
         return;
       }
@@ -419,7 +429,7 @@ export class GameFlow {
       this.death.setStatus(`Generating “${esc(text)}”…`);
       const res = await net.generateWeapon(text, '');
       if (!res.ok) {
-        this.death.setStatus(esc(res.message || 'generation failed'), true);
+        this.death.setStatus(esc(res.message || 'Forge failed. Try again.'), true);
         return;
       }
       const w = res.weapon;
@@ -457,7 +467,7 @@ export class GameFlow {
       mod = await import('../forge/ForgeEditor');
     } catch (err) {
       this.forgeLoading = false;
-      this.game.hud.toast(esc(`Couldn’t load the forge: ${(err as Error)?.message ?? err}`), { type: 'error' });
+      this.game.hud.toast(esc(`Forge failed to load: ${(err as Error)?.message ?? err}`), { type: 'error' });
       return;
     }
     this.forgeLoading = false;
@@ -513,7 +523,7 @@ export class GameFlow {
    */
   async equipDesign(design: ForgeDesign, prompt: string): Promise<void> {
     const net = this.game.net;
-    if (!net.registerDesign) throw new Error('this server does not support forged weapons');
+    if (!net.registerDesign) throw new Error('Server doesn’t support forged weapons');
     if (!this.online) {
       const id = await net.registerDesign(design, prompt);
       const w = id ? net.getWeapon?.(id) : undefined;
@@ -528,8 +538,8 @@ export class GameFlow {
     if (this.game.alive) {
       if (this.game.hp < 100) {
         const ok = await confirmDialog({
-          title: 'Redeploy with this weapon?',
-          body: `You’re at ${Math.round(this.game.hp)} HP — redeploying now counts as a death.`,
+          title: 'Redeploy now?',
+          body: `Counts as a death (${Math.round(this.game.hp)} HP left).`,
           yes: 'Equip & redeploy',
         });
         if (!ok) throw new Error('cancelled');
@@ -556,7 +566,7 @@ export class GameFlow {
     if (!this.game.alive) {
       // still dead (respawn refused): show the death screen with the new loadout
       this.equipped = false;
-      throw new Error('respawn failed — try KEEP LOADOUT');
+      throw new Error('Respawn failed. Try Keep loadout.');
     }
     this.finishEquip();
   }

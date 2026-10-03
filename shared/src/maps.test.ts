@@ -29,9 +29,9 @@ describe('MAPS registry', () => {
 });
 
 describe('activeMap', () => {
-  it('defaults to the tauron arena', () => {
-    expect(ACTIVE_MAP_ID).toBe('tauron-arena');
-    expect(activeMap()).toBe(MAPS['tauron-arena']);
+  it('defaults to the tauron remake', () => {
+    expect(ACTIVE_MAP_ID).toBe('tauron-remake');
+    expect(activeMap()).toBe(MAPS['tauron-remake']);
   });
 });
 
