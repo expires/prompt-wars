@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./recipes": "./src/recipes.ts",
+    "./registry": "./src/registry.ts",
     "./assemble": "./src/assemble.ts",
     "./catalog.json": "./catalog.json",
     "./templates": "./src/templates/index.ts",

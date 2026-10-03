@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 import type { PhysicsContext } from '../engine/physics';
 import { TEST_MAP_SPAWN_POINTS } from '@ai-gaem/shared';
 import type { GameMap, Vec3 } from './types';

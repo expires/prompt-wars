@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import type RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 import type { PhysicsContext } from '../engine/physics';
 import { Humanoid } from '../player/humanoid';
 import { CENTER_OFFSET } from '../player/PlayerController';
 import { Hitboxes } from '../player/hitboxes';
 import { buildWeaponModel } from '../weapons/buildWeaponModel';
+import { onPartsLibrary } from '../weapons/partsLibrary';
 import { MELEE_PHASES, meleeMetaOf, meleeSwingDuration } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
 import type { HitTarget, TargetRegistry } from '../weapons/targets';
@@ -45,6 +46,7 @@ export class RemotePlayers {
   private unsub: () => void;
   private unsubWeapons?: () => void;
   private unsubPose?: () => void;
+  private readonly unsubParts: () => void;
   /** per-frame hook (tests: trace rendered positions) */
   onFrame?: (now: number) => void;
 
@@ -59,6 +61,10 @@ export class RemotePlayers {
     // weapon rows may arrive after the player row: retry missing models
     this.unsubWeapons = net.onWeaponsChanged?.(() => {
       for (const r of this.remotes.values()) if (r.modelWeaponId !== (r.weaponId ?? '')) this.setWeapon(r, r.weaponId);
+    });
+    // models built before the part library loaded are placeholders: rebuild them
+    this.unsubParts = onPartsLibrary(() => {
+      for (const r of this.remotes.values()) if (r.modelWeaponId) this.setWeapon(r, r.weaponId);
     });
   }
 
@@ -289,6 +295,7 @@ export class RemotePlayers {
     this.unsub();
     this.unsubWeapons?.();
     this.unsubPose?.();
+    this.unsubParts();
     for (const id of [...this.remotes.keys()]) this.removeRemote(id);
   }
 }

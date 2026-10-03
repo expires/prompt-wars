@@ -1,6 +1,6 @@
 import { clampWeapon, templateToRawWeapon } from '@ai-gaem/shared';
-import { searchTemplates } from '@ai-gaem/parts';
 import { toTemplateSummary } from './templates';
+import { loadTemplates } from './templatesLibrary';
 import type { Weapon } from './types';
 
 /** Hand-made sample weapons covering every fire mode (debug keys 1-6 cycle). */
@@ -144,25 +144,33 @@ const MELEE_SAMPLE_QUERIES: [string, string][] = [
 ];
 
 let cached: Weapon[] | null = null;
+let meleeLoading: Promise<Weapon[]> | null = null;
 
 /**
  * Offline sample weapons (debug keys 1-0), run through the shared balance clamp like everything
- * the server stores. The melee samples come from the template library (generated on first use).
+ * the server stores. The melee samples come from the template library (a lazy chunk): they're
+ * appended to this list once loadMeleeSamples() has resolved.
  */
 export function getDefaultWeapons(): Weapon[] {
-  if (cached) return cached;
-  const base = RAW_DEFAULT_WEAPONS.map((w) => ({ ...clampWeapon(w), id: w.id }));
-  const melee: Weapon[] = [];
-  for (const [id, q] of MELEE_SAMPLE_QUERIES) {
-    try {
-      const t = searchTemplates(q, { melee: true, limit: 1 })[0];
-      if (t) melee.push({ ...clampWeapon(templateToRawWeapon(toTemplateSummary(t))), id });
-    } catch (err) {
-      console.warn('[weapons] template lookup failed', q, err);
-    }
-  }
-  cached = [...base, ...melee];
+  cached ??= RAW_DEFAULT_WEAPONS.map((w) => ({ ...clampWeapon(w), id: w.id }));
   return cached;
+}
+
+/** Load the template library and build the offline melee samples (resolves to just those). */
+export function loadMeleeSamples(): Promise<Weapon[]> {
+  meleeLoading ??= loadTemplates().then(({ searchTemplates }) => {
+    const melee: Weapon[] = [];
+    for (const [id, q] of MELEE_SAMPLE_QUERIES) {
+      try {
+        const t = searchTemplates(q, { melee: true, limit: 1 })[0];
+        if (t) melee.push({ ...clampWeapon(templateToRawWeapon(toTemplateSummary(t))), id });
+      } catch (err) {
+        console.warn('[weapons] template lookup failed', q, err);
+      }
+    }
+    return melee;
+  });
+  return meleeLoading;
 }
 
 /**

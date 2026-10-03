@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 import type { PhysicsContext } from '../engine/physics';
 import type { Input } from '../engine/input';
 import { HIT_ZONE_BODY, HIT_ZONE_HEAD, directHitDamage, zoneDamage, type MeleeMeta } from '@ai-gaem/shared';

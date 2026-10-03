@@ -1,5 +1,5 @@
 import type * as THREE from 'three';
-import type RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 import { HIT_ZONE_BODY } from '@ai-gaem/shared';
 
 /** Which network shot produced a hit, how many pellets connected, where, and which zone. */

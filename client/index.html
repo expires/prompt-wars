@@ -5,8 +5,77 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ai-gaem</title>
     <link rel="icon" href="data:," />
+    <style>
+      html, body { margin: 0; background: #0d0f14; }
+      #boot {
+        position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 18px; background: #0d0f14; color: #d8dde6;
+        font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif; transition: opacity 0.25s;
+      }
+      #boot h1 { margin: 0; font-size: 28px; letter-spacing: 0.12em; font-weight: 800; color: #fff; }
+      #boot .bar { width: min(320px, 70vw); height: 6px; border-radius: 3px; background: #262a33; overflow: hidden; }
+      #boot .fill { height: 100%; width: 100%; background: #e8b040; transform-origin: left; transform: scaleX(0.02); transition: transform 0.2s; }
+      #boot .msg { color: #8b93a3; font-variant-numeric: tabular-nums; min-height: 1.4em; }
+      #boot.err .msg { color: #f66; white-space: pre-wrap; max-width: 80vw; text-align: center; }
+      #boot.done { opacity: 0; pointer-events: none; }
+    </style>
   </head>
   <body>
+    <div id="boot" data-testid="boot">
+      <h1>AI-GAEM</h1>
+      <div class="bar"><div class="fill"></div></div>
+      <div class="msg">Loading…</div>
+    </div>
+    <script>
+      // Loading screen: byte-weighted progress over the initial JS chunks (Resource Timing) and the
+      // physics wasm (fetch progress, see src/boot/wasm.ts). window.__BOOT_ASSETS is injected at build.
+      (function () {
+        var A = window.__BOOT_ASSETS || { files: {}, wasm: null, decoder: null };
+        // over plain HTTP browsers don't accept brotli: fetch the wasm's .br sibling + a JS decoder
+        // instead (src/boot/wasm.ts). Preload whichever variant will be used.
+        var brMode = location.protocol === 'http:' && A.wasm && A.decoder;
+        function preload(rel, href, as) {
+          var l = document.createElement('link');
+          l.rel = rel; l.href = href; l.crossOrigin = 'anonymous';
+          if (as) l.as = as;
+          document.head.appendChild(l);
+        }
+        if (A.wasm) preload('preload', A.wasm.url + (brMode ? '.br' : ''), 'fetch');
+        if (brMode) { preload('modulepreload', A.decoder.url); A.files[A.decoder.url] = A.decoder.br; }
+        var root = document.getElementById('boot');
+        var fill = root.querySelector('.fill');
+        var msg = root.querySelector('.msg');
+        var total = 0, jsDone = 0, wasmFrac = 0, seen = {}, stage = null, finished = false;
+        for (var f in A.files) total += A.files[f];
+        if (A.wasm) total += A.wasm.br;
+        function render() {
+          if (finished) return;
+          var loaded = jsDone + (A.wasm ? wasmFrac * A.wasm.br : 0);
+          var p = total ? loaded / total : 0;
+          fill.style.transform = 'scaleX(' + Math.max(0.02, Math.min(1, p)).toFixed(3) + ')';
+          msg.textContent = stage || (total && p > 0.999 ? 'Starting…' : total ? 'Downloading… ' + Math.round(p * 100) + '%  (' + (loaded / 1024).toFixed(0) + ' / ' + (total / 1024).toFixed(0) + ' KB)' : 'Loading…');
+        }
+        window.__boot = {
+          wasm: function (f) { wasmFrac = f; render(); },
+          stage: function (t) { stage = t; render(); },
+          done: function () {
+            finished = true;
+            root.classList.add('done');
+            setTimeout(function () { root.remove(); }, 300);
+          },
+          error: function (t) { finished = true; root.classList.add('err'); msg.textContent = String(t); },
+        };
+        try {
+          new PerformanceObserver(function (list) {
+            list.getEntries().forEach(function (e) {
+              var p = new URL(e.name).pathname;
+              if (A.files[p] && !seen[p]) { seen[p] = 1; jsDone += A.files[p]; render(); }
+            });
+          }).observe({ type: 'resource', buffered: true });
+        } catch (e) { /* old browser: indeterminate */ }
+        render();
+      })();
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

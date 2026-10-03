@@ -1,12 +1,23 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import type { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PhysicsContext } from '../engine/physics';
 import { buildTrimeshColliders } from './collider';
 import type { GameMap, MapMeta, Vec3 } from './types';
 
-const loader = new GLTFLoader();
-loader.setMeshoptDecoder(MeshoptDecoder);
+// GLTFLoader + meshopt decoder are only needed for GLB maps: their own chunk, fetched on demand
+// (in parallel with the map download itself) so they stay out of the initial bundle
+let loader: Promise<GLTFLoader> | null = null;
+function gltfLoader(): Promise<GLTFLoader> {
+  loader ??= Promise.all([
+    import('three/examples/jsm/loaders/GLTFLoader.js'),
+    import('three/examples/jsm/libs/meshopt_decoder.module.js'),
+  ]).then(([{ GLTFLoader }, { MeshoptDecoder }]) => {
+    const l = new GLTFLoader();
+    l.setMeshoptDecoder(MeshoptDecoder);
+    return l;
+  });
+  return loader;
+}
 
 /** Above this visual triangle count, meshes stop casting shadows (big venue scans). */
 const SHADOW_TRIANGLE_BUDGET = 150_000;
@@ -15,6 +26,8 @@ async function tryLoad(url: string): Promise<THREE.Group | null> {
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
+    // fetch the loader chunk while the map body downloads (not for an SPA-fallback index.html)
+    if (!(res.headers.get('content-type') ?? '').includes('text/html')) void gltfLoader().catch(() => {});
     const buf = await res.arrayBuffer();
     // Vite's SPA fallback serves index.html (200) for missing files: sniff the payload
     const head = new TextDecoder().decode(new Uint8Array(buf, 0, Math.min(16, buf.byteLength)));
@@ -22,7 +35,7 @@ async function tryLoad(url: string): Promise<THREE.Group | null> {
     const isGltfJson = head.trimStart().startsWith('{');
     if (!isGlb && !isGltfJson) return null;
     const base = url.slice(0, url.lastIndexOf('/') + 1);
-    const gltf = await loader.parseAsync(buf, base);
+    const gltf = await (await gltfLoader()).parseAsync(buf, base);
     return gltf.scene;
   } catch (err) {
     console.warn('[map] could not load', url, err);

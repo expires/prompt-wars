@@ -1,4 +1,4 @@
-import * as RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 import type { PhysicsContext } from '../engine/physics';
 import type { Vec3 } from './types';
 
@@ -59,7 +59,7 @@ export function addBoundsColliders(
   if (floor) slabs.push({ half: [hx, half, hz], center: [cx, minY - half, cz] });
 
   return slabs.map(({ half: h, center: c }) => {
-    const desc = RAPIER.ColliderDesc.cuboid(h[0], h[1], h[2]).setTranslation(c[0], c[1], c[2]);
+    const desc = physics.RAPIER.ColliderDesc.cuboid(h[0], h[1], h[2]).setTranslation(c[0], c[1], c[2]);
     return physics.world.createCollider(desc);
   });
 }

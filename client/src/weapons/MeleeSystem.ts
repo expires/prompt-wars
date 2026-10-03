@@ -13,7 +13,7 @@ import {
   sampleMeleeArc,
   type MeleeMeta,
 } from '@ai-gaem/shared';
-import type RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d';
 import type { HitTarget, TargetRegistry } from './targets';
 import type { Weapon } from './types';
 
