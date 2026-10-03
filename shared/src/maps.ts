@@ -31,6 +31,14 @@ export const MAPS: Record<string, MapDef> = {
     spawns: TAURON_ARENA_SPAWNS,
     bounds: { min: [-77.71, 0, -73.31], max: [77.71, 37.94, 73.31] },
   },
+  // Same arena as a watertight greybox (the solidified shell itself): no holes, no textures.
+  // Try it with `?map=/maps/tauron-solid.glb` if the photo mesh's gaps bother you.
+  'tauron-solid': {
+    id: 'tauron-solid',
+    url: '/maps/tauron-solid.glb',
+    spawns: TAURON_ARENA_SPAWNS,
+    bounds: { min: [-77.71, 0, -73.31], max: [77.71, 37.94, 73.31] },
+  },
 };
 
 export const ACTIVE_MAP_ID = 'tauron-arena';

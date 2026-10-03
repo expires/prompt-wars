@@ -275,11 +275,15 @@ The visual map is untouched, so texture holes stay cosmetic. Re-run `bake-spawns
 walkable surface moved slightly) and rebuild the client. Verified for `tauron-arena`: 0/255 drop
 points fell out and all spawns have ground beneath them.
 
-The collision shell is also drawn as a **neutral backdrop** (`loadMap()`): the same geometry is
-added to the scene with an unlit `BackSide` material and `polygonOffset`, so where the photo scan
-has a hole you see a solid grey wall behind it instead of a void, while the texture still wins
-wherever the scan exists. It costs one extra draw of the collision mesh (~300k tris for the arena)
-and can be turned off with `?shell=0`.
+The collision shell can optionally be drawn as a **neutral backdrop** (`?shell=1`, off by default):
+the same geometry is added with an unlit `BackSide` material and `polygonOffset`, so scan holes
+read as solid grey walls. It is opt-in because on the arena the voxel shell sits inside the photo
+walls, so it can occlude the texture — prefer the greybox below instead.
+
+**Greybox fallback.** `tauron-solid` in `shared/src/maps.ts` points the map at the solidified shell
+itself, so you get a complete, watertight, hole-free arena with no photo texture. Open it with
+`?map=/maps/tauron-solid.glb` (or set `ACTIVE_MAP_ID = 'tauron-solid'`) when completeness matters
+more than the photo skin.
 
 If you still see through a wall in-game, bump `--close` (2 closes bigger gaps) — at the cost of
 sealing very narrow doorways; drop `--pitch` for a finer shell.
