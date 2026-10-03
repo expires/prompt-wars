@@ -8,7 +8,10 @@
  *   <out>/<id>.meta.json      { id, source, up, scale, bbox, visualTrisBefore, visualTris,
  *                               collisionTris, textures, unlit, meshopt, createdAt }
  *
- *   node client/scripts/map/process-scan.ts <in.glb|in.gltf> --name <id> [--up y|z] [--scale <n>] [--out <dir>]
+ *   node client/scripts/map/process-scan.ts <in.glb|in.gltf|in.obj> --name <id> [--up y|z] [--scale <n>] [--out <dir>]
+ *
+ * OBJ inputs (.obj + .mtl + texture images) are converted in memory by obj.ts and then share
+ * this whole path. Matterpak OBJs are Z-up: pass --up z for them.
  *
  * Runs on Node 26 with native type stripping: erasable syntax only, `.ts` import specifiers.
  */
@@ -37,6 +40,7 @@ import {
 	translationMatrix,
 } from './lib.ts';
 import type { Bounds, Mat4, UpAxis, Vec3 } from './lib.ts';
+import { classifyInput, loadObjDocument, objUpHint } from './obj.ts';
 import { optimizeCollision, optimizeVisual } from './optimize.ts';
 
 /** glTF TRIANGLES primitive mode. */
@@ -47,11 +51,12 @@ const DEFAULT_VISUAL_TRIS = 400000;
 const DEFAULT_COLLISION_TRIS = 80000;
 const DEFAULT_MAX_TEXTURE = 2048;
 
-const USAGE = `Usage: node client/scripts/map/process-scan.ts <in.glb|in.gltf> --name <id> [options]
+const USAGE = `Usage: node client/scripts/map/process-scan.ts <in.glb|in.gltf|in.obj> --name <id> [options]
 
 Options:
   --name <id>              Map id; writes <id>.glb, <id>_collision.glb and <id>.meta.json
-  --up <y|z>               Up axis of the source scan (default: y). "z" rotates -90deg about X
+  --up <y|z>               Up axis of the source scan (default: y). "z" rotates -90deg about X.
+                           OBJ exports (Matterpak, RealityCapture, Polycam) are usually Z-up
   --scale <n>              Uniform scale applied to the scan (default: 1)
   --out <dir>              Output directory (default: client/public/maps)
   --min-island-tris <n>    Drop collision islands smaller than n triangles (default: 50)
@@ -60,12 +65,18 @@ Options:
   --max-texture <n>        Long-edge pixel budget for every texture (default: 2048)
   --unlit / --no-unlit     Mark materials unlit; scan lighting is baked in (default: unlit)
   --meshopt / --no-meshopt Apply EXT_meshopt_compression to the visual GLB (default: meshopt)
-  --help                   Print this message`;
+  --help                   Print this message
+
+Inputs:
+  .glb / .gltf             read directly
+  .obj                     converted in memory (obj2gltf, binary glTF); the .mtl and textures
+                           are resolved next to the OBJ file`;
 
 type CliOptions = {
 	input: string;
 	name: string;
 	up: UpAxis;
+	upGiven: boolean;
 	scale: number;
 	outDir: string;
 	minIslandTris: number;
@@ -151,6 +162,7 @@ function parseCliArgs(argv: string[]): CliOptions {
 		input,
 		name,
 		up,
+		upGiven: values.up !== undefined,
 		scale,
 		outDir: values.out ? path.resolve(values.out) : DEFAULT_OUT_DIR,
 		minIslandTris: Math.round(minIslandTris),
@@ -380,7 +392,20 @@ async function main(): Promise<void> {
 	const options = parseCliArgs(process.argv.slice(2));
 	const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
 
-	const document = await io.read(options.input);
+	const kind = classifyInput(options.input);
+	if (kind === null) {
+		fail(
+			`unsupported input "${options.input}": expected a .glb, .gltf or .obj file ` +
+				'(.obj scans need their .mtl and textures next to the OBJ)',
+		);
+	}
+	if (kind === 'obj') {
+		const hint = objUpHint(options.upGiven);
+		if (hint) console.warn(`process-scan: ${hint}`);
+	}
+
+	const document =
+		kind === 'obj' ? await loadObjDocument(options.input, io) : await io.read(options.input);
 	const root = document.getRoot();
 	let scene = root.getDefaultScene();
 	if (!scene) {

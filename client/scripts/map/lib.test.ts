@@ -18,6 +18,7 @@ import {
 	translationMatrix,
 } from './lib.ts';
 import type { Mat4, Vec3 } from './lib.ts';
+import { classifyInput, isGltfPath, isObjPath, OBJ_UP_HINT, objUpHint } from './obj.ts';
 
 const EPSILON = 1e-9;
 
@@ -155,4 +156,36 @@ test('filterIslands ignores empty index buffers', () => {
 	assert.equal(result.islandCount, 0);
 	assert.equal(result.removedTriangles, 0);
 	assert.equal(result.indices.length, 0);
+});
+
+// obj.ts input routing. The obj2gltf call is loaded lazily inside loadObjDocument, so simply
+// importing obj.ts here never pulls the converter.
+
+test('isGltfPath and isObjPath match extensions case-insensitively', () => {
+	assert.equal(isGltfPath('scan.glb'), true);
+	assert.equal(isGltfPath('scan.GLTF'), true);
+	assert.equal(isGltfPath('scan.obj'), false);
+	assert.equal(isGltfPath('scan'), false);
+
+	assert.equal(isObjPath('scan.obj'), true);
+	assert.equal(isObjPath('matterpak/scan.OBJ'), true);
+	assert.equal(isObjPath('scan.glb'), false);
+	assert.equal(isObjPath('scan.objx'), false);
+});
+
+test('classifyInput routes glTF and OBJ inputs and rejects everything else', () => {
+	assert.equal(classifyInput('scan.glb'), 'gltf');
+	assert.equal(classifyInput('scan.gltf'), 'gltf');
+	assert.equal(classifyInput('scan.obj'), 'obj');
+	assert.equal(classifyInput('MatterPak/scan.OBJ'), 'obj');
+
+	assert.equal(classifyInput('scan.ply'), null);
+	assert.equal(classifyInput('scan.e57'), null);
+	assert.equal(classifyInput('scan'), null);
+});
+
+test('objUpHint recommends --up z for OBJ inputs unless --up was given', () => {
+	assert.equal(objUpHint(true), null);
+	assert.equal(objUpHint(false), OBJ_UP_HINT);
+	assert.match(objUpHint(false) ?? '', /--up z/);
 });
