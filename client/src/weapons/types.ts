@@ -11,7 +11,7 @@
  *  - projectileSpeed: m/s (projectile/arc fire modes; 0 for hitscan)
  *  - splashRadius: meters (0 = no splash)
  */
-import type { FireMode, Weapon as SharedWeapon, WeaponClass, WeaponColors, WeaponPart } from '@ai-gaem/shared';
+import type { FireMode, ForgeDesign, Weapon as SharedWeapon, WeaponClass, WeaponColors, WeaponPart } from '@ai-gaem/shared';
 
 export type { FireMode, WeaponClass, WeaponColors };
 
@@ -21,6 +21,14 @@ export type WeaponPartRef = WeaponPart;
 export interface Weapon extends SharedWeapon {
   /** server weapon id (stringified u64) or a local id */
   id?: string;
+  /** Forge design (weapon.design column): rendered instead of `parts` when present */
+  design?: ForgeDesign;
+  /** preset (library) weapon */
+  isPreset?: boolean;
+  /** owner's identity hex (server weapons) */
+  owner?: string;
+  /** prompt it was made from (server weapons) */
+  prompt?: string;
 }
 
 /** Fire mode of a weapon (always set on clamped weapons; kept as a helper for older call sites). */

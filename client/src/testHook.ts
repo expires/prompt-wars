@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clampWeapon } from '@ai-gaem/shared';
+import { clampWeapon, sanitizeDesign } from '@ai-gaem/shared';
 import type { Game } from './engine/Game';
 import { Humanoid } from './player/humanoid';
 import { settings } from './settings';
@@ -60,6 +60,14 @@ export interface GameTestHook {
   setTrackpadMode(on: boolean): void;
   /** reducer call counters / network stats */
   netStats(): { rtt: number; sendHz: number; calls: Record<string, number>; interp?: unknown } | null;
+  /** legacy server-side template generation (generate_weapon procedure) while dead, then respawn */
+  generateLegacy(prompt: string): Promise<void>;
+  /** open the Esc pause menu (no pointer lock in tests) */
+  openPause(): void;
+  /** show the Tab scoreboard without holding Tab (screenshots) */
+  forceScoreboard(on: boolean): void;
+  /** register a Forge design and deploy with it (same path as the editor's EQUIP) */
+  equipDesign(design: unknown, prompt?: string): Promise<void>;
 }
 
 function getState(game: Game) {
@@ -109,6 +117,8 @@ function getState(game: Game) {
     name: game.me?.name ?? '',
     hp: game.hp,
     serverHp: game.me?.hp,
+    /** server-side position of the player row (spawn / resume point) */
+    serverPos: game.me?.pos ?? null,
     alive: game.alive,
     kills: game.me?.kills ?? 0,
     deaths: game.me?.deaths ?? 0,
@@ -122,7 +132,23 @@ function getState(game: Game) {
     pos: [f.x, f.y, f.z] as [number, number, number],
     yaw: ready ? game.player.yaw : 0,
     pitch: ready ? game.player.pitch : 0,
-    deathVisible: ready ? game.hud.deathVisible : false,
+    deathVisible: ready ? game.flow.death.visible : false,
+    screen: game.flow?.screen ?? 'none',
+    needsLoadout: !!game.me?.needsLoadout,
+    weaponDesign: w?.design ? { name: w.design.name, components: w.design.components.map((c) => ({ id: c.id, label: c.label })) } : null,
+    forge: game.flow?.forge
+      ? {
+          busy: game.flow.forge.session.state.busy,
+          error: game.flow.forge.session.state.error,
+          drafts: game.flow.forge.session.state.drafts.map((d) => ({ name: d.name, components: d.components.length, done: !!d.design })),
+          design: game.flow.forge.session.state.design
+            ? {
+                name: game.flow.forge.session.state.design.name,
+                components: game.flow.forge.session.state.design.components.map((c) => ({ id: c.id, label: c.label, locked: !!c.locked })),
+              }
+            : null,
+        }
+      : null,
     killLog: [...game.killLog],
     playersSeen: ready
       ? game.remotes.ids().map((id) => {
@@ -270,11 +296,24 @@ export function installTestHook(game: Game) {
     },
     setTrackpadMode(on) {
       settings.setTrackpadMode(on);
-      game.hud.settingsPanel.sync();
+      game.flow.settingsPanel.sync();
     },
     netStats() {
       const st = game.net.stats?.();
       return st ? { ...st, interp: game.remotes.netStats() } : null;
+    },
+    generateLegacy(prompt) {
+      return game.flow.legacyGenerate(prompt);
+    },
+    openPause() {
+      game.flow.openPause();
+    },
+    forceScoreboard(on) {
+      game.hud.forceScoreboard = on;
+    },
+    equipDesign(design, prompt = 'test design') {
+      const { design: d } = sanitizeDesign(design);
+      return game.flow.equipDesign(d, prompt);
     },
   };
   (window as unknown as { __game: GameTestHook }).__game = hook;

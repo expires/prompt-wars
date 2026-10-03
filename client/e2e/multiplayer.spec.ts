@@ -7,7 +7,9 @@ import {
   HEAD_CENTER_STANDING,
   MAX_HEADSHOT_DAMAGE,
   RESPAWN_DELAY_SECONDS,
+  activeMap,
   clampWeapon,
+  effectiveSpawns,
   effectiveFireRate,
   fireCreditsMax,
 } from '@ai-gaem/shared';
@@ -82,10 +84,13 @@ test('a. two players see each other and movement replicates @smoke', async () =>
   await waitForState(A.page, (s) => s.playersSeen.some((p) => p.id === B.id && p.visible), 15_000, 'A sees B');
   await waitForState(B.page, (s) => s.playersSeen.some((p) => p.id === A.id && p.visible), 15_000, 'B sees A');
 
-  // spawned at a server spawn point (a TEST MAP spawn), on the ground
+  // spawned at one of the server's spawn points (seeded from the active map; local e2e renders
+  // the test map when the venue scan isn't available, so check the server-side spawn position)
   const a0 = await state(A.page);
-  expect(a0.pos[1]).toBeGreaterThan(-0.5);
-  expect(a0.pos[1]).toBeLessThan(4);
+  const spawns = effectiveSpawns(activeMap());
+  expect(a0.serverPos, 'A has a server position').not.toBeNull();
+  const sp = a0.serverPos!;
+  expect(spawns.some((p) => Math.hypot(p.x - sp[0], p.y - sp[1], p.z - sp[2]) < 0.05), `spawn ${sp} is a server spawn point`).toBe(true);
 
   await lineUp();
   await aimAt(B, A.id);
@@ -151,7 +156,7 @@ test('c. death screen: keep loadout, then generate a new weapon', async () => {
   expect(b1.hp).toBe(100);
   await shot(B, 'c1-bob-respawned-keep-loadout.png');
 
-  // --- die again, then Generate new weapon ---
+  // --- die again, then QUICK FORGE a new weapon (forge service; a local mock forge in e2e) ---
   await lineUp();
   await killB();
   await waitForState(B.page, (s) => !s.alive && s.deathVisible, 5_000, 'B dead again');
@@ -163,8 +168,10 @@ test('c. death screen: keep loadout, then generate a new weapon', async () => {
   const b2 = await waitForState(B.page, (s) => s.alive && s.weaponId !== w0, 20_000, 'B respawned with new weapon');
   expect(b2.serverWeaponId).toBe(b2.weaponId);
   expect(b2.weapon.class).toBe('bubble_gun');
+  // it's a Forge design (rendered from its components)
+  expect(b2.weaponDesign?.components.length ?? 0).toBeGreaterThan(1);
   // stats are within clampWeapon bounds: clamping again is a no-op
-  const { id: _id, ...w } = b2.weapon;
+  const { id: _id, design: _d, owner: _o, prompt: _p, isPreset: _ip, ...w } = b2.weapon;
   expect(clampWeapon(w)).toEqual(w);
   // the viewmodel was rebuilt from library parts
   expect(b2.viewmodelMeshes).toBeGreaterThan(1);
@@ -321,7 +328,7 @@ test('e. headshots: server applies the multiplier, rejects implausible head hits
   await shot(A, 'e3-alice-kill-confirm.png');
   await hook(A, (g) => g.holdHitmarker(false));
   await expect(A.page.getByTestId('kf-headshot').first()).toBeVisible();
-  await expect(B.page.getByTestId('kf-headshot').first()).toBeVisible();
+  await expect(B.page.getByTestId('kf-headshot').first()).toBeAttached() // B is on the death screen (HUD hidden);
   await shot(A, 'e2-alice-killfeed-headshot.png');
 });
 

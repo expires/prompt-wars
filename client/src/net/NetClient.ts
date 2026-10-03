@@ -1,3 +1,4 @@
+import type { ForgeDesign } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
 
 export type Vec3 = [number, number, number];
@@ -24,6 +25,8 @@ export interface NetPlayer {
   slowUntil?: number;
   /** crouched (lower hitboxes, crouched model) */
   crouching?: boolean;
+  /** new player who hasn't picked / forged a weapon yet (can't deploy) */
+  needsLoadout?: boolean;
 }
 
 export interface KillEvent {
@@ -32,6 +35,7 @@ export interface KillEvent {
   victimId: string;
   victimName: string;
   weaponName: string;
+  weaponId?: string;
   at: number;
   /** the killing blow was a headshot */
   headshot?: boolean;
@@ -172,6 +176,15 @@ export interface NetClient {
   /** server-side (LLM) weapon generation; auto-equipped while dead */
   generateWeapon?(prompt: string, weaponClass?: string): Promise<GenerateWeaponResult>;
   setName?(name: string): void;
+  /**
+   * Store a Forge design as a weapon (register_design). Equipped right away while dead (incl. new
+   * players); resolves to the new weapon id once its row has arrived (null if it couldn't be found).
+   */
+  registerDesign?(design: ForgeDesign, prompt: string): Promise<string | null>;
+  /** Esc menu redeploy: die without kill credit so the loadout can change (counts a death if damaged) */
+  requestRedeploy?(): Promise<void>;
+  /** weapon ids of the preset (library) weapons, one per class */
+  presetIds?(): { id: string; cls: string; name: string }[];
   /** fires with all *remote* players whenever any player row (not pose) changes */
   onPlayersChanged(cb: (players: NetPlayer[]) => void): () => void;
   /** a remote player's pose changed (one call per received row) */

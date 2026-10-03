@@ -138,6 +138,11 @@ function buildFromLibrary(lib: PartsLibrary, weapon: Weapon, parts: (WeaponPartR
 export function buildWeaponModel(weapon: Weapon): WeaponModel {
   const parts = weapon.parts ?? [];
   const lib = partsLibrary();
+  if (weapon.design && weapon.design.components?.length) {
+    // Forge design: its own THREE builder (lives in the lazy parts chunk with the catalog)
+    if (lib) return buildFromDesign(lib, weapon);
+    return { ...buildLegacyWeaponModel({ ...weapon, parts: placeholderParts(weapon.class) }), placeholder: true };
+  }
   if (!lib) {
     // library not loaded yet: weapons made only of built-in kit parts are final, anything else
     // gets a class-appropriate stand-in until the library arrives
@@ -149,6 +154,27 @@ export function buildWeaponModel(weapon: Weapon): WeaponModel {
   const recipe = recipeFor(weapon);
   if (recipe) return buildFromLibrary(lib, weapon, recipe.parts);
   return buildLegacyWeaponModel(weapon);
+}
+
+/** Forge design -> WeaponModel; muzzle = front of the muzzle / barrel components (else of the whole model) */
+function buildFromDesign(lib: PartsLibrary, weapon: Weapon): WeaponModel {
+  const root = lib.buildDesign(weapon.design!);
+  root.name = `weapon:${weapon.name}`;
+  root.updateMatrixWorld(true);
+  const comps = (root.userData.components ?? new Map()) as Map<string, THREE.Object3D>;
+  const bb = new THREE.Box3();
+  const pick = (roles: string[]) => {
+    bb.makeEmpty();
+    for (const o of comps.values()) if (roles.includes(o.userData.role)) bb.union(new THREE.Box3().setFromObject(o));
+    return !bb.isEmpty();
+  };
+  const melee = weapon.fireMode === 'melee';
+  if (!pick(melee ? ['blade', 'head'] : ['muzzle']) && !pick(melee ? [] : ['barrel'])) bb.setFromObject(root);
+  const muzzle = new THREE.Object3D();
+  muzzle.name = 'muzzle';
+  if (!bb.isEmpty()) muzzle.position.set((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, bb.min.z);
+  root.add(muzzle);
+  return { root, muzzle, skipped: [] };
 }
 
 /** built-in kit stand-in shown while the part library loads */

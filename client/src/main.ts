@@ -4,6 +4,7 @@ import {
   SPACETIME_MAINCLOUD_URI,
   activeMap,
 } from '@ai-gaem/shared';
+import './ui/tokens.css';
 import { Game } from './engine/Game';
 import { loadRapier } from './engine/physics';
 import { resolveMapUrl } from './map/assetUrl';

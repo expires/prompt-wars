@@ -16,12 +16,14 @@ import { settings } from '../settings';
 import { TargetDummies } from '../player/TargetDummies';
 import { TargetRegistry } from '../weapons/targets';
 import { WeaponSystem } from '../weapons/WeaponSystem';
-import { getDefaultWeapons, generateWeaponStub, loadMeleeSamples } from '../weapons/defaultWeapons';
+import { getDefaultWeapons, loadMeleeSamples } from '../weapons/defaultWeapons';
 import { meleeMaterial } from '../weapons/MeleeSystem';
 import type { Weapon } from '../weapons/types';
 import { loadPartsLibrary } from '../weapons/partsLibrary';
 import { loadTemplates, warmTemplates } from '../weapons/templatesLibrary';
-import { Hud, esc } from '../ui/Hud';
+import { Hud } from '../ui/Hud';
+import { GameFlow } from './Flow';
+import { rarityOf } from '../ui/rarity';
 import { SpawnEditor } from '../ui/SpawnEditor';
 import { OfflineNetClient, PoseSender, RemotePlayers, type NetClient, type NetPlayer } from '../net';
 import { DamageNumbers } from '../ui/DamageNumbers';
@@ -97,6 +99,8 @@ export class Game {
   ready = false;
   /** last authoritative state of the local player (networked mode) */
   me?: NetPlayer;
+  /** menus / screens (landing, pause, death, forge) */
+  flow!: GameFlow;
   readonly killLog: string[] = [];
   private acc = 0;
   /** simulation clock (ms) for pose timestamps: advances exactly FIXED_DT per step */
@@ -104,10 +108,18 @@ export class Game {
   private last = performance.now();
   private scoreAcc = 0;
   private showDebug = false;
-  private fps = 0;
+  fps = 0;
+  /** headshot kills per killer id (scoreboard HS%) */
+  private readonly hsKills = new Map<string, { k: number; hs: number }>();
+  /** last damage the server applied to us (death screen detail) */
+  private lastHitOnMe: { shooterId: string; damage: number; headshot: boolean } | null = null;
   private lastSpawn = new THREE.Vector3();
   private respawning = false;
-  private opts: GameOptions = {};
+  opts: GameOptions = {};
+
+  get serverLabel() {
+    return this.opts.serverLabel ?? 'server';
+  }
 
   async start(container: HTMLElement, opts: GameOptions = {}) {
     this.opts = opts;
@@ -115,7 +127,8 @@ export class Game {
     this.physics = await initPhysics();
     this.input = new Input(this.rc.renderer.domElement);
     this.hud = new Hud();
-    if (opts.e2e) this.hud.showClickToPlay(false);
+    this.flow = new GameFlow(this);
+    this.hud.setVisible(false);
 
     this.net = opts.net ?? new OfflineNetClient({ bots: opts.bots ?? 0, botCenter: [0, 0, 0] });
     const online = this.net.authoritative;
@@ -174,7 +187,13 @@ export class Game {
           ? [[0, 0, -8], [4, 0, -10], [-6, 0, -12], [16, 3, -22], [-20, 2, 12], [10, 0, 18]]
           : this.map.spawns.slice(0, 3).map((s) => [s[0] + 2, s[1], s[2] + 2] as Vec3);
       this.dummies = new TargetDummies(this.physics, this.rc.scene, this.targets, dummyPos);
-      this.dummies.onKilled = (d) => this.hud.addKill('You', this.weapons.weapon.name, d.id, this.lastHitHead);
+      this.dummies.onKilled = (d) =>
+        this.hud.addKill('You', this.weapons.weapon.name, d.id, this.lastHitHead, {
+          tier: rarityOf(this.weapons.weapon).tier,
+          melee: this.weapons.fireMode === 'melee',
+          mine: true,
+          killerIsYou: true,
+        });
     }
 
     // ---- weapons ----
@@ -234,8 +253,10 @@ export class Game {
       },
     );
 
+    // a stand-in until the server says what we hold (new players have no weapon until they forge)
+    this.equip({ ...PRESET_WEAPONS.pistol, id: '' });
+
     // ---- net ----
-    this.hud.setScoreboard(online ? 'Connecting…' : null);
     await this.net.connect();
     if (!online) {
       for (const w of getDefaultWeapons()) w.id = await this.net.registerWeapon(w);
@@ -252,11 +273,33 @@ export class Game {
     }
     this.remotes = new RemotePlayers(this.net, this.physics, this.rc.scene, this.targets);
     this.net.onKill?.((e) => {
-      const killer = e.killerId === this.net.localId ? 'You' : e.killerName;
-      const victim = e.victimId === this.net.localId ? 'You' : e.victimName;
+      const me = this.net.localId;
+      const killer = e.killerId === me ? 'You' : e.killerName;
+      const victim = e.victimId === me ? 'You' : e.victimName;
       this.killLog.push(`${killer} [${e.weaponName}] ${victim}`);
-      if (e.victimId === this.net.localId) this.hud.setDeathMessage(`Killed by ${e.killerName} [${e.weaponName}]`);
-      this.hud.addKill(killer, e.weaponName, victim, !!e.headshot);
+      const w = e.weaponId ? this.net.getWeapon?.(e.weaponId) : undefined;
+      const hs = this.hsKills.get(e.killerId) ?? { k: 0, hs: 0 };
+      hs.k++;
+      if (e.headshot) hs.hs++;
+      this.hsKills.set(e.killerId, hs);
+      if (e.victimId === me) {
+        const kpos = this.remotes.get(e.killerId)?.position;
+        this.flow.onKilledBy({
+          killerName: e.killerId === me ? 'Yourself' : e.killerName,
+          killerIsYou: e.killerId === me,
+          killerWeapon: e.killerId === me ? null : (w ?? null),
+          headshot: !!e.headshot,
+          damage: this.lastHitOnMe?.shooterId === e.killerId ? this.lastHitOnMe.damage : undefined,
+          distance: kpos ? kpos.distanceTo(this.player.feet) : undefined,
+        });
+      }
+      this.hud.addKill(killer, e.weaponName, victim, !!e.headshot, {
+        tier: rarityOf(w).tier,
+        melee: w?.fireMode === 'melee',
+        mine: e.killerId === me || e.victimId === me,
+        killerIsYou: e.killerId === me,
+        victimIsYou: e.victimId === me,
+      });
     });
     // server-confirmed damage by us: aggregated damage numbers; kills get the kill X + chime
     // (the optimistic hitmarker shows on the local raycast and never knows about kills online)
@@ -273,11 +316,25 @@ export class Game {
 
     if (online) {
       this.net.onLocalChanged?.((me) => this.applyLocalState(me));
-      this.net.onWeaponsChanged?.(() => this.syncWeapon());
+      this.net.onWeaponsChanged?.(() => {
+        this.syncWeapon();
+        this.flow.onWeaponsChanged();
+      });
       this.net.onLocalHit?.((e) => {
         if (e.knock.some((k) => k !== 0)) this.player.applyImpulse(new THREE.Vector3(...e.knock));
         if (e.blocked) this.sfx.blockClang();
         if (!e.dot) this.hud.damageFlash();
+        this.lastHitOnMe = { shooterId: e.shooterId, damage: e.damage, headshot: e.headshot };
+        const from = this.remotes.get(e.shooterId)?.position;
+        if (from && e.shooterId !== this.net.localId) {
+          const f = this.player.feet;
+          const dx = from.x - f.x;
+          const dz = from.z - f.z;
+          const yaw = this.player.yaw;
+          const fwd = -Math.sin(yaw) * dx - Math.cos(yaw) * dz;
+          const right = Math.cos(yaw) * dx - Math.sin(yaw) * dz;
+          this.hud.damageFrom(e.shooterId, Math.atan2(right, fwd));
+        }
       });
       this.net.onShot?.((e) => {
         const w = this.net.getWeapon?.(e.weaponId) ?? PRESET_WEAPONS.pistol;
@@ -313,34 +370,10 @@ export class Game {
       yaw: this.player.yaw,
     }));
     this.hud.setHealth(this.hp);
-    this.hud.onClickToPlay(() => this.input.requestLock());
-    this.input.onLockChange((locked) => {
-      if (this.alive && !this.opts.e2e) this.hud.showClickToPlay(!locked && !this.input.padPlaying);
-    });
-    this.hud.deathHandlers = {
-      onKeepLoadout: () => {
-        if (online) {
-          void this.requestRespawn(true);
-          return;
-        }
-        this.net.respawn(true);
-        this.respawn();
-      },
-      onGenerateWeapon: async (prompt) => {
-        if (online && this.net.generateWeapon) {
-          await this.generateAndRespawn(prompt);
-          return;
-        }
-        // offline: local stub
-        const w = await generateWeaponStub(prompt);
-        w.id = await this.net.registerWeapon(w);
-        this.net.respawn(false);
-        this.equip(w);
-        this.respawn();
-      },
-    };
+    this.input.onLockChange((locked) => this.flow.onLockChange(locked));
 
     this.ready = true;
+    this.flow.start();
     requestAnimationFrame(this.frame);
 
     // Playable now. Fetch the part library (real weapon models replace the placeholders), then
@@ -355,6 +388,7 @@ export class Game {
   private applyLocalState(me: NetPlayer) {
     const prev = this.me;
     this.me = me;
+    this.flow.onLocalChanged(me);
     if (me.hp < this.hp && me.alive) this.hud.damageFlash();
     this.hp = me.hp;
     this.hud.setHealth(this.hp);
@@ -410,7 +444,6 @@ export class Game {
   async requestRespawn(keepLoadout: boolean) {
     if (this.respawning || this.alive) return;
     this.respawning = true;
-    this.hud.setGenerating(true, 'Respawning…');
     try {
       const wait = (this.me?.respawnAt ?? 0) - Date.now();
       if (wait > 0) await sleep(wait + 50);
@@ -431,33 +464,6 @@ export class Game {
       for (let i = 0; i < 100 && !this.alive; i++) await sleep(50);
     } finally {
       this.respawning = false;
-      this.hud.setGenerating(false);
-    }
-  }
-
-  private async generateAndRespawn(prompt: string) {
-    const text = prompt.trim() || 'surprise me';
-    this.hud.setGenerating(true);
-    this.hud.setGenStatus(`Generating “${esc(text)}”…`);
-    try {
-      const res = await this.net.generateWeapon!(text, '');
-      if (!res.ok) {
-        this.hud.setGenStatus(esc(res.message || 'generation failed'), true);
-        return;
-      }
-      const w = res.weapon;
-      this.hud.setGenStatus(
-        w
-          ? `<span class="gen-name">${esc(w.name)}</span><span class="gen-stats">${esc(describeWeapon(w))}</span><span class="gen-msg">${esc(res.message)}</span>`
-          : `weapon #${esc(res.weaponId)} (${esc(res.message)})`,
-      );
-      // generate_weapon already equipped it server-side (we're dead): respawn keeping it
-      await this.requestRespawn(true);
-    } catch (err) {
-      console.error('[game] generate failed', err);
-      this.hud.setGenStatus(esc(`Generation failed: ${String((err as Error)?.message ?? err)}`), true);
-    } finally {
-      this.hud.setGenerating(false);
     }
   }
 
@@ -511,7 +517,8 @@ export class Game {
 
   equip(w: Weapon) {
     this.weapons.setWeapon(w);
-    this.hud.setWeaponName(w.name);
+    const r = rarityOf(w);
+    this.hud.setWeapon({ name: w.name, tier: r.tier, tierLabel: r.label, melee: w.fireMode === 'melee' ? { swing: meleeMetaOf(w).swing } : null });
   }
 
   die(message = '') {
@@ -523,10 +530,9 @@ export class Game {
     this.player.inputEnabled = false;
     this.player.frozen = true;
     this.input.exitLock();
-    this.hud.showClickToPlay(false);
-    this.hud.showDeath(true, message);
+    this.flow.onDeath(message);
     // the death screen offers weapon generation: get the template library ready
-    void warmTemplates().catch((err) => console.warn('[templates] failed to load', err));
+    if (!this.me?.needsLoadout) void warmTemplates().catch((err) => console.warn('[templates] failed to load', err));
   }
 
   /** local respawn. `pickSpawn` = choose a local spawn point (offline); networked mode teleports first. */
@@ -541,8 +547,8 @@ export class Game {
     this.hud.setHealth(this.hp);
     this.weapons.refill();
     this.alive = true;
-    this.hud.showDeath(false);
-    if (!this.opts.e2e) this.input.requestLock();
+    this.lastHitOnMe = null;
+    this.flow.onRespawn();
   }
 
   /** local damage (debug / environmental); server damage comes via onLocalChanged */
@@ -626,7 +632,7 @@ export class Game {
       ms: 12000,
       action: { label: 'Enable trackpad mode', onClick: () => {
         settings.setTrackpadMode(true);
-        this.hud.settingsPanel.sync();
+        this.flow.settingsPanel.sync();
       } },
     });
   }
@@ -655,7 +661,7 @@ export class Game {
     const spread = this.weapons.currentSpread();
     const half = (cam.fov * Math.PI) / 360;
     const px = (Math.tan((spread * Math.PI) / 180) / Math.tan(half)) * (window.innerHeight / 2);
-    this.hud.setCrosshairGap(3 + px);
+    this.hud.setCrosshairGap(px);
     const mode = this.weapons.fireMode;
     const scoped = this.weapons.viewmodel.hideWhenAimed && this.ads > 0.95;
     this.hud.showScope(scoped && this.alive);
@@ -693,10 +699,10 @@ export class Game {
     if (pad.connected && this.alive) {
       if (input.padPlaying && pad.startPressed) {
         input.padPlaying = false;
-        if (!this.opts.e2e) this.hud.showClickToPlay(!input.locked);
-      } else if (!input.padPlaying && !input.locked && (pad.startPressed || pad.jumpPressed)) {
+        if (!this.flow.blocking) this.flow.openPause();
+      } else if (!input.padPlaying && !input.locked && (pad.startPressed || (pad.jumpPressed && this.flow.screen === 'pause'))) {
         input.padPlaying = true;
-        this.hud.showClickToPlay(false);
+        if (this.flow.screen === 'pause') this.flow.resume();
       }
     }
     this.updateTrackpadHint(now);
@@ -788,14 +794,21 @@ export class Game {
     this.weapons.moveState = { speed, grounded: player.grounded, crouched: player.crouched, ads: this.ads };
     this.weapons.update(dt, input, canAct, actions);
     this.hud.setCharge(melee ? this.weapons.melee.chargeFraction : 0);
+    this.hud.setReloadProgress(this.weapons.reloading ? Math.max(0, this.weapons.viewmodel.reloadProgress) : null);
     this.hud.setStatus(
-      melee && this.weapons.melee.blocking
-        ? 'BLOCKING'
-        : player.autoRun
-          ? 'AUTORUN · W / S to stop'
-          : settings.current.trackpadMode && this.alive
-            ? 'T = autorun'
-            : '',
+      !this.alive
+        ? ''
+        : melee && this.weapons.melee.blocking
+          ? 'BLOCKING'
+          : player.autoRun
+            ? 'AUTORUN · W / S to stop'
+            : player.sprinting
+              ? 'SPRINTING'
+              : player.crouched
+                ? 'CROUCHED'
+                : settings.current.trackpadMode
+                  ? 'T = autorun'
+                  : '',
     );
     this.updateCrosshair();
     this.dummies?.update(dt, this.rc.camera);
@@ -803,20 +816,11 @@ export class Game {
     this.damageNumbers.update(dt, cam, (id) => this.remotes.headOf(id));
     this.hud.update(dt);
 
-    if (online) {
-      if (!this.alive && me?.respawnAt) this.hud.setRespawnCountdown((me.respawnAt - Date.now()) / 1000);
-      this.scoreAcc += dt;
-      if (this.scoreAcc > 0.5) {
-        this.scoreAcc = 0;
-        const n = this.remotes.ids().length;
-        const connected = (this.net as NetClient & { connected?: boolean }).connected !== false;
-        this.hud.setScoreboard(
-          `${me?.name ?? '?'}   K ${me?.kills ?? 0} / D ${me?.deaths ?? 0}\n` +
-            `${n} other player${n === 1 ? '' : 's'} online\n` +
-            `${connected ? '●' : '○'} ${this.opts.serverLabel ?? 'server'}`,
-          connected,
-        );
-      }
+    this.flow.update();
+    this.scoreAcc += dt;
+    if (this.scoreAcc > 0.5) {
+      this.scoreAcc = 0;
+      this.updateScoreboard();
     }
 
     if (this.showDebug) {
@@ -831,9 +835,45 @@ export class Game {
       );
     } else this.hud.setDebug(null);
 
-    this.rc.render();
+    if (!this.flow.opaque) this.rc.render();
     input.endFrame();
   };
+
+  /** Tab scoreboard rows + ping / FPS micro (twice a second) */
+  private updateScoreboard() {
+    const online = this.net.authoritative;
+    const st = this.net.stats?.();
+    const ping = online && st && st.rtt > 0 ? Math.round(st.rtt) : null;
+    this.hud.setNetMicro(ping, this.fps);
+    const rowFor = (p: NetPlayer, you: boolean) => {
+      const w = p.weaponId ? this.net.getWeapon?.(p.weaponId) : undefined;
+      const hs = this.hsKills.get(you ? this.net.localId : p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        weapon: w?.name ?? (p.needsLoadout ? 'forging…' : '—'),
+        tier: rarityOf(w).tier,
+        kills: p.kills ?? 0,
+        deaths: p.deaths ?? 0,
+        hsPct: hs && hs.k ? Math.round((hs.hs / hs.k) * 100) : null,
+        ping: you ? ping : null,
+        you,
+        alive: p.alive,
+      };
+    };
+    const rows = [];
+    const me = this.me;
+    if (me) rows.push(rowFor(me, true));
+    else rows.push({ id: 'local', name: 'You', weapon: this.weapons.weapon?.name ?? '—', tier: rarityOf(this.weapons.weapon).tier, kills: 0, deaths: 0, hsPct: null, ping: null, you: true, alive: this.alive });
+    for (const id of this.remotes.ids()) {
+      const r = this.remotes.get(id);
+      if (r) rows.push(rowFor(r.state, false));
+    }
+    rows.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+    const connected = (this.net as NetClient & { connected?: boolean }).connected !== false;
+    const n = rows.length;
+    this.hud.setScoreboardRows(rows, online ? `${connected ? '●' : '○'} ${this.serverLabel} · ${n} player${n === 1 ? '' : 's'}` : 'Offline practice');
+  }
 }
 
 /** glTF extras are untyped JSON: a box only counts when it really is a numeric min/max pair */

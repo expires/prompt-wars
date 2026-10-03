@@ -66,7 +66,8 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: `pnpm exec vite --port ${PORT} --strictPort`,
+        // /api/forge/* -> a local mock forge (run.mjs starts it on :8788); never the live one in tests
+        command: `FORGE_PROXY=${process.env.FORGE_PROXY ?? 'http://127.0.0.1:8788'} pnpm exec vite --port ${PORT} --strictPort`,
         url: `http://localhost:${PORT}`,
         reuseExistingServer: true,
         timeout: 60_000,

@@ -1,0 +1,231 @@
+/* "Arcade Tactical" design tokens + shared primitives (docs/ui-spec.md). Imported once from main.ts. */
+:root {
+  --ink-900: #0b0d12;
+  --ink-800: #141821;
+  --ink-700: #1e2430;
+  --ink-600: #2a3242;
+  --line: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --fg: #f5f3ee;
+  --fg-dim: #a9b0be;
+  --fg-mute: #6b7383;
+  --accent: #ffd23f;
+  --accent-ink: #1a1400;
+  --forge: #ff3da5;
+  --forge-2: #7b5cff;
+  --forge-grad: linear-gradient(100deg, var(--forge) 0%, var(--forge-2) 100%);
+  --info: #3fd0ff;
+  --hp-hi: #4be38a;
+  --hp-mid: #ffd23f;
+  --hp-lo: #ff4655;
+  --hit: #ffffff;
+  --crit: #ffb020;
+  --kill: #ff4655;
+  --enemy: var(--kill);
+
+  --t1: #a7adb7;
+  --t2: #5bd46a;
+  --t3: #3fa9ff;
+  --t4: #b467ff;
+  --t5: #ffa41f;
+
+  --font-display: 'Teko', 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --font-label: 'Chakra Petch', 'Barlow', system-ui, sans-serif;
+  --font-body: 'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --cut: 10px;
+  --cut-menu: 14px;
+  --clip-cut: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
+  --clip-cut-menu: polygon(0 0, calc(100% - var(--cut-menu)) 0, 100% var(--cut-menu), 100% 100%, var(--cut-menu) 100%, 0 calc(100% - var(--cut-menu)));
+  --hard-shadow: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.5));
+  --text-outline: 0 0 2px #000, 0 2px 0 #000;
+  --hatch: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0 2px, transparent 2px 9px);
+
+  --t-snap: 80ms;
+  --t-fast: 140ms;
+  --t-med: 240ms;
+  --t-slow: 420ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  /* accessibility (settings) */
+  --hud-scale: 1;
+  --text-scale: 1;
+  --u: calc(min(100vw / 1920, 100vh / 1080) * var(--hud-scale));
+}
+
+html.reduced-motion *, html.reduced-motion *::before, html.reduced-motion *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 100ms !important;
+}
+
+[hidden] { display: none !important; }
+
+/* ---------------------------------------------------------------- primitives */
+.ui-micro {
+  font: 600 calc(11px * var(--text-scale)) / 1.2 var(--font-label);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.ui-title {
+  font: 700 calc(28px * var(--text-scale)) / 1 var(--font-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg);
+  margin: 0;
+}
+.ui-num { font-family: var(--font-display); font-variant-numeric: tabular-nums; line-height: 0.9; }
+
+.ui-plate {
+  position: relative;
+  background: rgba(11, 13, 18, 0.88);
+  clip-path: var(--clip-cut);
+}
+.ui-plate--menu { background: var(--ink-800); clip-path: var(--clip-cut-menu); }
+
+/* buttons: real <button>s, cut corners, borders via ::before overlay (clip-path hides borders) */
+.ui-btn {
+  --btn-bg: var(--ink-700);
+  --btn-fg: var(--fg);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 22px;
+  border: 0;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font: 700 calc(16px * var(--text-scale)) / 1 var(--font-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  clip-path: var(--clip-cut);
+  transition: transform var(--t-fast) var(--ease-out), background var(--t-fast), filter var(--t-fast), opacity var(--t-fast);
+  white-space: nowrap;
+  user-select: none;
+}
+.ui-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  clip-path: inherit;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.ui-btn::after {
+  /* hover tick on the left edge */
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--btn-fg);
+  opacity: 0;
+  transform: scaleY(0.4);
+  transition: opacity var(--t-fast), transform var(--t-fast) var(--ease-out);
+}
+.ui-btn:hover:not(:disabled) { transform: translateX(4px); }
+.ui-btn:hover:not(:disabled)::after { opacity: 0.9; transform: scaleY(1); }
+.ui-btn:active:not(:disabled) { transform: translateX(4px) scale(0.98); }
+.ui-btn:focus-visible { outline: none; }
+.ui-btn:focus-visible::before { box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 0 4px rgba(0, 0, 0, 0.6); }
+.ui-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.ui-btn--primary { --btn-bg: var(--accent); --btn-fg: var(--accent-ink); min-height: 52px; }
+.ui-btn--primary::before { box-shadow: none; }
+.ui-btn--primary:hover:not(:disabled) { filter: brightness(1.06); }
+.ui-btn--secondary { --btn-bg: var(--ink-700); }
+.ui-btn--ghost { --btn-bg: transparent; }
+.ui-btn--danger { --btn-bg: #3a1218; --btn-fg: #ffd9dd; }
+.ui-btn--forge { --btn-bg: var(--forge-grad); --btn-fg: #fff; background: var(--forge-grad); text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35); }
+.ui-btn--forge::before { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
+.ui-btn--forge .spark { display: inline-block; animation: ui-sparkle 2.4s var(--ease-out) infinite; }
+.ui-btn--lg { min-height: 60px; padding: 0 32px; font-size: calc(18px * var(--text-scale)); }
+.ui-btn--sm { min-height: 36px; padding: 0 14px; font-size: calc(13px * var(--text-scale)); }
+@keyframes ui-sparkle { 0%, 70%, 100% { transform: scale(1) rotate(0); } 80% { transform: scale(1.35) rotate(25deg); } }
+
+.ui-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  transform: skewX(-12deg);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+  font: 700 11px/1 var(--font-label);
+  letter-spacing: 0.04em;
+  color: inherit;
+}
+.ui-kbd > span { transform: skewX(12deg); display: inline-block; }
+.ui-btn--primary .ui-kbd { background: rgba(0, 0, 0, 0.14); }
+
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  transform: skewX(-12deg);
+  background: var(--ink-700);
+  color: var(--fg-dim);
+  border: 0;
+  font: 600 calc(13px * var(--text-scale)) / 1 var(--font-label);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+  white-space: nowrap;
+}
+.ui-chip > * { transform: skewX(12deg); }
+.ui-chip > span { display: inline-block; }
+.ui-chip:hover { background: var(--ink-600); color: var(--fg); }
+.ui-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.ui-input {
+  height: 52px;
+  padding: 0 16px;
+  border: 0;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--fg);
+  font: 500 calc(16px * var(--text-scale)) / 1 var(--font-body);
+  clip-path: var(--clip-cut);
+  outline: none;
+  transition: box-shadow var(--t-fast);
+  box-sizing: border-box;
+}
+.ui-input::placeholder { color: var(--fg-mute); }
+.ui-input:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+
+.ui-hatch { background-image: var(--hatch); }
+
+/* rarity */
+.tier-1 { --tier: var(--t1); }
+.tier-2 { --tier: var(--t2); }
+.tier-3 { --tier: var(--t3); }
+.tier-4 { --tier: var(--t4); }
+.tier-5 { --tier: var(--t5); }
+.ui-pips { display: inline-flex; gap: 3px; align-items: center; }
+.ui-pips i { width: 8px; height: 8px; transform: rotate(45deg); box-shadow: inset 0 0 0 1.5px var(--tier, var(--t1)); }
+.ui-pips i.on { background: var(--tier, var(--t1)); }
+.ui-rarity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--tier, var(--t1));
+  font: 700 calc(12px * var(--text-scale)) / 1 var(--font-label);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ui-icon { width: 24px; height: 24px; flex: none; }
+.ui-icon--sm { width: 16px; height: 16px; }
+.ui-icon--lg { width: 32px; height: 32px; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

@@ -37,4 +37,5 @@ export default __t.row({
   dotWeaponId: __t.u64().name("dot_weapon_id"),
   crouching: __t.bool(),
   slot: __t.u32(),
+  needsLoadout: __t.bool().name("needs_loadout"),
 });

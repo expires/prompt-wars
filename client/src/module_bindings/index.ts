@@ -39,10 +39,12 @@ import ClaimAdminReducer from "./claim_admin_reducer";
 import ClearSpawnPointsReducer from "./clear_spawn_points_reducer";
 import EquipWeaponReducer from "./equip_weapon_reducer";
 import FireReducer from "./fire_reducer";
+import RegisterDesignReducer from "./register_design_reducer";
 import RegisterWeaponReducer from "./register_weapon_reducer";
 import ReloadReducer from "./reload_reducer";
 import RemoveSpawnPointReducer from "./remove_spawn_point_reducer";
 import ReportHitReducer from "./report_hit_reducer";
+import RequestRedeployReducer from "./request_redeploy_reducer";
 import RespawnReducer from "./respawn_reducer";
 import SetApiKeyReducer from "./set_api_key_reducer";
 import SetLlmModelReducer from "./set_llm_model_reducer";
@@ -136,10 +138,12 @@ const reducersSchema = __reducers(
   __reducerSchema("clear_spawn_points", ClearSpawnPointsReducer),
   __reducerSchema("equip_weapon", EquipWeaponReducer),
   __reducerSchema("fire", FireReducer),
+  __reducerSchema("register_design", RegisterDesignReducer),
   __reducerSchema("register_weapon", RegisterWeaponReducer),
   __reducerSchema("reload", ReloadReducer),
   __reducerSchema("remove_spawn_point", RemoveSpawnPointReducer),
   __reducerSchema("report_hit", ReportHitReducer),
+  __reducerSchema("request_redeploy", RequestRedeployReducer),
   __reducerSchema("respawn", RespawnReducer),
   __reducerSchema("set_api_key", SetApiKeyReducer),
   __reducerSchema("set_llm_model", SetLlmModelReducer),

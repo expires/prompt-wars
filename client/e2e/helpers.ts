@@ -24,7 +24,11 @@ export interface Player {
   id: string;
 }
 
-export async function joinGame(browser: Browser, name: string): Promise<Player> {
+/**
+ * Open the game as a new player. New players land on the landing screen (server needsLoadout):
+ * by default they quick-pick the pistol preset and deploy; `loadout: 'none'` stops at the landing.
+ */
+export async function joinGame(browser: Browser, name: string, opts: { loadout?: string | 'none' } = {}): Promise<Player> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
   // count WebSocket frames / bytes in both directions (works for any client version)
@@ -57,12 +61,18 @@ export async function joinGame(browser: Browser, name: string): Promise<Player> 
       const w = window as unknown as Win;
       if (w.__gameError) throw new Error(w.__gameError);
       const s = w.__game?.getState();
-      return !!s && s.ready && s.connected && !!s.localId && !!s.weaponId;
+      return !!s && s.ready && s.connected && !!s.localId && (s.needsLoadout ? s.screen === 'landing' : !!s.weaponId);
     },
     undefined,
     { timeout: 45_000 },
   );
-  const s = await state(page);
+  let s = await state(page);
+  const loadout = opts.loadout ?? 'pistol';
+  if (s.needsLoadout && loadout !== 'none') {
+    await expect(page.getByTestId('landing')).toBeVisible();
+    await page.getByTestId(`quick-pick-${loadout}`).click();
+    s = await waitForState(page, (x) => x.alive && !!x.weaponId && !x.needsLoadout && x.screen === 'none', 20_000, `${name} deployed with ${loadout}`);
+  }
   return { name, context, page, id: s.localId };
 }
 

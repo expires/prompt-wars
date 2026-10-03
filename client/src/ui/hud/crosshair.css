@@ -1,0 +1,64 @@
+/* Crosshair (renderCrosshair in crosshair.ts). The host is a zero-size box at the aim point.
+   Not scaled by --u: crosshair sizes are in real px. */
+.xh {
+  --xh-color: #fff;
+  --xh-th: 2px;
+  --xh-half: 1px;
+  --xh-len: 7px;
+  --xh-dot: 2px;
+  --xh-big: 5px;
+  --xh-op: 1;
+  --gap: 4px;
+  --xh-ol: 0 0 0 0 transparent;
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: var(--xh-op);
+  pointer-events: none;
+}
+.xh--outline { --xh-ol: 0 0 0 1px rgba(0, 0, 0, 0.85); }
+.xh > i { position: absolute; display: block; background: var(--xh-color); box-shadow: var(--xh-ol); }
+
+/* plus arms */
+.xh-t, .xh-b { width: var(--xh-th); height: var(--xh-len); left: calc(var(--xh-half) * -1); }
+.xh-l, .xh-r { height: var(--xh-th); width: var(--xh-len); top: calc(var(--xh-half) * -1); }
+.xh-t { bottom: 0; transform: translateY(calc(var(--gap) * -1)); }
+.xh-b { top: 0; transform: translateY(var(--gap)); }
+.xh-l { right: 0; transform: translateX(calc(var(--gap) * -1)); }
+.xh-r { left: 0; transform: translateX(var(--gap)); }
+
+/* dot preset */
+.xh > .xh-big { width: var(--xh-big); height: var(--xh-big); left: calc(var(--xh-big) / -2); top: calc(var(--xh-big) / -2); border-radius: 50%; }
+
+/* circle preset: ring whose radius = gap + length */
+.xh > .xh-ring {
+  --d: calc((var(--gap) + var(--xh-len)) * 2);
+  width: var(--d);
+  height: var(--d);
+  left: calc(var(--d) / -2);
+  top: calc(var(--d) / -2);
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: none;
+  border: var(--xh-th) solid var(--xh-color);
+}
+.xh--outline > .xh-ring { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.85), inset 0 0 0 1px rgba(0, 0, 0, 0.85); }
+
+/* chevron preset: ^ with its apex `gap` px below the aim point */
+.xh-cl, .xh-cr {
+  width: var(--xh-th);
+  height: calc(var(--xh-len) * 1.25);
+  left: calc(var(--xh-half) * -1);
+  top: 0;
+  transform-origin: 50% 0;
+}
+.xh-cl { transform: translateY(var(--gap)) rotate(45deg); }
+.xh-cr { transform: translateY(var(--gap)) rotate(-45deg); }
+
+/* centre dot: shown when enabled, or as the only element while lines are hidden (melee / ADS) */
+.xh > .xh-dot { display: none; width: var(--xh-dot); height: var(--xh-dot); left: calc(var(--xh-dot) / -2); top: calc(var(--xh-dot) / -2); }
+.xh--has-dot > .xh-dot, .xh.no-lines > .xh-dot { display: block; }
+.xh--dot > .xh-dot { display: none; }
+.xh--dot.no-lines > .xh-dot { display: block; }
+.xh.no-dot > .xh-dot { display: none; }
+.xh.no-lines > .xh-arm { display: none; }

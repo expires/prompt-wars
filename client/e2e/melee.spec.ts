@@ -82,11 +82,13 @@ async function equipMeleePreset(p: Player) {
   return respawnKeep(p);
 }
 
-/** dead `p` generates a weapon from `prompt` on the death screen and respawns with it */
+/**
+ * dead `p` generates a weapon from `prompt` with the server-side template generator
+ * (generate_weapon procedure; the death screen's QUICK FORGE uses the forge service) and respawns
+ */
 async function generate(p: Player, prompt: string) {
   const before = (await state(p.page)).weaponId;
-  await p.page.getByTestId('weapon-prompt').fill(prompt);
-  await p.page.getByTestId('generate-weapon').click();
+  void hook(p, (g, a) => g.generateLegacy(a), prompt);
   return waitForState(p.page, (s) => s.alive && s.weaponId !== before && !!s.weapon, 30_000, `${p.name} respawned with "${prompt}"`);
 }
 

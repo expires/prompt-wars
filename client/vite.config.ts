@@ -139,8 +139,25 @@ function precompress(): Plugin {
   };
 }
 
+/**
+ * Dev: /api/forge/* goes to the forge service. Default = the live VPS forge (real generations cost
+ * API credits); FORGE_PROXY=http://127.0.0.1:8788 points it at a local (mock) forge, e.g. in e2e.
+ * The Origin header is dropped so the forge's same-origin check passes for the proxied request.
+ */
+const FORGE_PROXY = process.env.FORGE_PROXY ?? 'http://187.7.27.171';
+const forgeProxy = {
+  '/api/forge': {
+    target: FORGE_PROXY,
+    changeOrigin: true,
+    configure: (proxy: { on(ev: 'proxyReq', cb: (req: { removeHeader(name: string): void }) => void): void }) => {
+      proxy.on('proxyReq', (req) => req.removeHeader('origin'));
+    },
+  },
+};
+
 export default defineConfig({
-  server: { port: 5173, host: true },
+  server: { port: 5173, host: true, proxy: forgeProxy },
+  preview: { proxy: forgeProxy },
   plugins: [rapierWasm(), bootManifest(), precompress()],
   build: {
     target: 'es2022',

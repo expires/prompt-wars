@@ -1,267 +1,374 @@
+// In-game HUD ("Arcade Tactical", docs/ui-spec.md §HUD). Plain DOM, sized in --u units
+// (1920×1080 reference, anchored to a centred 16:9 frame); the crosshair is in real px.
 import './hud.css';
-import { SettingsPanel } from './SettingsPanel';
+import { settings } from '../settings';
+import { el, esc } from './dom';
+import { icon } from './icons';
+import { pipsHtml } from './rarity';
+import { initUiSettings } from './hud/applyUiSettings';
+import { crosshairFromSettings, renderCrosshair, setCrosshairSpread, type CrosshairConfig } from './hud/crosshair';
+import { DamageArcs } from './hud/DamageArcs';
+import { KillFeed, type KillOpts } from './hud/KillFeed';
+import { Scoreboard, type ScoreRow } from './hud/Scoreboard';
+import { Toasts, type ToastOpts } from './hud/Toasts';
 
-export interface DeathScreenHandlers {
-  onKeepLoadout(): void;
-  onGenerateWeapon(prompt: string): void | Promise<void>;
+export { esc } from './dom';
+export type { KillOpts } from './hud/KillFeed';
+export type { ScoreRow } from './hud/Scoreboard';
+export type { ToastOpts, ToastType } from './hud/Toasts';
+
+export interface HudWeaponInfo {
+  name: string;
+  tier: 1 | 2 | 3 | 4 | 5;
+  tierLabel: string;
+  /** melee weapon: current swing type (SLASH / THRUST / OVERHEAD / BASH …) */
+  melee?: { swing: string } | null;
 }
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (html !== undefined) e.innerHTML = html;
-  return e;
-}
+initUiSettings();
 
-export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const STATUS_DELAY = 0.15;
+
+const isEditable = (t: EventTarget | null) =>
+  t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+
+const HITMARKER_SVG = (() => {
+  // 4 diagonal ticks (normal), longer ticks (headshot / kill), diamond glyph (headshot)
+  const ticks = (a: number, b: number) =>
+    [
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ]
+      .map(([sx, sy]) => `M${32 + sx * a} ${32 + sy * a}L${32 + sx * b} ${32 + sy * b}`)
+      .join('');
+  const n = ticks(6, 12);
+  const h = ticks(6, 17);
+  const d = 'M32 7l4 4-4 4-4-4z';
+  return (
+    `<svg viewBox="0 0 64 64" aria-hidden="true">` +
+    `<g class="hm-n"><path class="hm-ol" d="${n}"/><path class="hm-c" d="${n}"/></g>` +
+    `<g class="hm-h"><path class="hm-ol" d="${h}"/><path class="hm-c" d="${h}"/></g>` +
+    `<g class="hm-d"><path class="hm-ol" d="${d}"/><path class="hm-c hm-fill" d="${d}"/></g>` +
+    `</svg>`
+  );
+})();
+
+const KILL_SVG =
+  `<svg viewBox="0 0 44 44" aria-hidden="true">` +
+  `<path class="kx-ol" d="M6 6L38 38M38 6L6 38"/><path class="kx-c" d="M6 6L38 38M38 6L6 38"/></svg>`;
 
 /** Plain-DOM HUD overlay. */
 export class Hud {
   private readonly root = el('div', 'hud');
-  private readonly hpValue: HTMLElement;
-  private readonly hpBar: HTMLElement;
-  private readonly ammoValue: HTMLElement;
-  private readonly reloadEl: HTMLElement;
-  private readonly weaponName: HTMLElement;
-  private readonly killfeed = el('div', 'panel killfeed');
-  private readonly hitmarker = el('div', 'hitmarker');
-  private readonly killX = el('div', 'killx');
-  private killTimer = 0;
+  private readonly frame = el('div', 'hud-frame');
+  private readonly center = el('div', 'hud-center');
   /** container for floating damage numbers */
-  readonly numbersLayer = el('div', 'dmg-layer');
-  private readonly crosshair = el('div', 'crosshair');
-  private readonly scope = el('div', 'scope');
-  private crossGap = -1;
-  private readonly vignette = el('div', 'damage-vignette');
-  private readonly debugEl = el('div', 'panel debug');
-  private readonly spawnEditorEl = el('div', 'panel spawn-editor');
-  private readonly clickOverlay: HTMLElement;
-  private readonly deathOverlay: HTMLElement;
-  private readonly promptInput: HTMLInputElement;
-  private readonly genBtn: HTMLButtonElement;
-  private readonly keepBtn: HTMLButtonElement;
-  private readonly deathMsg: HTMLElement;
-  private readonly genStatus = el('div', 'gen-status');
-  private readonly scoreboard = el('div', 'panel scoreboard');
-  private warningEl?: HTMLElement;
-  private keepLabel = 'Keep loadout';
-  private hitTimer = 0;
-  private dmgTimer = 0;
+  readonly numbersLayer = el('div', 'hud-dmg-layer');
   /** test hook: keep the hitmarker on screen (screenshots) */
   holdHitmarker = false;
-  readonly settingsPanel: SettingsPanel;
-  private readonly chargeEl = el('div', 'charge-meter');
-  private readonly statusEl = el('div', 'status-line');
-  private readonly toastEl = el('div', 'toast');
-  private toastTimer = 0;
-  deathHandlers?: DeathScreenHandlers;
+  /** test / screenshot hook: show the scoreboard without holding Tab */
+  forceScoreboard = false;
+
+  // health
+  private readonly hpPlate: HTMLElement;
+  private readonly hpValue: HTMLElement;
+  private readonly hpFill: HTMLElement;
+  private readonly hpTrail: HTMLElement;
+  private readonly hpMax: HTMLElement;
+  private hp = -1;
+  private hpFrac = 1;
+  // ammo
+  private readonly ammoPlate: HTMLElement;
+  private readonly weaponName: HTMLElement;
+  private readonly rarityChip: HTMLElement;
+  private readonly magEl: HTMLElement;
+  private readonly resEl: HTMLElement;
+  private readonly ammoState: HTMLElement;
+  private readonly swingEl: HTMLElement;
+  private readonly reloadProg: HTMLElement;
+  private ammoKey = '';
+  private weaponKey = '';
+  private meleeSwing: string | null = null;
+  private lastAmmo: [number, number, boolean] = [0, 0, false];
+  // crosshair + hit feedback
+  private readonly crosshair = el('div');
+  private xhCfg: CrosshairConfig;
+  private xhKey = '';
+  private spreadPx = 0;
+  private readonly hitmarker = el('div', 'hud-hm');
+  private readonly killX = el('div', 'hud-kx');
+  private hitTimer = 0;
+  private killTimer = 0;
+  private readonly chargeEl = el('div', 'hud-charge');
+  private readonly chargeFill: HTMLElement;
+  private chargeFull = false;
+  private readonly statusEl = el('div', 'hud-status');
+  private statusPending = '';
+  private statusShown = '';
+  private statusAge = 0;
+  private readonly scope = el('div', 'hud-scope');
+  // damage
+  private readonly arcs = new DamageArcs();
+  private readonly hitFlash = el('div', 'hud-hitflash');
+  private readonly lowHp = el('div', 'hud-lowhp');
+  // corners
+  private readonly netEl = el('div', 'hud-net');
+  private netKey = '';
+  private readonly debugEl = el('div', 'hud-debug');
+  private readonly spawnEditorEl = el('div', 'hud-spawned');
+  private readonly killfeed = new KillFeed();
+  private readonly scoreboard = new Scoreboard();
+  private readonly toasts = new Toasts();
+  private warningEl?: HTMLElement;
+  private tabHeld = false;
+  private visible = true;
 
   constructor(parent: HTMLElement = document.body) {
-    // dynamic crosshair: four lines whose gap follows the current weapon spread
-    this.crosshair.innerHTML = `<i class="l t"></i><i class="l b"></i><i class="l lft"></i><i class="l r"></i><i class="dot"></i>`;
+    // ---- centre: crosshair, hit / kill markers, charge, status
     this.crosshair.dataset.testid = 'crosshair';
-    this.hitmarker.innerHTML = `<svg width="30" height="30" viewBox="0 0 30 30" stroke="currentColor" stroke-width="2.5"><path d="M4 4l7 7M26 4l-7 7M4 26l7-7M26 26l-7-7"/></svg>`;
+    this.xhCfg = crosshairFromSettings(settings.current);
+    this.applyCrosshair();
+    this.hitmarker.innerHTML = HITMARKER_SVG;
     this.hitmarker.dataset.testid = 'hitmarker';
-    this.scope.innerHTML = `<div class="scope-ring"></div><div class="scope-h"></div><div class="scope-v"></div>`;
-    this.scope.hidden = true;
-    this.killX.innerHTML = `<svg width="56" height="56" viewBox="0 0 56 56" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M10 10L46 46M46 10L10 46"/></svg>`;
+    this.killX.innerHTML = `<i class="hud-kx__ring"></i>${KILL_SVG}<span class="hud-kx__head">${icon('headshot', 'ui-icon')}</span>`;
     this.killX.dataset.testid = 'kill-confirm';
-    this.root.append(this.scope, this.crosshair, this.hitmarker, this.killX, this.numbersLayer, this.vignette);
-    this.setCrosshairGap(6);
-
-    const hp = el('div', 'panel hp');
-    hp.append(el('div', 'label', 'HEALTH'));
-    this.hpValue = el('div', 'value', '100');
-    const bar = el('div', 'bar');
-    this.hpBar = el('div');
-    this.hpBar.style.width = '100%';
-    bar.append(this.hpBar);
-    hp.append(this.hpValue, bar);
-
-    const ammo = el('div', 'panel ammo');
-    this.weaponName = el('div', 'weapon-name', '—');
-    this.ammoValue = el('div', 'value', '0');
-    this.reloadEl = el('div', 'reloading');
-    ammo.append(this.weaponName, el('div', 'label', 'AMMO'), this.ammoValue, this.reloadEl);
-
-    this.spawnEditorEl.hidden = true;
-    this.debugEl.hidden = true;
-    this.scoreboard.hidden = true;
-    this.scoreboard.dataset.testid = 'scoreboard';
-    this.killfeed.dataset.testid = 'killfeed';
-    this.hpValue.dataset.testid = 'hp';
-    this.weaponName.dataset.testid = 'weapon-name';
-    this.root.append(hp, ammo, this.killfeed, this.debugEl, this.spawnEditorEl, this.scoreboard);
-    this.chargeEl.innerHTML = '<i></i>';
+    this.chargeEl.innerHTML = '<div class="hud-charge__bar"><i class="hud-charge__fill"></i></div><span class="hud-charge__lbl">Release</span>';
+    this.chargeFill = this.chargeEl.querySelector('.hud-charge__fill')!;
     this.chargeEl.hidden = true;
     this.chargeEl.dataset.testid = 'charge-meter';
     this.statusEl.dataset.testid = 'status-line';
-    this.toastEl.hidden = true;
-    this.toastEl.dataset.testid = 'toast';
-    this.root.append(this.chargeEl, this.statusEl);
-    parent.append(this.toastEl);
+    this.statusEl.hidden = true;
+    this.center.append(this.arcs.root, this.crosshair, this.killX, this.hitmarker, this.chargeEl, this.statusEl);
 
-    // click-to-play
-    this.clickOverlay = el('div', 'overlay click');
-    this.clickOverlay.innerHTML = `
-      <h1>AI GAEM</h1>
-      <p>Click to play</p>
-      <div class="controls">
-        <kbd>WASD</kbd><span>move</span>
-        <kbd>T</kbd><span>autorun (W / S cancels; A D strafe)</span>
-        <kbd>Shift</kbd><span>sprint (forward; hold or toggle)</span>
-        <kbd>C / Ctrl</kbd><span>crouch (hold, or toggle in settings)</span>
-        <kbd>Space</kbd><span>jump</span>
-        <kbd>Mouse</kbd><span>look / fire · melee: swing (slash combo x3)</span>
-        <kbd>Right mouse</kbd><span>aim down sights · melee: hold to charge a heavy attack</span>
-        <kbd>F</kbd><span>melee: block (60% less melee damage from the front)</span>
-        <kbd>Arrows / Q E</kbd><span>turn (trackpad fallback)</span>
-        <kbd>R</kbd><span>reload</span>
-        <kbd>Gamepad</kbd><span>sticks move / look · RT fire · LT aim / heavy · A jump · B crouch · X reload · L3 sprint · RB block · Start menu</span>
-        <kbd>1-0</kbd><span>debug: swap sample weapon (7-0 melee)</span>
-        <kbd>K</kbd><span>debug: die</span>
-        <kbd>F2</kbd><span>spawn editor (P = save spawn)</span>
-        <kbd>F3</kbd><span>debug info</span>
-        <kbd>Esc</kbd><span>release mouse / settings</span>
-      </div>`;
-    this.settingsPanel = new SettingsPanel();
-    this.clickOverlay.append(this.settingsPanel.root);
+    // ---- full-screen layers
+    this.scope.innerHTML = '<div class="hud-scope__ring"></div><div class="hud-scope__h"></div><div class="hud-scope__v"></div>';
+    this.scope.hidden = true;
+    this.lowHp.innerHTML = '<i></i>';
 
-    // death screen
-    this.deathOverlay = el('div', 'overlay death');
-    this.deathOverlay.hidden = true;
-    this.deathMsg = el('p', '', '');
-    this.keepBtn = el('button', 'btn', 'Keep loadout') as HTMLButtonElement;
-    this.promptInput = el('input', 'prompt-input') as HTMLInputElement;
-    this.promptInput.placeholder = 'Describe a new weapon… e.g. "banana-powered sniper"';
-    this.promptInput.maxLength = 200;
-    this.genBtn = el('button', 'btn primary', 'Generate new weapon') as HTMLButtonElement;
-    const row = el('div', 'row');
-    row.append(this.keepBtn, this.genBtn);
-    this.deathOverlay.dataset.testid = 'death-screen';
-    this.keepBtn.dataset.testid = 'keep-loadout';
-    this.genBtn.dataset.testid = 'generate-weapon';
-    this.promptInput.dataset.testid = 'weapon-prompt';
-    this.genStatus.dataset.testid = 'gen-status';
-    this.deathOverlay.append(el('h1', '', 'YOU DIED'), this.deathMsg, this.promptInput, row, this.genStatus);
-    this.keepBtn.addEventListener('click', () => this.deathHandlers?.onKeepLoadout());
-    const gen = async () => {
-      if (!this.deathHandlers) return;
-      this.setGenerating(true);
-      try {
-        await this.deathHandlers.onGenerateWeapon(this.promptInput.value);
-      } finally {
-        this.setGenerating(false);
-      }
-    };
-    this.genBtn.addEventListener('click', gen);
-    this.promptInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') gen();
-      e.stopPropagation();
+    // ---- health (bottom-left)
+    const health = el('div', 'hud-health');
+    health.innerHTML =
+      `<div class="hud-plate hud-health__plate">` +
+      `<i class="hud-tick"></i>` +
+      `<div class="hud-health__num ui-num" data-testid="hp">100</div>` +
+      `<div class="hud-health__side">` +
+      `<div class="hud-health__label">${icon('health', 'ui-icon hud-health__ico')}<span class="hud-micro">Health</span><span class="hud-health__max">/ 100</span></div>` +
+      `<div class="hud-hpbar"><i class="hud-hpbar__track"></i><i class="hud-hpbar__trail"></i><i class="hud-hpbar__fill"></i></div>` +
+      `</div></div>`;
+    this.hpPlate = health.querySelector('.hud-health__plate')!;
+    this.hpValue = health.querySelector('[data-testid=hp]')!;
+    this.hpFill = health.querySelector('.hud-hpbar__fill')!;
+    this.hpTrail = health.querySelector('.hud-hpbar__trail')!;
+    this.hpMax = health.querySelector('.hud-health__max')!;
+
+    // ---- ammo (bottom-right)
+    const ammo = el('div', 'hud-ammo');
+    ammo.innerHTML =
+      `<div class="hud-plate hud-ammo__plate">` +
+      `<i class="hud-tick hud-tick--r"></i>` +
+      `<div class="hud-ammo__top"><span class="hud-ammo__rar tier-1"></span><span class="hud-ammo__name" data-testid="weapon-name">—</span></div>` +
+      `<div class="hud-ammo__main">` +
+      `<div class="hud-ammo__state"></div>` +
+      `<div class="hud-ammo__count"><span class="hud-ammo__mag ui-num">0</span><i class="hud-ammo__div"></i><span class="hud-ammo__res ui-num">0</span></div>` +
+      `<div class="hud-ammo__melee">${icon('blade', 'ui-icon hud-ammo__mico')}<span class="hud-ammo__swing ui-num">Melee</span></div>` +
+      `</div>` +
+      `<i class="hud-ammo__prog"></i>` +
+      `</div>`;
+    this.ammoPlate = ammo.querySelector('.hud-ammo__plate')!;
+    this.weaponName = ammo.querySelector('[data-testid=weapon-name]')!;
+    this.rarityChip = ammo.querySelector('.hud-ammo__rar')!;
+    this.magEl = ammo.querySelector('.hud-ammo__mag')!;
+    this.resEl = ammo.querySelector('.hud-ammo__res')!;
+    this.ammoState = ammo.querySelector('.hud-ammo__state')!;
+    this.swingEl = ammo.querySelector('.hud-ammo__swing')!;
+    this.reloadProg = ammo.querySelector('.hud-ammo__prog')!;
+
+    this.debugEl.hidden = true;
+    this.spawnEditorEl.hidden = true;
+    this.netEl.hidden = true;
+    const topLeft = el('div', 'hud-tl');
+    topLeft.append(this.netEl, this.debugEl);
+
+    this.frame.append(health, ammo, topLeft, this.killfeed.root, this.scoreboard.root, this.spawnEditorEl);
+    this.root.append(this.scope, this.lowHp, this.hitFlash, this.numbersLayer, this.center, this.frame);
+    parent.append(this.root, this.toasts.root);
+
+    this.setHealth(100);
+    this.setCrosshairGap(0);
+
+    settings.onChange((s) => {
+      const cfg = crosshairFromSettings(s);
+      this.xhCfg = cfg;
+      this.applyCrosshair();
+      this.updateLowHp();
+      if (!s.showFps) this.netKey = '';
     });
 
-    parent.append(this.root, this.clickOverlay, this.deathOverlay);
+    // hold Tab: scoreboard (capture so the browser never moves focus while playing)
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.code !== 'Tab' || !this.visible || isEditable(e.target)) return;
+        e.preventDefault();
+        if (!this.tabHeld) {
+          this.tabHeld = true;
+          this.refreshScoreboard();
+        }
+      },
+      true,
+    );
+    window.addEventListener(
+      'keyup',
+      (e) => {
+        if (e.code !== 'Tab' || !this.tabHeld) return;
+        this.tabHeld = false;
+        this.refreshScoreboard();
+      },
+      true,
+    );
+    window.addEventListener('blur', () => {
+      this.tabHeld = false;
+      this.refreshScoreboard();
+    });
   }
 
-  onClickToPlay(cb: () => void) {
-    this.clickOverlay.addEventListener('click', cb);
-  }
-
-  showClickToPlay(show: boolean) {
-    this.clickOverlay.hidden = !show;
-  }
-
-  showDeath(show: boolean, message = '') {
-    this.deathOverlay.hidden = !show;
-    this.deathMsg.textContent = message;
-    if (show) {
-      this.clickOverlay.hidden = true;
-      this.promptInput.value = '';
-      this.setGenStatus(null);
-      this.setGenerating(false);
-    }
-  }
-
-  setDeathMessage(text: string) {
-    this.deathMsg.textContent = text;
-  }
-
-  /** seconds until respawn is allowed (0 = ready); shown on the Keep loadout button */
-  setRespawnCountdown(seconds: number) {
-    const label = seconds > 0 ? `Keep loadout (${Math.ceil(seconds)})` : 'Keep loadout';
-    if (label !== this.keepLabel) {
-      this.keepLabel = label;
-      if (!this.genBtn.disabled) this.keepBtn.textContent = label;
-    }
-  }
-
-  /** death-screen status line: generating / generated weapon summary / error */
-  setGenStatus(html: string | null, error = false) {
-    this.genStatus.innerHTML = html ?? '';
-    this.genStatus.classList.toggle('error', error);
-  }
-
-  setScoreboard(text: string | null, ok = true) {
-    this.scoreboard.hidden = text === null;
-    if (text !== null) {
-      this.scoreboard.textContent = text;
-      this.scoreboard.classList.toggle('net-bad', !ok);
-    }
-  }
-
-  /** persistent banner (e.g. the venue map failed to load and we play the test map) */
-  showWarning(text: string) {
-    const w = this.warningEl ?? el('div', 'hud-warning');
-    if (!this.warningEl) {
-      w.style.cssText =
-        'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:60;padding:6px 12px;' +
-        'background:#000c;color:#ffcf6b;border:1px solid #ffcf6b;border-radius:6px;' +
-        'font:13px/1.4 ui-monospace,monospace;pointer-events:none';
-      document.body.append(w);
-      this.warningEl = w;
-    }
-    w.textContent = text;
-  }
-
-  get deathVisible() {
-    return !this.deathOverlay.hidden;
-  }
-
-  setGenerating(on: boolean, label = 'Generating…') {
-    this.genBtn.disabled = on;
-    this.keepBtn.disabled = on;
-    this.promptInput.disabled = on;
-    this.genBtn.textContent = on ? label : 'Generate new weapon';
-    if (!on) this.keepBtn.textContent = this.keepLabel;
-  }
+  // ------------------------------------------------------------------ health
 
   setHealth(hp: number, max = 100) {
     const v = Math.max(0, Math.round(hp));
+    const f = Math.max(0, Math.min(1, hp / (max || 100)));
+    if (v === this.hp && f === this.hpFrac) return;
+    const prevFrac = this.hpFrac;
+    this.hp = v;
+    this.hpFrac = f;
     this.hpValue.textContent = String(v);
-    const f = Math.max(0, Math.min(1, hp / max));
-    this.hpBar.style.width = `${f * 100}%`;
-    this.hpBar.style.background = f > 0.5 ? 'var(--hud-ok)' : f > 0.25 ? 'var(--hud-accent)' : 'var(--hud-danger)';
+    this.hpMax.textContent = `/ ${Math.round(max)}`;
+    const pct = f * 100;
+    const band = pct > 60 ? 'hi' : pct >= 30 ? 'mid' : 'lo';
+    this.hpPlate.dataset.band = band;
+    this.hpPlate.classList.toggle('is-low', band === 'lo' && v > 0);
+    // snap the fill to whole-ish values; trail lingers 300 ms then drains over 400 ms
+    this.hpFill.style.transform = `scaleX(${f.toFixed(4)})`;
+    if (f < prevFrac) {
+      this.hpTrail.style.transition = 'transform 400ms var(--ease-out) 300ms';
+    } else {
+      this.hpTrail.style.transition = 'none';
+    }
+    this.hpTrail.style.transform = `scaleX(${f.toFixed(4)})`;
+    this.updateLowHp();
+  }
+
+  private updateLowHp() {
+    const hp = this.hp < 0 ? 100 : this.hpFrac * 100;
+    const alive = this.hp > 0;
+    const k = alive ? Math.max(0, Math.min(1, (40 - hp) / 40)) * 0.8 * settings.current.vignetteIntensity : 0;
+    this.lowHp.style.opacity = k.toFixed(3);
+    this.lowHp.classList.toggle('is-beat', alive && hp < 20);
+  }
+
+  // ------------------------------------------------------------------ weapon / ammo
+
+  setWeaponName(name: string) {
+    if (this.weaponName.textContent !== name) this.weaponName.textContent = name;
+  }
+
+  setWeapon(info: HudWeaponInfo) {
+    const key = `${info.name}|${info.tier}|${info.tierLabel}|${info.melee?.swing ?? ''}|${!!info.melee}`;
+    if (key === this.weaponKey) return;
+    this.weaponKey = key;
+    this.setWeaponName(info.name);
+    const tier = Math.max(1, Math.min(5, info.tier));
+    this.rarityChip.className = `hud-ammo__rar tier-${tier}`;
+    this.rarityChip.innerHTML = `<span class="hud-ammo__rar-in">${pipsHtml(tier)}<span>${esc(info.tierLabel)}</span></span>`;
+    this.meleeSwing = info.melee ? info.melee.swing || 'Melee' : null;
+    this.renderAmmo();
   }
 
   setAmmo(ammo: number, mag: number, reloading: boolean) {
-    this.ammoValue.innerHTML = Number.isFinite(ammo) ? `${ammo} <small>/ ${mag}</small>` : '∞';
-    this.reloadEl.textContent = reloading ? 'RELOADING…' : '';
+    this.lastAmmo = [ammo, mag, reloading];
+    this.renderAmmo();
   }
 
-  setWeaponName(name: string) {
-    this.weaponName.textContent = name;
+  private renderAmmo() {
+    const [ammo, mag, reloading] = this.lastAmmo;
+    const melee = this.meleeSwing !== null || !Number.isFinite(ammo);
+    const empty = !melee && ammo <= 0;
+    const low = !melee && !empty && mag > 0 && ammo <= mag * 0.25;
+    const key = `${melee}|${melee ? (this.meleeSwing ?? 'Melee') : `${ammo}/${mag}`}|${reloading}`;
+    if (key === this.ammoKey) return;
+    this.ammoKey = key;
+    const p = this.ammoPlate.classList;
+    p.toggle('is-melee', melee);
+    p.toggle('is-empty', empty && !reloading);
+    p.toggle('is-low', low && !reloading);
+    p.toggle('is-reloading', reloading && !melee);
+    if (melee) {
+      this.swingEl.textContent = this.meleeSwing ?? 'Melee';
+      this.ammoState.innerHTML = `<span class="hud-hint"><span class="hud-hint__t">Block</span><span class="ui-kbd"><span>F</span></span></span>`;
+      return;
+    }
+    this.magEl.textContent = String(Math.max(0, Math.floor(ammo)));
+    this.resEl.textContent = String(Math.max(0, Math.floor(mag)));
+    this.ammoState.innerHTML = reloading
+      ? `<span class="hud-ammo__reloading">${icon('rotate', 'ui-icon')}<span>Reloading</span></span>`
+      : empty
+        ? `<span class="hud-ammo__chip">${icon('warning', 'ui-icon')}<span>Reload</span><span class="ui-kbd"><span>R</span></span></span>`
+        : low
+          ? `<span class="hud-ammo__lowtxt">${icon('ammo', 'ui-icon')}<span>Low ammo</span></span>`
+          : `<span class="hud-ammo__ico">${icon('ammo', 'ui-icon')}</span>`;
+  }
+
+  /** 0..1 while reloading, null = hide the progress line */
+  setReloadProgress(f: number | null) {
+    if (f === null) {
+      this.reloadProg.style.opacity = '0';
+      return;
+    }
+    this.reloadProg.style.opacity = '1';
+    this.reloadProg.style.transform = `scaleX(${Math.max(0, Math.min(1, f)).toFixed(3)})`;
+  }
+
+  // ------------------------------------------------------------------ crosshair / hits
+
+  private applyCrosshair() {
+    const key = JSON.stringify(this.xhCfg);
+    if (key === this.xhKey) return;
+    this.xhKey = key;
+    renderCrosshair(this.crosshair, this.xhCfg);
+    this.crosshair.classList.add('hud-xh');
+    this.applySpread();
+  }
+
+  private applySpread() {
+    setCrosshairSpread(this.crosshair, this.xhCfg.gap + (this.xhCfg.dynamic ? this.spreadPx : 0));
+  }
+
+  /** weapon spread in px added to the configured gap (when dynamic spread is on) */
+  setCrosshairGap(px: number) {
+    const g = Math.round(Math.max(0, Math.min(80, px)));
+    if (g === this.spreadPx) return;
+    this.spreadPx = g;
+    if (this.xhCfg.dynamic) this.applySpread();
+  }
+
+  setCrosshairVisible(lines: boolean, dot = true) {
+    this.crosshair.classList.toggle('no-lines', !lines);
+    this.crosshair.classList.toggle('no-dot', !dot);
   }
 
   hitMarker(kill = false, headshot = false) {
-    this.hitmarker.classList.toggle('kill', kill);
-    this.hitmarker.classList.toggle('headshot', headshot);
-    this.hitmarker.classList.remove('show');
+    const c = this.hitmarker.classList;
+    c.toggle('kill', kill);
+    c.toggle('headshot', headshot);
+    c.remove('show');
     void this.hitmarker.offsetWidth; // restart the pop animation
-    this.hitmarker.classList.add('show');
-    this.hitTimer = kill ? 0.35 : headshot ? 0.3 : 0.14;
+    c.add('show');
+    this.hitTimer = kill ? 0.3 : headshot ? 0.22 : 0.1;
   }
 
-  /** server-confirmed kill: big X over the crosshair */
+  /** server-confirmed kill: X + expanding ring over the crosshair */
   killConfirm(headshot = false) {
     this.killX.classList.toggle('headshot', headshot);
     this.killX.classList.remove('show');
@@ -274,76 +381,103 @@ export class Hud {
     return this.killX.classList.contains('show');
   }
 
-  /** crosshair arm gap in px (from the weapon's current spread); hidden while aiming */
-  setCrosshairGap(px: number) {
-    const g = Math.round(Math.min(80, Math.max(3, px)));
-    if (g === this.crossGap) return;
-    this.crossGap = g;
-    this.crosshair.style.setProperty('--gap', `${g}px`);
-  }
-
-  setCrosshairVisible(lines: boolean, dot = true) {
-    this.crosshair.classList.toggle('no-lines', !lines);
-    this.crosshair.classList.toggle('no-dot', !dot);
-  }
-
   showScope(on: boolean) {
     this.scope.hidden = !on;
   }
 
-  damageFlash() {
-    this.vignette.classList.add('show');
-    this.dmgTimer = 0.15;
-  }
-
-  addKill(killer: string, weapon: string, victim: string, headshot = false) {
-    const hs = headshot
-      ? `<span class="hs" data-testid="kf-headshot" title="headshot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="7" r="4.5"/><path d="M5.5 13.5h5M8 0.5v3M8 10.5v3M0.5 7h3M12.5 7h3"/></svg></span>`
-      : '';
-    const e = el('div', 'entry', `<b>${esc(killer)}</b><i>[${esc(weapon)}]</i>${hs}${esc(victim)}`);
-    this.killfeed.prepend(e);
-    while (this.killfeed.children.length > 5) this.killfeed.lastChild?.remove();
-    setTimeout(() => e.remove(), 6000);
-  }
-
   /** heavy-attack charge 0..1 (hidden at 0) */
   setCharge(f: number) {
-    this.chargeEl.hidden = f <= 0;
-    if (f > 0) {
-      (this.chargeEl.firstChild as HTMLElement).style.width = `${Math.round(f * 100)}%`;
-      this.chargeEl.classList.toggle('full', f >= 1);
+    const on = f > 0;
+    if (this.chargeEl.hidden === on) this.chargeEl.hidden = !on;
+    if (!on) return;
+    this.chargeFill.style.transform = `scaleX(${Math.min(1, f).toFixed(3)})`;
+    const full = f >= 1;
+    if (full !== this.chargeFull) {
+      this.chargeFull = full;
+      this.chargeEl.classList.toggle('is-full', full);
     }
   }
 
-  /** small status line under the crosshair (BLOCKING / AUTORUN) */
+  /** micro pill under the crosshair (SPRINTING / CROUCHED / AUTORUN / BLOCKING); shown once stable 150 ms */
   setStatus(text: string) {
-    if (this.statusEl.textContent !== text) this.statusEl.textContent = text;
+    if (text === this.statusPending) return;
+    this.statusPending = text;
+    this.statusAge = 0;
+    if (!text) this.showStatus('');
   }
 
-  /** one-off toast with an optional action button */
-  toast(html: string, opts: { ms?: number; action?: { label: string; onClick: () => void } } = {}) {
-    this.toastEl.innerHTML = `<span>${html}</span>`;
-    if (opts.action) {
-      const b = el('button', 'btn primary', esc(opts.action.label)) as HTMLButtonElement;
-      b.dataset.testid = 'toast-action';
-      b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        opts.action!.onClick();
-        this.toastEl.hidden = true;
-      });
-      this.toastEl.append(b);
+  private showStatus(text: string) {
+    if (text === this.statusShown) return;
+    this.statusShown = text;
+    this.statusEl.textContent = text;
+    this.statusEl.hidden = !text;
+  }
+
+  // ------------------------------------------------------------------ damage
+
+  damageFlash() {
+    const s = this.hitFlash.style;
+    s.setProperty('--vi', String(settings.current.vignetteIntensity));
+    this.hitFlash.classList.remove('is-on');
+    void this.hitFlash.offsetWidth;
+    this.hitFlash.classList.add('is-on');
+  }
+
+  /** attacker direction relative to view forward: 0 = front, +PI/2 = right */
+  damageFrom(attackerId: string, angleRad: number) {
+    this.arcs.add(attackerId, angleRad);
+  }
+
+  // ------------------------------------------------------------------ feed / scoreboard / toasts
+
+  addKill(killer: string, weapon: string, victim: string, headshot = false, opts: KillOpts = {}) {
+    this.killfeed.add(killer, weapon, victim, headshot, opts);
+  }
+
+  setScoreboardRows(rows: ScoreRow[], footer: string) {
+    this.scoreboard.setRows(rows, footer);
+  }
+
+  get scoreboardVisible() {
+    return !this.scoreboard.root.hidden;
+  }
+
+  private refreshScoreboard() {
+    const on = this.visible && (this.tabHeld || this.forceScoreboard);
+    if (this.scoreboard.root.hidden === on) this.scoreboard.root.hidden = !on;
+  }
+
+  /** top-left "23 MS · 144 FPS" (ping null = offline: omitted) */
+  setNetMicro(pingMs: number | null, fps: number) {
+    const showFps = settings.current.showFps;
+    const ping = pingMs == null ? null : Math.round(pingMs);
+    const f = Math.round(fps);
+    const key = `${ping}|${showFps ? f : ''}`;
+    if (key === this.netKey) return;
+    this.netKey = key;
+    const parts: string[] = [];
+    if (ping !== null) {
+      const cls = ping > 150 ? ' is-bad' : ping > 80 ? ' is-warn' : '';
+      parts.push(`<span class="hud-net__ping${cls}">${ping} ms</span>`);
     }
-    this.toastEl.hidden = false;
-    this.toastTimer = (opts.ms ?? 9000) / 1000;
+    if (showFps) parts.push(`<span>${f} fps</span>`);
+    this.netEl.hidden = parts.length === 0;
+    this.netEl.innerHTML = parts.join('<span class="hud-net__sep">·</span>');
+  }
+
+  toast(html: string, opts: ToastOpts = {}) {
+    this.toasts.show(html, opts);
   }
 
   get toastVisible() {
-    return !this.toastEl.hidden;
+    return this.toasts.visible;
   }
+
+  // ------------------------------------------------------------------ debug / misc
 
   setDebug(text: string | null) {
     this.debugEl.hidden = text === null;
-    if (text !== null) this.debugEl.textContent = text;
+    if (text !== null && this.debugEl.textContent !== text) this.debugEl.textContent = text;
   }
 
   setSpawnEditor(text: string | null) {
@@ -351,10 +485,36 @@ export class Hud {
     if (text !== null) this.spawnEditorEl.textContent = text;
   }
 
+  /** persistent banner (e.g. the venue map failed to load and we play the test map) */
+  showWarning(text: string) {
+    if (!this.warningEl) {
+      this.warningEl = el('div', 'hud-warning');
+      this.warningEl.setAttribute('role', 'alert');
+      document.body.append(this.warningEl);
+    }
+    this.warningEl.innerHTML = `${icon('warning', 'ui-icon')}<span>${esc(text)}</span>`;
+  }
+
+  /** hide the whole HUD (menus / forge open / dead); toasts stay */
+  setVisible(on: boolean) {
+    if (on === this.visible) return;
+    this.visible = on;
+    this.root.classList.toggle('is-hidden', !on);
+    if (!on) {
+      this.tabHeld = false;
+      this.arcs.clear();
+    }
+    this.refreshScoreboard();
+  }
+
   update(dt: number) {
-    if (this.toastTimer > 0 && (this.toastTimer -= dt) <= 0) this.toastEl.hidden = true;
     if (!this.holdHitmarker && this.hitTimer > 0 && (this.hitTimer -= dt) <= 0) this.hitmarker.classList.remove('show');
-    if (this.dmgTimer > 0 && (this.dmgTimer -= dt) <= 0) this.vignette.classList.remove('show');
     if (!this.holdHitmarker && this.killTimer > 0 && (this.killTimer -= dt) <= 0) this.killX.classList.remove('show');
+    if (this.statusPending !== this.statusShown) {
+      this.statusAge += dt;
+      if (this.statusAge >= STATUS_DELAY) this.showStatus(this.statusPending);
+    }
+    this.arcs.update(dt);
+    this.refreshScoreboard();
   }
 }

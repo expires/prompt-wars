@@ -1,4 +1,4 @@
-import { meleeHitDamage, zoneDamage } from '@ai-gaem/shared';
+import { designToWeapon, meleeHitDamage, zoneDamage, type ForgeDesign } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
 import type { HitInfo, KillEvent, LocalPose, NetClient, NetPlayer, PoseSnapshot, Vec3 } from './NetClient';
 
@@ -144,6 +144,16 @@ export class OfflineNetClient implements NetClient {
 
   getWeapon(id: string) {
     return this.weapons.get(id);
+  }
+
+  /** offline: the design becomes a local weapon (the game equips it) */
+  async registerDesign(design: ForgeDesign, prompt: string) {
+    const w: Weapon = { ...designToWeapon(design), design, prompt };
+    return this.registerWeapon(w);
+  }
+
+  async requestRedeploy() {
+    /* offline: the game handles redeploy locally */
   }
 
   onPlayersChanged(cb: Listener<NetPlayer[]>) {

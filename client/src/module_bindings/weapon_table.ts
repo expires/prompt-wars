@@ -20,4 +20,5 @@ export default __t.row({
   prompt: __t.string(),
   isPreset: __t.bool().name("is_preset"),
   createdAt: __t.timestamp().name("created_at"),
+  design: __t.string(),
 });

@@ -88,6 +88,7 @@ export const Player = __t.object("Player", {
   dotWeaponId: __t.u64(),
   crouching: __t.bool(),
   slot: __t.u32(),
+  needsLoadout: __t.bool(),
 });
 export type Player = __Infer<typeof Player>;
 
@@ -181,6 +182,7 @@ export const Weapon = __t.object("Weapon", {
   prompt: __t.string(),
   isPreset: __t.bool(),
   createdAt: __t.timestamp(),
+  design: __t.string(),
 });
 export type Weapon = __Infer<typeof Weapon>;
 

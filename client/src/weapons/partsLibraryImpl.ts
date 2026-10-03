@@ -3,3 +3,4 @@
 export { assembleWeapon } from '@ai-gaem/parts/assemble';
 export { getPart } from '@ai-gaem/parts/registry';
 export { RECIPES } from '@ai-gaem/parts/recipes';
+export { buildDesign } from '@ai-gaem/shared/forge/build';

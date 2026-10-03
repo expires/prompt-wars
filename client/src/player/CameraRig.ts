@@ -59,6 +59,7 @@ export class CameraRig {
 
   /** camera shake (degrees of jitter), decays over ~0.25 s; melee strikes scale it by weight */
   shake(amountDeg: number) {
+    amountDeg *= settings.current.screenShake ?? 1;
     this.shakeAmt = Math.max(this.shakeAmt, amountDeg * DEG);
   }
 

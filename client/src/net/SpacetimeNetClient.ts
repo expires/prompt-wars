@@ -1,4 +1,4 @@
-import { POSE_FLAG_BLOCK, POSE_FLAG_CROUCH, POSE_FLAG_GROUNDED, POSE_FLAG_TELEPORT, clampWeapon } from '@ai-gaem/shared';
+import { POSE_FLAG_BLOCK, POSE_FLAG_CROUCH, POSE_FLAG_GROUNDED, POSE_FLAG_TELEPORT, clampWeapon, type ForgeDesign } from '@ai-gaem/shared';
 import { templatesJsonFor } from '../weapons/templates';
 import type { Identity } from 'spacetimedb';
 import { DbConnection, tables } from '../module_bindings';
@@ -38,6 +38,7 @@ interface PlayerRow {
   slowPercent: number;
   slowUntil: { toMillis(): bigint };
   slot: number;
+  needsLoadout?: boolean;
 }
 
 interface PoseRow {
@@ -58,6 +59,11 @@ interface WeaponRow {
   id: bigint;
   name: string;
   json: string;
+  design?: string;
+  isPreset?: boolean;
+  prompt?: string;
+  ownerIdentity?: Identity;
+  weaponClass?: string;
 }
 
 interface PendingShot {
@@ -217,6 +223,8 @@ export class SpacetimeNetClient implements NetClient {
               tables.shotEvent,
               tables.hitEvent,
               tables.weapon.where((w) => w.isPreset.eq(true)),
+              // our own weapons (register_design results show up here right away)
+              tables.weapon.where((w) => w.ownerIdentity.eq(identity)),
             ]);
           // the player row is inserted / updated (slot) by the server's client_connected; wait for it
           conn.db.player.onInsert(() => tryReady());
@@ -333,6 +341,7 @@ export class SpacetimeNetClient implements NetClient {
           victimId: targetId,
           victimName: this.playerName(e.target),
           weaponName: this.weapons.get(weaponId)?.name ?? `#${weaponId}`,
+          weaponId,
           at: Date.now(),
           headshot: e.headshot,
         };
@@ -350,6 +359,17 @@ export class SpacetimeNetClient implements NetClient {
   private cacheWeapon(row: WeaponRow) {
     try {
       const w: Weapon = { ...clampWeapon(JSON.parse(row.json)), id: String(row.id) };
+      if (row.isPreset) w.isPreset = true;
+      if (row.prompt) w.prompt = row.prompt;
+      if (row.ownerIdentity) w.owner = row.ownerIdentity.toHexString();
+      if (row.design) {
+        try {
+          const d = JSON.parse(row.design) as ForgeDesign;
+          if (d && Array.isArray(d.components) && d.components.length) w.design = d;
+        } catch {
+          /* legacy / bad design json: render the parts */
+        }
+      }
       this.weapons.set(w.id!, w);
       this.weaponCbs.forEach((cb) => cb());
     } catch (err) {
@@ -378,6 +398,7 @@ export class SpacetimeNetClient implements NetClient {
       slowPercent: r.slowPercent,
       slowUntil: ms(r.slowUntil),
       crouching: pose?.crouching ?? false,
+      needsLoadout: !!r.needsLoadout,
     };
   }
 
@@ -533,6 +554,51 @@ export class SpacetimeNetClient implements NetClient {
       if (w.isPreset && w.weaponClass === weaponClass) return String(w.id);
     }
     return undefined;
+  }
+
+  presetIds() {
+    const out: { id: string; cls: string; name: string }[] = [];
+    for (const w of (this.conn?.db.weapon.iter() ?? []) as Iterable<WeaponRow>) {
+      if (w.isPreset) out.push({ id: String(w.id), cls: w.weaponClass ?? '', name: w.name });
+    }
+    return out;
+  }
+
+  /** our own weapon ids, newest last */
+  private ownWeaponIds(): bigint[] {
+    const ids: bigint[] = [];
+    if (!this.conn || !this.identity) return ids;
+    for (const w of this.conn.db.weapon.iter() as Iterable<WeaponRow>) {
+      if (!w.isPreset && w.ownerIdentity && w.ownerIdentity.isEqual(this.identity)) ids.push(w.id);
+    }
+    return ids.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  }
+
+  async registerDesign(design: ForgeDesign, prompt: string): Promise<string | null> {
+    if (!this.conn) throw new Error('not connected');
+    this.callCounts.register_design = (this.callCounts.register_design ?? 0) + 1;
+    const before = new Set(this.ownWeaponIds().map(String));
+    // locked flags are editor state; the server strips them too
+    const clean: ForgeDesign = { ...design, components: design.components.map(({ locked: _l, ...c }) => c) };
+    await this.conn.reducers.registerDesign({ designJson: JSON.stringify(clean), prompt: prompt.slice(0, 400) });
+    const t0 = performance.now();
+    while (performance.now() - t0 < 5000) {
+      const fresh = this.ownWeaponIds().map(String).filter((id) => !before.has(id));
+      if (fresh.length) {
+        const id = fresh[fresh.length - 1];
+        const row = this.conn.db.weapon.id.find(BigInt(id)) as WeaponRow | undefined;
+        if (row) this.cacheWeapon(row);
+        return id;
+      }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return null;
+  }
+
+  requestRedeploy(): Promise<void> {
+    if (!this.conn) return Promise.reject(new Error('not connected'));
+    this.callCounts.request_redeploy = (this.callCounts.request_redeploy ?? 0) + 1;
+    return this.conn.reducers.requestRedeploy({});
   }
 
   setName(name: string) {
