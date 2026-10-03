@@ -6,6 +6,11 @@ target
 *.log
 .DS_Store
 
+# --- raw source scans + generated map assets (too big for git / host limits) ---
+scans/
+client/public/maps/*.glb
+client/public/maps/*.meta.json
+
 # --- agent-board runtime state (board cards are committed; these are not) ---
 .agents/worktrees/
 .agents/logs/

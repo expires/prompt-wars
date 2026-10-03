@@ -5,6 +5,7 @@ import {
   activeMap,
 } from '@ai-gaem/shared';
 import { Game } from './engine/Game';
+import { resolveMapUrl } from './map/assetUrl';
 import { OfflineNetClient, SpacetimeNetClient, type NetClient } from './net';
 import { installTestHook } from './testHook';
 
@@ -48,7 +49,7 @@ const game = new Game();
 installTestHook(game);
 game
   .start(document.getElementById('app')!, {
-    mapUrl: params.get('map') ?? activeMap().url ?? undefined,
+    mapUrl: resolveMapUrl(params.get('map') ?? activeMap().url ?? undefined),
     bots: Number(params.get('bots') ?? 0) || 0,
     net,
     serverLabel: label,
