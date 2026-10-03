@@ -1,0 +1,27 @@
+:root { --bg: #e9e6df; --card: #f7f5f0; --ink: #23252b; --muted: #6b6e76; --accent: #ff7a30; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 13px/1.35 ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+header { position: sticky; top: 0; z-index: 5; background: var(--ink); color: #fff; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+h1 { font-size: 16px; margin: 0 8px 0 0; }
+nav { display: flex; gap: 4px; }
+.tab { background: #3a3d45; color: #fff; border: 0; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+.tab.active { background: var(--accent); }
+#filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+select, input[type=search] { padding: 5px 8px; border-radius: 6px; border: 0; }
+#count { color: #bbb; }
+main { padding: 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.grid.big { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.card { background: var(--card); border-radius: 10px; overflow: hidden; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.card:hover { outline: 2px solid var(--accent); }
+.card canvas { display: block; width: 100%; aspect-ratio: 4 / 3; background: linear-gradient(#f3f1ec, #dcd8cf); }
+.card .meta { padding: 6px 8px 8px; }
+.card .id { font-weight: 600; font-size: 12px; word-break: break-all; }
+.card .desc { color: var(--muted); font-size: 11px; }
+.card .tris { float: right; color: var(--muted); font-size: 10px; }
+.card .cls { color: var(--accent); font-size: 10px; }
+#viewer { position: fixed; inset: 40px; background: #fff; border-radius: 12px; z-index: 10; box-shadow: 0 10px 40px rgba(0,0,0,.4); display: flex; flex-direction: column; overflow: hidden; }
+#viewer[hidden] { display: none; }
+.viewer-head { display: flex; justify-content: space-between; padding: 8px 12px; background: var(--ink); color: #fff; }
+#viewer-canvas { flex: 1; width: 100%; min-height: 0; }
+#viewer-info { margin: 0; padding: 8px 12px; max-height: 140px; overflow: auto; background: #f4f2ee; font-size: 11px; }

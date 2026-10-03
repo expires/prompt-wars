@@ -1,0 +1,9 @@
+{
+  "name": "ai-gaem",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter client dev",
+    "e2e": "pnpm --filter client e2e",
+    "e2e:maincloud": "pnpm --filter client e2e:maincloud"
+  }
+}

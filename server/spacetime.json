@@ -1,0 +1,5 @@
+{
+  "server": "maincloud",
+  "module-path": ".",
+  "database": "prompt-wars-63xhe"
+}

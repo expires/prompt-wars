@@ -1,0 +1,63 @@
+:root {
+  --hud-fg: #f4f4f0;
+  --hud-dim: rgba(244, 244, 240, 0.65);
+  --hud-bg: rgba(10, 12, 16, 0.55);
+  --hud-accent: #ffcf40;
+  --hud-danger: #ff4a4a;
+  --hud-ok: #4ade80;
+  --hud-font: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+#app { position: fixed; inset: 0; }
+#app canvas { display: block; }
+.hud { position: fixed; inset: 0; pointer-events: none; font-family: var(--hud-font); color: var(--hud-fg); user-select: none; text-shadow: 0 1px 2px #000; }
+.hud * { box-sizing: border-box; }
+.crosshair, .hitmarker { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.crosshair svg, .hitmarker svg { display: block; filter: drop-shadow(0 0 1px #000); }
+.hitmarker { opacity: 0; transition: opacity 0.15s; color: #fff; }
+.hitmarker.show { opacity: 1; transition: none; }
+.hitmarker.kill { color: var(--hud-danger); }
+.panel { position: absolute; background: var(--hud-bg); border-radius: 6px; padding: 8px 12px; }
+.hp { left: 20px; bottom: 20px; min-width: 200px; }
+.hp .label, .ammo .label { font-size: 11px; color: var(--hud-dim); letter-spacing: 0.1em; }
+.hp .value { font-size: 32px; font-weight: 700; }
+.hp .bar { height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.hp .bar > div { height: 100%; background: var(--hud-ok); transition: width 0.15s, background 0.15s; }
+.ammo { right: 20px; bottom: 20px; text-align: right; min-width: 200px; }
+.ammo .weapon-name { font-size: 14px; color: var(--hud-accent); margin-bottom: 2px; }
+.ammo .value { font-size: 32px; font-weight: 700; }
+.ammo .value small { font-size: 16px; color: var(--hud-dim); font-weight: 400; }
+.ammo .reloading { color: var(--hud-accent); font-size: 12px; height: 14px; }
+.killfeed { right: 20px; top: 20px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; background: none; padding: 0; }
+.killfeed .entry { background: var(--hud-bg); padding: 4px 10px; border-radius: 4px; font-size: 13px; animation: kf-in 0.15s ease-out; }
+.killfeed .entry b { color: var(--hud-accent); font-weight: 600; }
+.killfeed .entry i { color: var(--hud-dim); font-style: normal; padding: 0 6px; }
+@keyframes kf-in { from { transform: translateX(20px); opacity: 0; } }
+.debug { left: 20px; top: 20px; font-size: 11px; color: var(--hud-dim); white-space: pre; }
+.damage-vignette { position: absolute; inset: 0; box-shadow: inset 0 0 120px rgba(255, 0, 0, 0.6); opacity: 0; transition: opacity 0.3s; }
+.damage-vignette.show { opacity: 1; transition: none; }
+
+.overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px; background: rgba(5, 8, 12, 0.6); pointer-events: auto; font-family: var(--hud-font); color: var(--hud-fg); text-align: center; padding: 16px; }
+.overlay[hidden] { display: none; }
+.overlay h1 { margin: 0; font-size: clamp(28px, 6vw, 56px); letter-spacing: 0.04em; }
+.overlay p { margin: 0; color: var(--hud-dim); max-width: 520px; line-height: 1.5; }
+.overlay .controls { font-size: 12px; color: var(--hud-dim); display: grid; grid-template-columns: auto auto; gap: 2px 16px; text-align: left; }
+.overlay .controls kbd { color: var(--hud-fg); }
+.overlay.click { cursor: pointer; }
+.death { background: rgba(60, 0, 0, 0.55); }
+.death h1 { color: var(--hud-danger); }
+.death .row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.btn { font: inherit; font-size: 15px; padding: 10px 18px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.08); color: var(--hud-fg); cursor: pointer; }
+.btn:hover { background: rgba(255,255,255,0.18); }
+.btn.primary { background: var(--hud-accent); color: #111; border-color: transparent; }
+.btn:disabled { opacity: 0.5; cursor: wait; }
+.prompt-input { font: inherit; font-size: 15px; padding: 10px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.3); background: rgba(0,0,0,0.5); color: var(--hud-fg); width: min(420px, 90vw); }
+.spawn-editor { left: 50%; top: 20px; transform: translateX(-50%); font-size: 12px; color: var(--hud-accent); border: 1px solid var(--hud-accent); }
+.scoreboard { left: 20px; top: 20px; font-size: 13px; line-height: 1.5; white-space: pre; }
+.scoreboard .net-ok { color: var(--hud-ok); }
+.scoreboard .net-bad { color: var(--hud-danger); }
+.gen-status { min-height: 20px; max-width: 520px; font-size: 14px; text-align: center; color: var(--hud-fg); }
+.gen-status .gen-name { color: var(--hud-accent); font-size: 20px; font-weight: 700; display: block; margin-bottom: 4px; }
+.gen-status .gen-stats { color: var(--hud-dim); font-size: 13px; }
+.gen-status .gen-msg { color: var(--hud-dim); font-size: 12px; display: block; margin-top: 4px; }
+.gen-status.error { color: var(--hud-danger); }

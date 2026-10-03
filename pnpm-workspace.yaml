@@ -1,0 +1,7 @@
+packages:
+  - client
+  - shared
+  - server
+  - parts
+allowBuilds:
+  esbuild: true

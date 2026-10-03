@@ -1,0 +1,21 @@
+{
+  "name": "@ai-gaem/server",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "sync-catalog": "node scripts/sync-catalog.mjs",
+    "typecheck": "node scripts/sync-catalog.mjs && tsc --noEmit",
+    "build": "node scripts/sync-catalog.mjs && spacetime build",
+    "generate": "spacetime generate --lang typescript --out-dir ../client/src/module_bindings --module-path .",
+    "publish:local": "node scripts/sync-catalog.mjs && spacetime publish --server local --module-path . prompt-wars-63xhe --yes",
+    "publish:maincloud": "node scripts/sync-catalog.mjs && spacetime publish --server maincloud --module-path . prompt-wars-63xhe --yes"
+  },
+  "dependencies": {
+    "@ai-gaem/shared": "workspace:*",
+    "spacetimedb": "2.10.*"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.2"
+  }
+}
