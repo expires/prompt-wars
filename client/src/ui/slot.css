@@ -1,0 +1,81 @@
+/* Weapon slot machine overlay (see SlotMachine.ts) */
+.slot {
+  z-index: 132;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 8, 12, 0.66);
+  backdrop-filter: blur(3px);
+}
+
+.slot-panel {
+  width: min(560px, 92vw);
+  padding: 26px 26px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.slot-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.slot-title { color: var(--accent); }
+
+.slot-reels {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.slot-reel {
+  position: relative;
+  height: 96px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 0 8px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  clip-path: var(--clip-cut);
+}
+.slot-reel::before {
+  /* frosted window slits */
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(11, 13, 18, 0.9), transparent 22%, transparent 78%, rgba(11, 13, 18, 0.9));
+}
+.slot-reel.settled { box-shadow: inset 0 0 0 2px var(--accent); }
+
+.slot-word {
+  font: 700 calc(20px * var(--text-scale)) / 1.05 var(--font-display);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--fg);
+  text-shadow: var(--text-outline);
+}
+
+.slot-result {
+  min-height: 26px;
+  text-align: center;
+  font: 700 calc(18px * var(--text-scale)) / 1.2 var(--font-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.slot-result.rolling { color: var(--fg-dim); }
+
+.slot-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.slot-spin { min-width: 160px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .slot-reel { transition: none; }
+}

@@ -7,6 +7,7 @@ import { PauseMenu } from '../ui/menus/PauseMenu';
 import { DeathScreen, type DeathInfo } from '../ui/menus/DeathScreen';
 import { confirmDialog } from '../ui/menus/Confirm';
 import { SettingsPanel } from '../ui/SettingsPanel';
+import { SlotMachine } from '../ui/SlotMachine';
 import { esc } from '../ui/dom';
 import type { Weapon } from '../weapons/types';
 import type { NetPlayer } from '../net';
@@ -23,6 +24,7 @@ export class GameFlow {
   readonly landing = new Landing();
   readonly pause = new PauseMenu(this.settingsPanel);
   readonly death = new DeathScreen();
+  readonly slot = new SlotMachine();
   forge: ForgeEditorHandle | null = null;
   /** screen to go back to when the forge closes */
   private forgeReturn: Screen = 'none';
@@ -54,6 +56,7 @@ export class GameFlow {
       onQuickForge: (p) => this.quickForge(p),
       onOpenForge: (p) => void this.openForge({ mode: 'death', prompt: p, autostart: !!p.trim() }, 'death'),
       onRemix: (w) => void this.openForge({ mode: 'remix', remix: w }, 'death'),
+      onOpenSlot: () => void this.showSlot(),
     };
     window.addEventListener('keydown', (e) => this.onKey(e));
   }
@@ -379,6 +382,25 @@ export class GameFlow {
     } finally {
       this.death.setBusy(false);
     }
+  }
+
+  /**
+   * Weapon slot machine: spin for a random prompt, then forge it. While dead (or online) it goes
+   * through the normal quick-forge + respawn; alive offline it just rolls and equips a weapon.
+   */
+  async showSlot() {
+    this.slot.show((prompt) => {
+      if (this.death.visible || this.online) {
+        void this.quickForge(prompt);
+        return;
+      }
+      void (async () => {
+        const w = await generateWeaponStub(prompt);
+        w.id = await this.game.net.registerWeapon(w);
+        this.game.equip(w);
+        this.game.hud.setWeaponName(w.name);
+      })();
+    });
   }
 
   /** death screen QUICK FORGE: one streamed design, registered + respawn (legacy generator as fallback) */

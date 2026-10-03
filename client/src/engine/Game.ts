@@ -734,6 +734,7 @@ export class Game {
       const dw = getDefaultWeapons();
       for (let i = 0; i < dw.length && i < 10; i++) if (input.wasPressed(`Digit${(i + 1) % 10}`)) this.equip(dw[i]);
       if (input.wasPressed('KeyK')) this.damageLocal(MAX_HP, 'You pressed K');
+      if (input.wasPressed('KeyM')) void this.flow.showSlot();
     }
     if (input.wasPressed('F3')) this.showDebug = !this.showDebug;
     this.spawnEditor.update();

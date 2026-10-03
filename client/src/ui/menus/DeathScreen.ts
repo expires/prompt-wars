@@ -24,6 +24,8 @@ export interface DeathHandlers {
   onQuickForge(prompt: string): void | Promise<void>;
   onOpenForge(prompt: string): void;
   onRemix(weapon: Weapon): void;
+  /** open the weapon slot machine */
+  onOpenSlot(): void;
 }
 
 const CHIPS = ['cactus shotgun', 'noodle sword', 'retro ray gun', 'bubble launcher', 'toaster cannon'];
@@ -73,6 +75,7 @@ export class DeathScreen {
         <div class="death-actions">
           <button class="ui-btn ui-btn--forge" data-k="quick" data-testid="generate-weapon"><span class="spark">${icon('spark', 'ui-icon ui-icon--sm')}</span><span data-k="quickLabel">Quick forge</span></button>
           <button class="ui-btn ui-btn--secondary" data-k="open" data-testid="death-open-forge"><span>Open forge</span>${icon('chevron', 'ui-icon ui-icon--sm')}</button>
+          <button class="ui-btn ui-btn--secondary" data-k="slot" data-testid="death-slot">Slot machine</button>
         </div>
         <div class="death-status" data-k="status" data-testid="gen-status" aria-live="polite"></div>
       </section>`;
@@ -92,6 +95,7 @@ export class DeathScreen {
       if (e.key === 'Enter') void gen();
     });
     this.$.open.addEventListener('click', () => this.handlers?.onOpenForge(this.input.value));
+    this.$.slot.addEventListener('click', () => this.handlers?.onOpenSlot());
     this.$.remix.addEventListener('click', () => {
       if (this.info.killerWeapon) this.handlers?.onRemix(this.info.killerWeapon);
     });
@@ -165,6 +169,7 @@ export class DeathScreen {
     this.quick.disabled = on;
     this.input.disabled = on;
     (this.$.open as HTMLButtonElement).disabled = on;
+    (this.$.slot as HTMLButtonElement).disabled = on;
     this.$.quickLabel.textContent = on ? label : 'Quick forge';
     if (!on) this.$.keepLabel.textContent = this.keepLabel || 'Keep loadout';
     else if (label.startsWith('Respawn')) this.$.keepLabel.textContent = label;

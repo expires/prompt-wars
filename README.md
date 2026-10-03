@@ -323,6 +323,7 @@ URL params:
 | R | reload |
 | 1-0 | debug (offline only): swap sample weapon (rifle, shotgun, rocket, grenade arc, flamethrower stream, sword; 7-0: template katana, sledgehammer, spear, frying pan) |
 | K | debug (offline only): kill yourself (death screen) |
+| M | debug (offline only): open the weapon slot machine (also on the death screen: "Slot machine") |
 | F2 | spawn editor: **P** save current position as spawn, **Backspace** undo, **Delete** clear |
 | F3 | debug overlay (fps, position, grounded; net: RTT, interp delay, jitter, send Hz, buffered snapshots, reducer calls) |
 | Esc | release mouse; the pause screen has a **Settings** panel (sensitivity, ADS sensitivity, FOV, key-turn speed, volume, toggle crouch / sprint / aim, invert Y, head bob, gamepad look speed / deadzone / aim slowdown, **Trackpad mode**; saved in `localStorage` `ai-gaem.settings`) |
