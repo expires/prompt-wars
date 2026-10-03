@@ -38,12 +38,12 @@ describe('carry weight (movement speed multiplier)', () => {
     expect(m('rocket_launcher')).toBeCloseTo(0.88, 3);
     expect(m('grenade_launcher')).toBeCloseTo(0.88, 3);
     expect(m('flamethrower')).toBeLessThanOrEqual(0.88);
-    expect(carryMultiplier({ class: 'melee', fireMode: 'melee', meleeWeight: 'light', magSize: 1, partCount: 3 })).toBeCloseTo(1.1, 3);
-    expect(carryMultiplier({ class: 'melee', fireMode: 'melee', meleeWeight: 'medium', magSize: 1, partCount: 3 })).toBeCloseTo(1.05, 3);
-    expect(carryMultiplier({ class: 'melee', fireMode: 'melee', meleeWeight: 'heavy', magSize: 1, partCount: 3 })).toBeLessThan(1);
+    expect(carryMultiplier({ class: 'melee', fireMode: 'melee', meleeWeight: 'light', magSize: 1, partCount: 3 })).toBeCloseTo(1.2, 3);
+    expect(carryMultiplier({ class: 'melee', fireMode: 'melee', meleeWeight: 'medium', magSize: 1, partCount: 3 })).toBeCloseTo(1.15, 3);
+    expect(carryMultiplier({ class: 'melee', fireMode: 'melee', meleeWeight: 'heavy', magSize: 1, partCount: 3 })).toBeCloseTo(1.06, 3);
   });
 
-  it('is always within 0.85 - 1.12 and set on every clamped weapon', () => {
+  it('is always within 0.85 - 1.22 and set on every clamped weapon', () => {
     for (const cls of WEAPON_CLASSES) {
       for (const given of [undefined, 0, 0.5, 1, 1.5, 9, 'fast', -1]) {
         const w = clampWeapon({ class: cls, moveSpeedMult: given, magSize: 300, parts: Array.from({ length: 40 }, () => ({ partId: 'x' })) });
@@ -64,16 +64,17 @@ describe('carry weight (movement speed multiplier)', () => {
     expect(carryMultiplier({ class: 'rifle', fireMode: 'hitscan', magSize: 20, partCount: 30 })).toBeLessThan(1);
   });
 
-  it('faster movement costs DPS budget, slower does not refund it', () => {
+  it('faster movement costs DPS budget (ranged only), slower does not refund it', () => {
     const w = { splashRadius: 0, slowPercent: 0, knockback: 0 };
     expect(utilityMultiplier({ ...w, moveSpeedMult: 1.1 })).toBeCloseTo(1.05, 6);
     expect(utilityMultiplier({ ...w, moveSpeedMult: 0.88 })).toBe(1);
-    // same raw stats: the light melee weapon ends up with less damage than the heavy one
+    expect(utilityMultiplier({ ...w, moveSpeedMult: 1.2, fireMode: 'melee' })).toBe(1);
+    // melee speed is free: light and heavy melee keep the same damage budget
     const raw = { class: 'melee', damage: 55, fireRate: 2.5 }; // way over the 80 DPS melee budget
     const light = clampWeapon({ ...raw, melee: { swing: 'slash', reach: 1, weight: 'light' } });
     const heavy = clampWeapon({ ...raw, melee: { swing: 'slash', reach: 1, weight: 'heavy' } });
     expect(light.moveSpeedMult).toBeGreaterThan(heavy.moveSpeedMult!);
-    expect(light.damage * light.fireRate).toBeLessThan(heavy.damage * heavy.fireRate);
+    expect(light.damage * light.fireRate).toBeCloseTo(heavy.damage * heavy.fireRate, 0);
     for (const x of [light, heavy]) {
       const s = computeWeaponStats(x);
       expect(s.effectiveDps).toBeLessThanOrEqual(s.dpsCap + 1e-6);

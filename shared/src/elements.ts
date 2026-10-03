@@ -113,11 +113,11 @@ export function inferElement(name: string, cls: WeaponClass, hasDot: boolean): E
 // ---------------------------------------------------------------------------
 
 export const MOVE_MULT_MIN = 0.85;
-export const MOVE_MULT_MAX = 1.12;
+export const MOVE_MULT_MAX = 1.22;
 /** a given moveSpeedMult may differ from the derived one by at most this much */
 export const MOVE_MULT_BELOW = 0.05;
 export const MOVE_MULT_ABOVE = 0.02;
-/** budget: each +1 % of movement speed costs 0.5 % of effective DPS (slower weapons get nothing back) */
+/** budget: each +1 % of movement speed costs 0.5 % of effective DPS (slower weapons get nothing back; melee exempt) */
 export const MOVE_BUDGET_WEIGHT = 0.5;
 
 const CLASS_CARRY: Record<WeaponClass, number> = {
@@ -135,10 +135,10 @@ const CLASS_CARRY: Record<WeaponClass, number> = {
   rocket_launcher: 0.88,
   grenade_launcher: 0.88,
   flamethrower: 0.88,
-  melee: 1.05,
+  melee: 1.15,
 };
 
-const MELEE_CARRY: Record<MeleeWeight, number> = { light: 1.1, medium: 1.05, heavy: 0.97 };
+const MELEE_CARRY: Record<MeleeWeight, number> = { light: 1.2, medium: 1.15, heavy: 1.06 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -183,8 +183,9 @@ export function designBulkPenalty(longestSide: number, components: number, melee
   return r3(Math.min(MOVE_MULT_BELOW, size + count));
 }
 
-/** Budget factor for movement speed (>= 1; only faster-than-normal movement costs DPS). */
-export function moveBudgetFactor(moveSpeedMult: number | undefined): number {
+/** Budget factor for movement speed (>= 1; only faster-than-normal movement costs DPS; melee speed is free). */
+export function moveBudgetFactor(moveSpeedMult: number | undefined, melee = false): number {
+  if (melee) return 1;
   return 1 + MOVE_BUDGET_WEIGHT * Math.max(0, (moveSpeedMult ?? 1) - 1);
 }
 

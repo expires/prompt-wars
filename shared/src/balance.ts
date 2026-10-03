@@ -217,10 +217,10 @@ export function dpsCapFor(w: Pick<Weapon, 'fireMode' | 'range'>): number {
  * shock slows only briefly (x0.5), ice stacks (x1.2). Faster-than-normal movement costs a little.
  */
 export function utilityMultiplier(
-  w: Pick<Weapon, 'splashRadius' | 'slowPercent' | 'knockback'> & { element?: Element | null; moveSpeedMult?: number },
+  w: Pick<Weapon, 'splashRadius' | 'slowPercent' | 'knockback'> & { element?: Element | null; moveSpeedMult?: number; fireMode?: Weapon['fireMode'] },
 ): number {
   const slowWeight = w.element === 'shock' ? 0.5 : w.element === 'ice' ? 1.2 : 1;
-  return (1 + 0.06 * w.splashRadius + (w.slowPercent / 150) * slowWeight + w.knockback / 60) * moveBudgetFactor(w.moveSpeedMult);
+  return (1 + 0.06 * w.splashRadius + (w.slowPercent / 150) * slowWeight + w.knockback / 60) * moveBudgetFactor(w.moveSpeedMult, w.fireMode === 'melee');
 }
 
 export function computeWeaponStats(w: Weapon): WeaponStats {
