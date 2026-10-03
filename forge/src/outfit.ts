@@ -20,7 +20,7 @@ import {
   type OutfitPiece,
 } from '@ai-gaem/shared';
 import { expandMacros } from '@ai-gaem/shared/forge/macros';
-import { MIN_BODY_LIGHTNESS, lightness, refinePalette, withLightness } from '@ai-gaem/shared/forge/refine';
+import { MIN_BODY_LIGHTNESS, lightness, withLightness } from '@ai-gaem/shared/forge/refine';
 import { OUTFIT_EXAMPLES, OUTFIT_PRESETS } from '@ai-gaem/shared/outfit/examples';
 import { mulberry32 } from './mock';
 
@@ -157,8 +157,8 @@ export class OutfitAssembler {
     const preview = sanitizeOutfit({ ...rest, body: rest.body ?? prev?.body, palette: rest.palette ?? prev?.palette, pieces: [] }).outfit;
     preview.name = censorText(preview.name);
     preview.theme = censorText(preview.theme);
-    // readability: no near-black suits (they vanish in the arena), clear primary / secondary contrast
-    preview.palette = refinePalette(preview.palette);
+    // readability: no near-black suits (they vanish in the arena); hues stay as asked
+    preview.palette = liftPalette(preview.palette);
     this.meta = { name: preview.name, theme: preview.theme, body: preview.body, skin: preview.skin, palette: preview.palette };
     this.emit({ type: 'meta', variant: this.opts.variant, name: preview.name, theme: preview.theme, body: preview.body, skin: preview.skin, palette: preview.palette });
     for (const p of this.opts.locked) {
@@ -213,6 +213,13 @@ export class OutfitAssembler {
     this.emit({ type: 'done', variant: this.opts.variant, outfit, warnings });
     return outfit;
   }
+}
+
+/** palette with primary / secondary / accent lifted out of near-black (hues untouched) */
+export function liftPalette<P extends { primary: string; secondary: string; accent: string; glow: string }>(p: P): P {
+  const out = { ...p };
+  for (const k of ['primary', 'secondary', 'accent'] as const) if (lightness(out[k]) < MIN_BODY_LIGHTNESS) out[k] = withLightness(out[k], MIN_BODY_LIGHTNESS + 4);
+  return out;
 }
 
 /** big shapes in near-black hex colours read as holes in the arena: lift them (small details stay dark) */
