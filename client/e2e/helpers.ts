@@ -21,6 +21,8 @@ export const E2E_MAP = 'testmap';
 export function gameUrl(name: string, map: string | null = E2E_MAP) {
   const p = new URLSearchParams({ e2e: '1', fresh: '1', name });
   if (SERVER === 'local') p.set('server', 'local');
+  // separate local database (parallel worktrees / agents sharing one `spacetime start`)
+  if (process.env.E2E_DB) p.set('db', process.env.E2E_DB);
   if (map) p.set('map', map);
   return `/?${p}`;
 }

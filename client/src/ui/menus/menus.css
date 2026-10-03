@@ -149,6 +149,7 @@
 .death-by { font: 700 calc(16px * var(--text-scale)) / 1 var(--font-label); letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-dim); }
 .death-killer { margin: 0; font: 600 64px/0.9 var(--font-display); text-transform: uppercase; color: var(--enemy); text-shadow: var(--text-outline); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .death-killer.self { color: var(--fg); }
+.death-quote { margin-top: 6px; max-width: 760px; font: 500 22px/1.25 var(--font-body); color: var(--fg); text-shadow: var(--text-outline); overflow-wrap: anywhere; }
 .death-detail { display: flex; gap: 14px; align-items: center; font: 600 14px/1 var(--font-label); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-dim); }
 .death-detail .hs { display: inline-flex; align-items: center; gap: 6px; color: var(--crit); }
 .death-ring { position: relative; width: 64px; height: 64px; flex: none; }

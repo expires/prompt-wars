@@ -29,7 +29,8 @@ export interface ForgeGenerateRequest {
 
 /** Every event carries the variant index it belongs to (0 for single-variant requests, -1 = request-level). */
 export type ForgeEvent =
-  | { type: 'start'; variant: -1; variants: number; model: string; mock: boolean }
+  /** cached: replayed from the forge's prompt cache (no model call) */
+  | { type: 'start'; variant: -1; variants: number; model: string; mock: boolean; cached?: boolean }
   | { type: 'meta'; variant: number; name: string; class: WeaponClass; fireMode: FireMode; palette: DesignPalette; fx: DesignFx }
   | { type: 'component'; variant: number; component: Component }
   /** the projectile model (projectile / arc weapons; at most one per variant) */

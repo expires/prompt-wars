@@ -4,10 +4,13 @@ import './menus.css';
 import { el, esc, isolate } from '../dom';
 import { icon } from '../icons';
 import { cardDataFor, renderWeaponCard } from '../WeaponCard';
+import { weaponPrompt } from '../forgeCredit';
 import type { Weapon } from '../../weapons/types';
 
 export interface DeathInfo {
   killerName?: string;
+  /** killer identity hex (prompt-cache credit on their card) */
+  killerId?: string;
   killerIsYou?: boolean;
   killerWeapon?: Weapon | null;
   headshot?: boolean;
@@ -54,6 +57,7 @@ export class DeathScreen {
         <div class="death-who">
           <span class="death-by" data-k="by">Eliminated by</span>
           <h1 class="death-killer" data-k="killer" data-testid="death-killer"></h1>
+          <div class="death-quote" data-k="quote" data-testid="death-prompt" hidden></div>
           <div class="death-detail" data-k="detail"></div>
         </div>
         <div class="death-ring" data-k="ring" aria-label="Respawn timer">
@@ -140,10 +144,14 @@ export class DeathScreen {
     if (i.redeploy) bits.push('<span>Pick a weapon</span>');
     $.detail.innerHTML = bits.join('<span>·</span>');
     const kw = i.redeploy ? null : i.killerWeapon;
+    // the killer's original prompt: Killed by NAME · "a baguette that fires angry bees"
+    const kp = kw && !i.killerIsYou ? weaponPrompt(kw) : '';
+    $.quote.hidden = !kp;
+    $.quote.textContent = kp ? `“${kp}”` : '';
     $.left.hidden = false;
     $.leftLabel.textContent = kw ? 'Their weapon' : 'Your weapon';
     const shownW = kw ?? i.yourWeapon ?? null;
-    renderWeaponCard($.card, shownW ? cardDataFor(shownW) : null);
+    renderWeaponCard($.card, shownW ? cardDataFor(shownW, undefined, kw ? i.killerId : undefined) : null, { testid: kw ? 'killer-weapon-card' : 'your-weapon-card' });
     $.remix.hidden = !kw;
     $.keepName.textContent = i.yourWeapon?.name ?? '';
   }

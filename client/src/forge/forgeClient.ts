@@ -21,8 +21,24 @@ import {
   type ForgeEvent,
   type ForgeGenerateRequest,
   type ProjectileDesign,
+  normalizePrompt,
   projectileRejectKey,
 } from '@ai-gaem/shared';
+import type { ForgedInfo } from '../net/NetClient';
+
+/** Where the session's current design came from (prompt cache / "First forged"). */
+export interface ForgeOrigin {
+  prompt: string;
+  /** normalizePrompt(prompt) */
+  norm: string;
+  /** forged straight from the prompt: no previous design, locks or rejects (cache-worthy) */
+  fresh: boolean;
+  /** reused from the prompt cache (forged_prompt): equip with use_forged, no new weapon row */
+  cached?: ForgedInfo;
+}
+
+/** Prompt cache lookup: the first design forged from a normalized prompt, if any. */
+export type ForgeCacheLookup = (norm: string) => Promise<{ design: ForgeDesign; info: ForgedInfo } | null>;
 
 export type ForgeErrorKind = 'rate' | 'http' | 'network' | 'timeout' | 'stream' | 'aborted';
 
@@ -171,6 +187,8 @@ export interface ForgeSessionState {
   errorDetail: ForgeError | null;
   /** service answered in mock mode */
   mock: boolean;
+  /** provenance of `design` (null for seeded / edited-away designs) */
+  origin: ForgeOrigin | null;
 }
 
 export interface ForgeSessionOptions {
@@ -180,10 +198,12 @@ export interface ForgeSessionOptions {
   playerIdentity?: string;
   baseUrl?: string;
   idleTimeoutMs?: number;
+  /** prompt cache (plain prompts: no locks / rejects, one variant) */
+  cacheLookup?: ForgeCacheLookup;
 }
 
 export class ForgeSession {
-  state: ForgeSessionState = { busy: false, drafts: [], design: null, picked: -1, rejected: [], error: null, errorDetail: null, mock: false };
+  state: ForgeSessionState = { busy: false, drafts: [], design: null, picked: -1, rejected: [], error: null, errorDetail: null, mock: false, origin: null };
   private ac: AbortController | null = null;
 
   constructor(private opts: ForgeSessionOptions = {}) {}
@@ -199,7 +219,7 @@ export class ForgeSession {
 
   /** start editing an existing design (remix / current loadout) */
   seed(design: ForgeDesign | null) {
-    this.set({ design, drafts: [], picked: -1, error: null, errorDetail: null });
+    this.set({ design, drafts: [], picked: -1, error: null, errorDetail: null, origin: null });
   }
 
   /** New generation / reprompt. Locked components of the current design are kept verbatim. */
@@ -209,7 +229,24 @@ export class ForgeSession {
     const prev = this.state.design;
     const variants = Math.max(1, Math.min(3, o.variants ?? 1));
     const drafts: ForgeDraft[] = [];
+    const locked = prev?.components.filter((c) => c.locked) ?? [];
+    const marked = locked.length > 0 || !!prev?.projectile?.locked || this.state.rejected.length > 0;
+    const norm = normalizePrompt(prompt);
+    const origin: ForgeOrigin = { prompt, norm, fresh: !prev && !marked };
     this.set({ busy: true, drafts, error: null, errorDetail: null, picked: -1 });
+    // prompt cache: same prompt, nothing kept / rejected, one variant -> the first forge, instantly
+    if (norm && !marked && variants === 1 && !o.class && this.opts.cacheLookup) {
+      const hit = await this.opts.cacheLookup(norm).catch(() => null);
+      if (ac.signal.aborted) return;
+      if (hit) {
+        const d = hit.design;
+        drafts[0] = { name: d.name, class: d.class, fireMode: d.fireMode, palette: d.palette, fx: d.fx, stats: d.stats, components: d.components, projectile: d.projectile, design: d, warnings: [], error: null };
+        this.ac = null;
+        this.set({ busy: false, drafts: [...drafts], design: d, picked: 0, origin: { ...origin, fresh: false, cached: hit.info } });
+        this.opts.onEvent?.({ type: 'done', variant: 0, design: d, warnings: [] });
+        return;
+      }
+    }
     const draft = (v: number) => (drafts[v] ??= { name: '', class: '', components: [], design: null, warnings: [], error: null });
     try {
       await streamForge(
@@ -218,7 +255,7 @@ export class ForgeSession {
           class: o.class,
           variants,
           previous: prev ?? undefined,
-          locked: prev?.components.filter((c) => c.locked),
+          locked,
           lockedProjectile: prev?.projectile?.locked ? prev.projectile : undefined,
           rejected: this.state.rejected,
           playerIdentity: this.opts.playerIdentity,
@@ -248,7 +285,7 @@ export class ForgeSession {
           this.set({ drafts: [...drafts] });
           // single variant: edit it right away; with several, the first finished one is picked
           // (the UI can pick another)
-          if (ev.type === 'done' && (variants === 1 || this.state.picked < 0)) this.set({ design: ev.design, picked: ev.variant });
+          if (ev.type === 'done' && (variants === 1 || this.state.picked < 0)) this.set({ design: ev.design, picked: ev.variant, origin });
           this.opts.onEvent?.(ev);
         },
         { signal: ac.signal, baseUrl: this.opts.baseUrl, idleTimeoutMs: this.opts.idleTimeoutMs },
@@ -271,14 +308,17 @@ export class ForgeSession {
   /** Choose a finished variant to edit. */
   pick(variant: number): void {
     const d = this.state.drafts[variant]?.design;
-    if (d) this.set({ design: d, picked: variant });
+    if (d) this.set({ design: d, picked: variant, origin: this.state.origin ? { ...this.state.origin, cached: undefined } : null });
   }
 
   edit(e: DesignEditInput): string[] {
     if (!this.state.design) return ['no design'];
     const r = applyEdit(this.state.design, e);
     const rejected = [...this.state.rejected, ...r.removed.map((c) => c.label), ...(r.removedProjectile ? [projectileRejectKey(r.removedProjectile.label)] : [])].slice(-32);
-    this.set({ design: r.design, rejected });
+    // removing parts makes it a different weapon (no longer the prompt's plain forge)
+    const changed = r.removed.length > 0 || !!r.removedProjectile;
+    const origin = changed && this.state.origin ? { ...this.state.origin, fresh: false, cached: undefined } : this.state.origin;
+    this.set({ design: r.design, rejected, origin });
     return r.warnings;
   }
 

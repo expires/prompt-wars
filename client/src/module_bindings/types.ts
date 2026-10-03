@@ -25,6 +25,16 @@ export const DotTimer = __t.object("DotTimer", {
 });
 export type DotTimer = __Infer<typeof DotTimer>;
 
+export const ForgedPrompt = __t.object("ForgedPrompt", {
+  norm: __t.string(),
+  designId: __t.u64(),
+  firstBy: __t.identity(),
+  firstName: __t.string(),
+  at: __t.timestamp(),
+  uses: __t.u32(),
+});
+export type ForgedPrompt = __Infer<typeof ForgedPrompt>;
+
 export const GenerateResult = __t.object("GenerateResult", {
   ok: __t.bool(),
   weaponId: __t.u64(),

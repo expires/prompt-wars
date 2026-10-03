@@ -7,7 +7,8 @@
 // reveal + name type-in when done. KEEP / LOCK / REJECT per component, variants, reprompt + EQUIP.
 import './forge.css';
 import { designToWeapon, moveSpeedLabel, PROJECTILE_ID, type Component, type ForgeDesign, type ForgeEvent } from '@ai-gaem/shared';
-import { ForgeSession, type ForgeDraft, type ForgeSessionState } from './forgeClient';
+import { ForgeSession, type ForgeCacheLookup, type ForgeDraft, type ForgeOrigin, type ForgeSessionState } from './forgeClient';
+import { creditFromInfo } from '../ui/forgeCredit';
 import { Turntable, type Mark } from './Turntable';
 import { budgetOf, elementBlurb, statRows, ttk, weaponFromStats } from './forgeStats';
 import { el, esc, reducedMotion } from '../ui/dom';
@@ -25,8 +26,10 @@ export interface ForgeEditorOptions {
   seed?: { design?: ForgeDesign | null; prompt?: string; autostart?: boolean; title?: string };
   /** label of the equip button (e.g. "EQUIP & DEPLOY") */
   equipLabel?: string;
-  /** register the design + deploy; reject to show an error */
-  onEquip(design: ForgeDesign, prompt: string): Promise<void>;
+  /** register the design + deploy; reject to show an error. `origin`: prompt cache provenance */
+  onEquip(design: ForgeDesign, prompt: string, origin?: ForgeOrigin | null): Promise<void>;
+  /** prompt cache (forged_prompt) */
+  cacheLookup?: ForgeCacheLookup;
   onClose(): void;
   baseUrl?: string;
   parent?: HTMLElement;
@@ -141,6 +144,7 @@ class ForgeEditor implements ForgeEditorHandle {
       onEvent: (ev) => this.onEvent(ev),
       playerIdentity: opts.playerIdentity,
       baseUrl: opts.baseUrl,
+      cacheLookup: opts.cacheLookup,
     });
     const r = this.root;
     r.setAttribute('role', 'dialog');
@@ -471,7 +475,8 @@ class ForgeEditor implements ForgeEditorHandle {
     this.equipError = null;
     this.render(this.session.state);
     try {
-      await this.opts.onEquip(d, this.lastPrompt || this.prompt.value.trim() || d.name);
+      const origin = this.session.state.origin;
+      await this.opts.onEquip(d, origin?.prompt || this.lastPrompt || this.prompt.value.trim() || d.name, origin);
       this.close();
     } catch (err) {
       this.equipError = `Couldn’t equip: ${err instanceof Error ? err.message : String(err)}`;
@@ -677,6 +682,8 @@ class ForgeEditor implements ForgeEditorHandle {
       rarity: draft && !draft.design ? { tier: Math.max(1, r.tier - 0) as Tier, label: TIER_LABELS[r.tier] } : r,
       flavor: flavorFor(design.name, design.class),
       forgedBy: this.opts.playerName,
+      credit: !draft && _s.origin?.cached && _s.design === design ? creditFromInfo(_s.origin.cached, this.opts.playerIdentity) : null,
+      prompt: !draft && _s.design === design ? _s.origin?.prompt : undefined,
       move: moveSpeedLabel(w.moveSpeedMult),
       element: w.element ?? null,
     };
@@ -797,7 +804,7 @@ class ForgeEditor implements ForgeEditorHandle {
       st.innerHTML = `<span class="forge-pulse"></span>FORGING · ${last ? `${esc(last)} (${n})` : draft?.name ? esc(draft.name) : s.drafts.length > 1 ? `${s.drafts.length} variants` : 'starting'}…`;
       st.hidden = false;
     } else if (s.design && s.drafts.length && !this.equipping) {
-      st.innerHTML = `${icon('check', 'ui-icon ui-icon--sm')}<span>FORGED · ${s.design.components.length} parts${s.mock ? ' · mock forge' : ''}</span>`;
+      st.innerHTML = `${icon('check', 'ui-icon ui-icon--sm')}<span>${s.origin?.cached ? 'CACHED · instant' : 'FORGED'} · ${s.design.components.length} parts${s.mock && !s.origin?.cached ? ' · mock forge' : ''}</span>`;
       st.hidden = false;
     } else st.hidden = true;
   }

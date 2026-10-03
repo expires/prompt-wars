@@ -50,11 +50,13 @@ import SetApiKeyReducer from "./set_api_key_reducer";
 import SetLlmModelReducer from "./set_llm_model_reducer";
 import SetNameReducer from "./set_name_reducer";
 import UpdateTransformReducer from "./update_transform_reducer";
+import UseForgedReducer from "./use_forged_reducer";
 
 // Import all procedure arg schemas
 import * as GenerateWeaponProcedure from "./generate_weapon_procedure";
 
 // Import all table schema definitions
+import ForgedPromptRow from "./forged_prompt_table";
 import HitEventRow from "./hit_event_table";
 import PlayerRow from "./player_table";
 import PlayerPoseRow from "./player_pose_table";
@@ -67,6 +69,20 @@ import WeaponRow from "./weapon_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  forgedPrompt: __table({
+    name: 'forged_prompt',
+    indexes: [
+      { accessor: 'designId', name: 'forged_prompt_design_id_idx_btree', algorithm: 'btree', columns: [
+        'designId',
+      ] },
+      { accessor: 'norm', name: 'forged_prompt_norm_idx_btree', algorithm: 'btree', columns: [
+        'norm',
+      ] },
+    ],
+    constraints: [
+      { name: 'forged_prompt_norm_key', constraint: 'unique', columns: ['norm'] },
+    ],
+  }, ForgedPromptRow),
   hitEvent: __table({
     name: 'hit_event',
     indexes: [
@@ -161,6 +177,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_llm_model", SetLlmModelReducer),
   __reducerSchema("set_name", SetNameReducer),
   __reducerSchema("update_transform", UpdateTransformReducer),
+  __reducerSchema("use_forged", UseForgedReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

@@ -44,6 +44,7 @@ import { OfflineNetClient, PoseSender, RemotePlayers, type NetClient, type NetPl
 import { DamageNumbers } from '../ui/DamageNumbers';
 import { TouchControls, touchDevice } from '../ui/TouchControls';
 import { setDesignEnvRenderer } from '../weapons/designModelCache';
+import { weaponPrompt } from '../ui/forgeCredit';
 
 export const MAX_HP = 100;
 /** room between the scan's own bounds and the invisible wall net */
@@ -353,6 +354,7 @@ export class Game {
         const kpos = this.remotes.get(e.killerId)?.position;
         this.flow.onKilledBy({
           killerName: e.killerId === me ? 'Yourself' : e.killerName,
+          killerId: e.killerId,
           killerIsYou: e.killerId === me,
           killerWeapon: e.killerId === me ? null : (w ?? null),
           headshot: !!e.headshot,
@@ -367,6 +369,7 @@ export class Game {
         killerIsYou: e.killerId === me,
         victimIsYou: e.victimId === me,
         element: elementFromCode(e.element) ?? w?.element ?? null,
+        prompt: weaponPrompt(w) || undefined,
       });
     });
     // server-confirmed damage by us: aggregated damage numbers; kills get the kill X + chime
@@ -999,6 +1002,7 @@ export class Game {
         ping: you ? ping : null,
         you,
         alive: p.alive,
+        prompt: weaponPrompt(w) || undefined,
       };
     };
     const rows = [];

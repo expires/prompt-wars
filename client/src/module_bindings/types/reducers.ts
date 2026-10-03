@@ -22,6 +22,7 @@ import SetApiKeyReducer from "../set_api_key_reducer";
 import SetLlmModelReducer from "../set_llm_model_reducer";
 import SetNameReducer from "../set_name_reducer";
 import UpdateTransformReducer from "../update_transform_reducer";
+import UseForgedReducer from "../use_forged_reducer";
 
 export type AddSpawnPointParams = __Infer<typeof AddSpawnPointReducer>;
 export type ClaimAdminParams = __Infer<typeof ClaimAdminReducer>;
@@ -39,4 +40,5 @@ export type SetApiKeyParams = __Infer<typeof SetApiKeyReducer>;
 export type SetLlmModelParams = __Infer<typeof SetLlmModelReducer>;
 export type SetNameParams = __Infer<typeof SetNameReducer>;
 export type UpdateTransformParams = __Infer<typeof UpdateTransformReducer>;
+export type UseForgedParams = __Infer<typeof UseForgedReducer>;
 

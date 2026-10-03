@@ -6,6 +6,7 @@ import { flavorFor, pipsHtml, rarityOf, type Rarity, TIER_LABELS, type Tier } fr
 import type { Weapon } from '../weapons/types';
 import { icon } from './icons';
 import { moveSpeedLabel, weaponMoveMultiplier } from '@ai-gaem/shared';
+import { forgeCreditFor, weaponPrompt, type ForgeCredit } from './forgeCredit';
 
 export interface WeaponCardData {
   name: string;
@@ -19,13 +20,19 @@ export interface WeaponCardData {
   move?: string;
   /** fire / ice / poison / shock */
   element?: string | null;
+  /** the prompt it was forged from (shown instead of the flavor text) */
+  prompt?: string;
+  /** prompt cache credit: replaces the "Forged by" line */
+  credit?: ForgeCredit | null;
 }
 
 export function classLabel(cls: string): string {
   return cls.replace(/_/g, ' ');
 }
 
-export function cardDataFor(w: Weapon, forgedBy?: string): WeaponCardData {
+/** `holder`: identity hex of whoever carries it (prompt-cache credit; default: the owner) */
+export function cardDataFor(w: Weapon, forgedBy?: string, holder?: string): WeaponCardData {
+  const credit = forgeCreditFor(w, holder);
   const r = rarityOf(w);
   const dmg = w.pellets > 1 ? `${+w.damage.toFixed(1)}×${w.pellets}` : `${+w.damage.toFixed(1)}`;
   const stats =
@@ -37,7 +44,9 @@ export function cardDataFor(w: Weapon, forgedBy?: string): WeaponCardData {
     cls: w.class,
     rarity: r,
     flavor: flavorFor(w.name, w.class),
-    forgedBy,
+    forgedBy: credit ? undefined : forgedBy,
+    prompt: weaponPrompt(w) || undefined,
+    credit,
     stats,
     move: moveSpeedLabel(weaponMoveMultiplier(w)),
     element: w.element ?? null,
@@ -55,10 +64,17 @@ export function weaponCardHtml(d: WeaponCardData, opts: { compact?: boolean; tes
       <h3 class="wcard-name" data-role="name">${esc(d.name)}</h3>
       ${d.stats ? `<div class="wcard-stats">${esc(d.stats)}</div>` : ''}
       ${d.move || d.element ? `<div class="wcard-traits">${d.element ? `<span class="wcard-el wcard-el--${esc(d.element)}" data-testid="card-element">${icon(d.element, 'ui-icon')}${esc(d.element)}</span>` : ''}${d.move && d.move !== '±0%' ? `<span class="wcard-move ${d.move.startsWith('+') ? 'is-fast' : 'is-slow'}" data-testid="card-move">Move speed ${esc(d.move)}</span>` : ''}</div>` : ''}
-      ${d.flavor ? `<p class="wcard-flavor">“${esc(d.flavor)}”</p>` : ''}
-      ${d.forgedBy ? `<div class="wcard-by">Forged by <b>${esc(d.forgedBy)}</b></div>` : ''}
+      ${d.prompt ? `<p class="wcard-flavor wcard-prompt" data-testid="card-prompt">“${esc(d.prompt)}”</p>` : d.flavor ? `<p class="wcard-flavor">“${esc(d.flavor)}”</p>` : ''}
+      ${creditHtml(d)}
     </div>
   </article>`;
+}
+
+function creditHtml(d: WeaponCardData): string {
+  const c = d.credit;
+  if (c?.first) return `<div class="wcard-by"><span class="wcard-first" data-testid="card-first-forged">First forged</span> by <b>${esc(c.by)}</b></div>`;
+  if (c) return `<div class="wcard-by" data-testid="card-forged-by">Forged by <b>${esc(c.by)}</b> · ${c.uses} ${c.uses === 1 ? 'use' : 'uses'}</div>`;
+  return d.forgedBy ? `<div class="wcard-by">Forged by <b>${esc(d.forgedBy)}</b></div>` : '';
 }
 
 /** Mount / update a card inside `host`. */

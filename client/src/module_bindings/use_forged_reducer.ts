@@ -11,7 +11,5 @@ import {
 } from "spacetimedb";
 
 export default {
-  designJson: __t.string(),
-  prompt: __t.string(),
-  fresh: __t.bool(),
+  norm: __t.string(),
 };

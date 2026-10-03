@@ -3,7 +3,9 @@ import { templatesJsonFor } from '../weapons/templates';
 import type { Identity } from 'spacetimedb';
 import { DbConnection, tables } from '../module_bindings';
 import type { Weapon } from '../weapons/types';
+import { setForgedLookup, setLocalIdentity } from '../ui/forgeCredit';
 import type {
+  ForgedInfo,
   GenerateWeaponResult,
   HitConfirmEvent,
   HitInfo,
@@ -56,6 +58,14 @@ interface WeaponRow {
   prompt?: string;
   ownerIdentity?: Identity;
   weaponClass?: string;
+}
+
+interface ForgedRow {
+  norm: string;
+  designId: bigint;
+  firstBy: Identity;
+  firstName: string;
+  uses: number;
 }
 
 interface PendingShot {
@@ -122,6 +132,7 @@ export class SpacetimeNetClient implements NetClient {
   private identity?: Identity;
   private readonly identities = new Map<string, Identity>();
   private readonly weapons = new Map<string, Weapon>();
+  private readonly forged = new Map<string, ForgedInfo>();
   private readonly requestedWeapons = new Set<string>();
   /** online players: slot -> identity hex */
   private readonly slotToId = new Map<number, string>();
@@ -193,6 +204,8 @@ export class SpacetimeNetClient implements NetClient {
         .onConnect((conn, identity, newToken) => {
           this.identity = identity;
           this.localId = identity.toHexString();
+          setLocalIdentity(this.localId);
+          setForgedLookup((norm) => this.forged.get(norm));
           try {
             sessionStorage.setItem(this.tokenKey, newToken);
           } catch {
@@ -206,6 +219,7 @@ export class SpacetimeNetClient implements NetClient {
               for (const w of conn.db.weapon.iter()) this.cacheWeapon(w as WeaponRow);
               for (const r of conn.db.player.iter()) this.trackPlayer(r as PlayerRow);
               for (const r of conn.db.pose.iter()) this.onPoseRow(r as PoseRow);
+              for (const r of conn.db.forgedPrompt.iter()) this.cacheForged(r as ForgedRow);
               if (this.opts.name) this.setName(this.opts.name);
               tryReady();
             })
@@ -216,6 +230,7 @@ export class SpacetimeNetClient implements NetClient {
               tables.spawnPoint,
               tables.shotEvent,
               tables.hitEvent,
+              tables.forgedPrompt,
               tables.weapon.where((w) => w.isPreset.eq(true)),
               // our own weapons (register_design results show up here right away)
               tables.weapon.where((w) => w.ownerIdentity.eq(identity)),
@@ -296,6 +311,9 @@ export class SpacetimeNetClient implements NetClient {
     db.pose.onInsert((_ctx, row) => this.onPoseRow(row as PoseRow));
     db.pose.onUpdate((_ctx, _old, row) => this.onPoseRow(row as PoseRow));
 
+    db.forgedPrompt.onInsert((_ctx, row) => this.onForgedRow(row as ForgedRow));
+    db.forgedPrompt.onUpdate((_ctx, _old, row) => this.onForgedRow(row as ForgedRow));
+
     db.weapon.onInsert((_ctx, row) => this.cacheWeapon(row as WeaponRow));
     db.weapon.onUpdate((_ctx, _old, row) => this.cacheWeapon(row as WeaponRow));
 
@@ -344,6 +362,28 @@ export class SpacetimeNetClient implements NetClient {
         this.killCbs.forEach((cb) => cb(kill));
       }
     });
+  }
+
+  private cacheForged(r: ForgedRow) {
+    this.forged.set(r.norm, { norm: r.norm, designId: String(r.designId), firstBy: r.firstBy.toHexString(), firstName: r.firstName, uses: r.uses });
+  }
+
+  /** a prompt was (re)forged: weapon cards re-render their "Forged by" line */
+  private onForgedRow(r: ForgedRow) {
+    this.cacheForged(r);
+    this.weaponCbs.forEach((cb) => cb());
+  }
+
+  getForged(norm: string): ForgedInfo | undefined {
+    return this.forged.get(norm);
+  }
+
+  async useForged(norm: string): Promise<void> {
+    if (!this.conn) throw new Error('not connected');
+    this.callCounts.use_forged = (this.callCounts.use_forged ?? 0) + 1;
+    const f = this.forged.get(norm);
+    if (f) this.ensureWeapon(f.designId);
+    await this.conn.reducers.useForged({ norm });
   }
 
   private playerName(id: Identity) {
@@ -583,7 +623,7 @@ export class SpacetimeNetClient implements NetClient {
     return ids.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   }
 
-  async registerDesign(design: ForgeDesign, prompt: string): Promise<string | null> {
+  async registerDesign(design: ForgeDesign, prompt: string, fresh = false): Promise<string | null> {
     if (!this.conn) throw new Error('not connected');
     this.callCounts.register_design = (this.callCounts.register_design ?? 0) + 1;
     const before = new Set(this.ownWeaponIds().map(String));
@@ -593,7 +633,7 @@ export class SpacetimeNetClient implements NetClient {
       const { locked: _pl, ...projectile } = design.projectile;
       clean.projectile = projectile;
     }
-    await this.conn.reducers.registerDesign({ designJson: JSON.stringify(clean), prompt: prompt.slice(0, 400) });
+    await this.conn.reducers.registerDesign({ designJson: JSON.stringify(clean), prompt: prompt.slice(0, 400), fresh });
     const t0 = performance.now();
     while (performance.now() - t0 < 5000) {
       const fresh = this.ownWeaponIds().map(String).filter((id) => !before.has(id));

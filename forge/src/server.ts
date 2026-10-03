@@ -1,7 +1,7 @@
 // HTTP server (plain node:http): POST /api/forge/generate streams NDJSON forge events.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { normalizeClass, type WeaponClass } from '@ai-gaem/shared';
+import { censorText, normalizeClass, type WeaponClass } from '@ai-gaem/shared';
 import { sanitizeComponent, sanitizeDesign, sanitizeProjectile, FORGE_LIMITS, type Component, type ForgeDesign, type ForgeEvent, type ProjectileDesign } from '@ai-gaem/shared/forge';
 import { DesignAssembler } from './assembler';
 import { classFromPrompt } from '@ai-gaem/shared/forge/refine';
@@ -9,6 +9,7 @@ import { catalogContext, type PromptContext } from './prompt';
 import { generateMock } from './mock';
 import { generateWithLlm } from './llm';
 import { RateLimiter } from './ratelimit';
+import { DesignCache, promptCacheKey } from './cache';
 import { catalog } from '@ai-gaem/parts';
 
 export interface ForgeConfig {
@@ -24,6 +25,8 @@ export interface ForgeConfig {
   mockDelayMs: number;
   /** trust X-Forwarded-For from loopback (Caddy) */
   trustProxy: boolean;
+  /** prompt cache entries (0 = off) */
+  cacheMax: number;
 }
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ForgeConfig {
@@ -37,6 +40,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ForgeConfig
     allowedOrigins: (env.FORGE_ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean),
     mockDelayMs: Number(env.FORGE_MOCK_DELAY_MS ?? 90),
     trustProxy: env.FORGE_TRUST_PROXY !== '0',
+    cacheMax: Number(env.FORGE_CACHE_MAX ?? 500),
   };
 }
 
@@ -103,7 +107,8 @@ export interface ParsedRequest {
 export function parseGenerateRequest(body: unknown): ParsedRequest {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'body must be a JSON object');
   const b = body as Record<string, unknown>;
-  const prompt = typeof b.prompt === 'string' ? b.prompt.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 400) : '';
+  // profanity is censored before the model ever sees it (and so in names derived from it)
+  const prompt = typeof b.prompt === 'string' ? censorText(b.prompt.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 400)) : '';
   if (!prompt && !b.previous) throw new HttpError(400, 'prompt is required');
   const clsRaw = typeof b.class === 'string' ? b.class.trim() : '';
   const cls = clsRaw ? normalizeClass(clsRaw) : undefined;
@@ -135,8 +140,15 @@ export function parseGenerateRequest(body: unknown): ParsedRequest {
   return { prompt: prompt || previous!.name, cls, locked, lockedProjectile, rejected, previous, variants, identity, seed };
 }
 
-export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & { limiter: RateLimiter } {
+/** A plain prompt (nothing to keep / avoid, one variant, not a seeded mock run) can use the cache. */
+export function cacheKeyFor(r: ParsedRequest): string {
+  if (r.previous || r.locked.length || r.lockedProjectile || r.rejected.length || r.variants !== 1 || r.seed !== undefined) return '';
+  return promptCacheKey(r.prompt, r.cls);
+}
+
+export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & { limiter: RateLimiter; cache: DesignCache } {
   const limiter = new RateLimiter(cfg.rateLimit, cfg.rateWindowMs);
+  const cache = new DesignCache(cfg.cacheMax);
   const mock = !cfg.apiKey;
 
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
@@ -159,7 +171,7 @@ export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & 
       }
       if (path === '/api/forge/health' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, mock, model: mock ? 'mock' : cfg.model }));
+        return res.end(JSON.stringify({ ok: true, mock, model: mock ? 'mock' : cfg.model, cached: cache.size }));
       }
       if (path !== '/api/forge/generate') throw new HttpError(404, 'not found');
       if (req.method !== 'POST') throw new HttpError(405, 'use POST', { allow: 'POST' });
@@ -173,11 +185,16 @@ export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & 
         throw new HttpError(400, 'invalid JSON');
       }
       const r = parseGenerateRequest(body);
+      const key = cacheKeyFor(r);
+      const hit = key ? cache.get(key) : undefined;
+      if (hit) return replayCached(res, hit.design, hit.warnings, r.prompt);
       const ip = clientIp(req, cfg.trustProxy);
       const keys = [`ip:${ip}`, ...(r.identity ? [`id:${r.identity}`] : [])];
       const rl = limiter.take(keys, r.variants);
       if (!rl.ok) throw new HttpError(429, `rate limit: ${cfg.rateLimit} generations per ${Math.round(cfg.rateWindowMs / 60000)} min`, { 'retry-after': String(rl.retryAfter) });
-      await streamGeneration(req, res, cfg, r, mock);
+      await streamGeneration(req, res, cfg, r, mock, (design, warnings) => {
+        if (key) cache.set(key, design, warnings);
+      });
     } catch (e) {
       const err = e instanceof HttpError ? e : new HttpError(500, 'internal error');
       if (!(e instanceof HttpError)) console.error('[forge]', e);
@@ -190,23 +207,44 @@ export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & 
     }
   };
 
-  const server = createServer((req, res) => void handler(req, res)) as Server & { limiter: RateLimiter };
+  const server = createServer((req, res) => void handler(req, res)) as Server & { limiter: RateLimiter; cache: DesignCache };
   server.limiter = limiter;
+  server.cache = cache;
   server.requestTimeout = cfg.timeoutMs + 15_000;
   return server;
 }
 
-async function streamGeneration(req: IncomingMessage, res: ServerResponse, cfg: ForgeConfig, r: ParsedRequest, mock: boolean) {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(new Error('timeout')), cfg.timeoutMs);
-  res.on('close', () => {
-    if (!res.writableFinished) ac.abort(new Error('client closed'));
-  });
+function ndjsonHead(res: ServerResponse) {
   res.writeHead(200, {
     'content-type': 'application/x-ndjson; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
     'x-accel-buffering': 'no',
   });
+}
+
+/** Cache hit: the whole event sequence of the stored design at once (no rate-limit cost). */
+function replayCached(res: ServerResponse, design: ForgeDesign, warnings: string[], prompt: string) {
+  ndjsonHead(res);
+  const lines: ForgeEvent[] = [
+    { type: 'start', variant: -1, variants: 1, model: 'cache', mock: false, cached: true },
+    { type: 'meta', variant: 0, name: design.name, class: design.class, fireMode: design.fireMode, palette: design.palette, fx: design.fx },
+    ...design.components.map((component): ForgeEvent => ({ type: 'component', variant: 0, component })),
+    ...(design.projectile ? [{ type: 'projectile', variant: 0, projectile: design.projectile } as ForgeEvent] : []),
+    { type: 'stats', variant: 0, stats: design.stats },
+    { type: 'done', variant: 0, design, warnings },
+    { type: 'end', variant: -1 },
+  ];
+  res.end(lines.map(ev => JSON.stringify(ev)).join('\n') + '\n');
+  console.log(`[forge] cache hit "${prompt.slice(0, 60)}"`);
+}
+
+async function streamGeneration(req: IncomingMessage, res: ServerResponse, cfg: ForgeConfig, r: ParsedRequest, mock: boolean, onDone?: (design: ForgeDesign, warnings: string[]) => void) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error('timeout')), cfg.timeoutMs);
+  res.on('close', () => {
+    if (!res.writableFinished) ac.abort(new Error('client closed'));
+  });
+  ndjsonHead(res);
   res.flushHeaders();
   const emit = (ev: ForgeEvent) => {
     if (!res.writableEnded) res.write(`${JSON.stringify(ev)}\n`);
@@ -242,7 +280,8 @@ async function streamGeneration(req: IncomingMessage, res: ServerResponse, cfg: 
         if (mock) await generateMock({ signal: ac.signal, delayMs: cfg.mockDelayMs, seed: r.seed }, ctx, asm);
         else await generateWithLlm({ apiKey: cfg.apiKey, model: cfg.model, signal: ac.signal }, ctx, asm);
         if (asm.componentCount === 0) throw new Error('the forge produced no components');
-        asm.finish();
+        const design = asm.finish();
+        if (!ac.signal.aborted && asm.warnings.length === 0) onDone?.(design, []);
         if (asm.notes.length) console.log(`[forge] refine v${variant}: ${asm.notes.slice(0, 12).join(' | ')}`);
       } catch (e) {
         const msg = ac.signal.aborted ? `generation aborted (${String((ac.signal.reason as Error)?.message ?? 'timeout')})` : errorMessage(e);

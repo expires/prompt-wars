@@ -9,3 +9,5 @@ export * from './melee';
 export * from './elements';
 export * from './templates';
 export * from './forge';
+export * from './profanity';
+export * from './promptCache';

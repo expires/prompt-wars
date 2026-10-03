@@ -17,7 +17,7 @@ import {
 } from '@ai-gaem/shared/forge';
 import { expandMacros } from '@ai-gaem/shared/forge/macros';
 import { adjustRawMacros, refineContext, refineDesign, refineIncoming, refinePalette, type RefineContext } from '@ai-gaem/shared/forge/refine';
-import { normalizeClass, isFireMode, CLASS_TEMPLATES, type FireMode, type WeaponClass } from '@ai-gaem/shared';
+import { censorText, normalizeClass, isFireMode, CLASS_TEMPLATES, type FireMode, type WeaponClass } from '@ai-gaem/shared';
 
 export type Emit = (ev: ForgeEvent) => void;
 
@@ -119,6 +119,7 @@ export class DesignAssembler {
     const fireMode: FireMode = isFireMode(rest.fireMode) && modes.includes(rest.fireMode) ? rest.fireMode : modes[0];
     this.meta = { ...rest, class: cls, fireMode };
     const preview = sanitizeDesign({ ...this.meta, components: [] }, this.opts).design;
+    preview.name = censorText(preview.name);
     this.meta.name = preview.name;
     if (!this.opts.raw) {
       this.refine = refineContext(preview, { prompt: this.opts.prompt });
@@ -166,6 +167,7 @@ export class DesignAssembler {
     const { t: _t, ...rest } = o;
     const p = sanitizeProjectile(expandMacros(rest), this.warnings);
     if (!p) return;
+    p.label = censorText(p.label);
     delete p.locked;
     if (this.opts.rejected.length && projectileRejected(p, this.opts.rejected)) {
       this.warnings.push(`rejected projectile "${p.label}" skipped`);
@@ -186,6 +188,7 @@ export class DesignAssembler {
     }
     let c = sanitizeComponent(expandMacros(this.refine ? adjustRawMacros(rest, this.refine.archetype) : rest), this.opts, this.warnings);
     if (!c) return;
+    c.label = censorText(c.label);
     if (this.opts.rejected.length && matchesRejected(c, this.opts.rejected)) {
       this.warnings.push(`rejected component "${c.label}" skipped`);
       return;
@@ -235,6 +238,7 @@ export class DesignAssembler {
         this.notes.push(`refine failed: ${String(e)}`);
       }
     }
+    design.name = censorText(design.name);
     const warnings = [...this.warnings, ...res.warnings];
     this.emit({ type: 'done', variant: this.opts.variant, design, warnings });
     return design;

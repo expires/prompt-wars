@@ -160,6 +160,9 @@ function getState(game: Game) {
       ? {
           busy: game.flow.forge.session.state.busy,
           error: game.flow.forge.session.state.error,
+          origin: game.flow.forge.session.state.origin
+            ? { norm: game.flow.forge.session.state.origin.norm, fresh: game.flow.forge.session.state.origin.fresh, cached: game.flow.forge.session.state.origin.cached ?? null }
+            : null,
           drafts: game.flow.forge.session.state.drafts.map((d) => ({ name: d.name, components: d.components.length, done: !!d.design })),
           design: game.flow.forge.session.state.design
             ? {

@@ -12,6 +12,7 @@ import { esc } from '../ui/dom';
 import type { Weapon } from '../weapons/types';
 import type { NetPlayer } from '../net';
 import type { ForgeEditorHandle, ForgeEditorOptions } from '../forge/ForgeEditor';
+import type { ForgeCacheLookup, ForgeOrigin } from '../forge/forgeClient';
 import { generateWeaponStub, getDefaultWeapons } from '../weapons/defaultWeapons';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -423,6 +424,7 @@ export class GameFlow {
       const session = new ForgeSession({
         playerIdentity: this.game.net.localId || undefined,
         baseUrl: this.forgeBase(),
+        cacheLookup: this.cacheLookup,
         onChange: (s) => {
           const d = s.drafts[0];
           if (d && s.busy) {
@@ -444,8 +446,9 @@ export class GameFlow {
         void ForgeError;
         return;
       }
-      this.death.setStatus(`<span class="gen-name">${esc(design.name)}</span><span class="gen-stats">${design.components.length} parts · equipping…</span>`);
-      await this.equipDesign(design, text);
+      const origin = session.state.origin;
+      this.death.setStatus(`<span class="gen-name">${esc(design.name)}</span><span class="gen-stats">${origin?.cached ? 'cached · ' : ''}${design.components.length} parts · equipping…</span>`);
+      await this.equipDesign(design, text, origin);
     } catch (err) {
       console.error('[flow] quick forge failed', err);
       this.death.setStatus(esc(`Forge failed: ${(err as Error)?.message ?? err}`), true);
@@ -525,7 +528,8 @@ export class GameFlow {
       baseUrl: this.forgeBase(),
       seed,
       equipLabel,
-      onEquip: (design, prompt) => this.equipDesign(design, prompt),
+      onEquip: (design, prompt, origin) => this.equipDesign(design, prompt, origin),
+      cacheLookup: this.cacheLookup,
       onClose: () => this.onForgeClosed(),
     });
     this.syncHud();
@@ -553,9 +557,11 @@ export class GameFlow {
    * Register a design and deploy with it. Dead (incl. new players): register_design equips it,
    * then respawn. Alive (Esc menu): register (library), redeploy, equip, respawn.
    */
-  async equipDesign(design: ForgeDesign, prompt: string): Promise<void> {
+  async equipDesign(design: ForgeDesign, prompt: string, origin?: ForgeOrigin | null): Promise<void> {
     const net = this.game.net;
     if (!net.registerDesign) throw new Error('Server doesn’t support forged weapons');
+    const fresh = !!origin?.fresh;
+    const cached = this.online && origin?.cached && net.useForged ? origin.cached : undefined;
     if (!this.online) {
       const id = await net.registerDesign(design, prompt);
       const w = id ? net.getWeapon?.(id) : undefined;
@@ -576,15 +582,20 @@ export class GameFlow {
         });
         if (!ok) throw new Error('cancelled');
       }
-      const id = await net.registerDesign(design, prompt);
+      const id = cached ? cached.designId : await net.registerDesign(design, prompt, fresh);
       if (!id) throw new Error('the weapon didn’t arrive from the server');
       this.redeploying = true;
       await net.requestRedeploy?.();
       await this.waitFor(() => !this.game.alive, 4000);
-      await net.equipWeapon?.(id);
+      if (cached) await net.useForged!(cached.norm);
+      else await net.equipWeapon?.(id);
       await this.waitFor(() => this.game.me?.weaponId === id, 4000);
+    } else if (cached) {
+      // prompt cache: equip the first forge of this prompt (no new weapon row)
+      await net.useForged!(cached.norm);
+      await this.waitFor(() => this.game.me?.weaponId === cached.designId && !this.needsLoadout, 4000);
     } else {
-      const id = await net.registerDesign(design, prompt);
+      const id = await net.registerDesign(design, prompt, fresh);
       if (!id) throw new Error('the weapon didn’t arrive from the server');
       await this.waitFor(() => this.game.me?.weaponId === id && !this.needsLoadout, 4000);
     }
@@ -627,6 +638,21 @@ export class GameFlow {
       /* not supported (iPhone Safari) */
     }
   }
+
+  /** prompt cache: the first design forged from `norm` (waits briefly for its weapon row) */
+  private readonly cacheLookup: ForgeCacheLookup = async (norm) => {
+    const net = this.game.net;
+    if (!this.online || this.params.get('nocache') === '1') return null;
+    const info = net.getForged?.(norm);
+    if (!info) return null;
+    let w = net.getWeapon?.(info.designId);
+    const t0 = performance.now();
+    while (!w && performance.now() - t0 < 1500) {
+      await sleep(50);
+      w = net.getWeapon?.(info.designId);
+    }
+    return w?.design ? { design: w.design, info } : null;
+  };
 
   private async waitFor(pred: () => boolean, ms: number) {
     const t0 = performance.now();

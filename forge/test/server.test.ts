@@ -33,7 +33,7 @@ async function generate(body: unknown, headers: Record<string, string> = {}): Pr
 describe('forge service (mock)', () => {
   it('health reports mock mode', async () => {
     const r = await (await fetch(`${base}/api/forge/health`)).json();
-    expect(r).toEqual({ ok: true, mock: true, model: 'mock' });
+    expect(r).toEqual({ ok: true, mock: true, model: 'mock', cached: 0 });
   });
 
   it('streams start -> meta -> components -> stats -> done -> end, with a legal final design', async () => {
@@ -152,10 +152,11 @@ describe('forge service (mock)', () => {
     const results: number[] = [];
     for (let i = 0; i < 3; i++) results.push((await generate({ prompt: 'smg', variants: 3, playerIdentity: id, seed: i })).status);
     expect(results).toEqual([200, 200, 429]);
-    const r = await generate({ prompt: 'smg', playerIdentity: id });
+    // seeded: never served from the prompt cache (which costs no budget)
+    const r = await generate({ prompt: 'smg', playerIdentity: id, seed: 10 });
     expect(r.status).toBe(200); // 7th generation: still within 8
-    expect((await generate({ prompt: 'smg', playerIdentity: id })).status).toBe(200); // 8th
-    const r2 = await generate({ prompt: 'smg', playerIdentity: id });
+    expect((await generate({ prompt: 'smg', playerIdentity: id, seed: 11 })).status).toBe(200); // 8th
+    const r2 = await generate({ prompt: 'smg', playerIdentity: id, seed: 12 });
     expect(r2.status).toBe(429);
     expect(String(r2.json?.error)).toContain('rate limit');
   });

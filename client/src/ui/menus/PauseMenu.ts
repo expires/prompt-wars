@@ -4,6 +4,7 @@ import './menus.css';
 import { el, esc, isolate } from '../dom';
 import { icon } from '../icons';
 import { cardDataFor, renderWeaponCard } from '../WeaponCard';
+import { localIdentity } from '../forgeCredit';
 import type { SettingsPanel } from '../SettingsPanel';
 import type { Weapon } from '../../weapons/types';
 
@@ -92,7 +93,7 @@ export class PauseMenu {
   show(info: { weapon: Weapon | null; callsign: string; hp: number; kills: number; deaths: number; online: boolean }) {
     const first = this.root.hidden;
     this.root.hidden = false;
-    renderWeaponCard(this.card, info.weapon ? cardDataFor(info.weapon, info.weapon.owner ? info.callsign : undefined) : null);
+    renderWeaponCard(this.card, info.weapon ? cardDataFor(info.weapon, info.weapon.owner ? info.callsign : undefined, localIdentity() || undefined) : null);
     this.sub.innerHTML = `<span>${esc(info.callsign)}</span><span>·</span><span>${info.kills} K / ${info.deaths} D</span>${info.online ? '' : '<span>· offline</span>'}`;
     if (first) {
       this.showSettings(false);

@@ -75,6 +75,17 @@
   color: var(--fg-mute);
 }
 .wcard-by b { color: var(--fg-dim); font-weight: 700; }
+.wcard-prompt { font-style: normal; color: var(--fg); }
+.wcard-first {
+  display: inline-block;
+  padding: 2px 8px;
+  transform: skewX(-12deg);
+  background: var(--t5, #ffb020);
+  color: var(--ink-900);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
 .wcard--compact .wcard-name { font-size: 28px; }
 .wcard--compact .wcard-body { padding: 10px 14px 12px; }
 .wcard--empty { --tier: var(--fg-mute); }

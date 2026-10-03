@@ -98,6 +98,7 @@ SpacetimeDB bills per reducer call and per byte written / broadcast, so the hot 
 | `dot_timer` | private, scheduled | one row per victim while a damage-over-time effect is active (250 ms ticks, deleted on expiry) |
 | `shot_event`, `hit_event` | public events | remote shot visuals (+ melee `charge` / `combo` for the third-person swing), damage / kills (+ `blocked`) |
 | `tick_timer` | private | legacy, always empty (kept so the auto-migration doesn't have to drop a table) |
+| `forged_prompt` | public | prompt cache: normalized prompt -> first design forged from it (`designId`, `firstBy`, `firstName`, `uses`) |
 
 There is no always-on scheduled reducer: an idle server does nothing. Slows expire client-side
 from `slowUntil`. Clients subscribe to `player`, `player_pose`, `spawn_point`, the event tables and
@@ -173,8 +174,22 @@ Weapons are designed from scratch by an LLM in the **Forge DSL** (`shared/src/fo
   mock without `ANTHROPIC_API_KEY`. Rate limit 20 generations / 10 min per IP and per identity.
   `pnpm --filter @ai-gaem/forge dev | test | integration | samples`; deploy with `./scripts/deploy-forge.sh`
   (systemd `ai-gaem-forge` on 127.0.0.1:8787, env `/etc/ai-gaem-forge.env`, Caddy `/api/forge/*`).
-- SpacetimeDB: `register_design(designJson, prompt)` re-sanitizes and stores the design in
-  `weapon.design` (`weapon.json` stays the balanced Weapon), equipping it while dead.
+- SpacetimeDB: `register_design(designJson, prompt, fresh)` re-sanitizes and stores the design in
+  `weapon.design` (`weapon.json` stays the balanced Weapon) and the prompt in `weapon.prompt`,
+  equipping it while dead. `fresh` = forged straight from the prompt (no previous design, locks or
+  rejects): the first such design per normalized prompt (`normalizePrompt`: lowercase, punctuation
+  -> space, collapsed whitespace) becomes its `forged_prompt` row, later ones count a use.
+- Prompt cache: typing a prompt that is already in `forged_prompt` (no locks / rejects, one variant)
+  shows that design instantly ("Cached"); equipping it calls `use_forged(norm)` (counts a use, equips
+  the original weapon row, no new row). Weapon cards show **First forged by X** for the first forger
+  and **Forged by X · N uses** for everyone else. The forge service also keeps an in-memory LRU of
+  plain prompts (`FORGE_CACHE_MAX`, default 500, 0 = off) and replays hits without a model call or
+  rate-limit cost. `?nocache=1` skips the client-side lookup.
+- Death screen, kill feed chip and Tab scoreboard show the killer weapon's original prompt.
+- Profanity filter (`@ai-gaem/shared` `censorText`, English + Polish basics, leetspeak / diacritics /
+  repeated letters folded, whole words only so "Scunthorpe" / "assassin" pass): offending words
+  become asterisks in `set_name`, `register_design` (prompt, weapon / part names),
+  `generate_weapon`, `register_weapon`, and in the forge service before the prompt reaches the model.
   `request_redeploy()` (Esc menu) kills you without kill credit (a death only if damaged) so you can
   switch loadout; respawn after 3 s.
 - Client SDK (not wired in yet): `client/src/forge/forgeClient.ts` (`streamForge`, `ForgeSession`).

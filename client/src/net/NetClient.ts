@@ -147,6 +147,17 @@ export interface HitConfirmEvent {
   element?: number;
 }
 
+/** Prompt cache row (forged_prompt): the first design forged from a normalized prompt. */
+export interface ForgedInfo {
+  norm: string;
+  /** weapon id of the first design */
+  designId: string;
+  /** identity hex of the first forger */
+  firstBy: string;
+  firstName: string;
+  uses: number;
+}
+
 export interface GenerateWeaponResult {
   ok: boolean;
   weaponId: string;
@@ -191,7 +202,11 @@ export interface NetClient {
    * Store a Forge design as a weapon (register_design). Equipped right away while dead (incl. new
    * players); resolves to the new weapon id once its row has arrived (null if it couldn't be found).
    */
-  registerDesign?(design: ForgeDesign, prompt: string): Promise<string | null>;
+  registerDesign?(design: ForgeDesign, prompt: string, fresh?: boolean): Promise<string | null>;
+  /** prompt cache lookup by normalized prompt (@ai-gaem/shared normalizePrompt) */
+  getForged?(norm: string): ForgedInfo | undefined;
+  /** reuse the cached first design of a prompt (use_forged): counts a use, equips it while dead */
+  useForged?(norm: string): Promise<void>;
   /** Esc menu redeploy: die without kill credit so the loadout can change (counts a death if damaged) */
   requestRedeploy?(): Promise<void>;
   /** weapon ids of the preset (library) weapons, one per class */

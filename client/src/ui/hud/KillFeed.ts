@@ -12,6 +12,8 @@ export interface KillOpts {
   victimIsYou?: boolean;
   /** element of the killing blow (fire / ice / poison / shock) */
   element?: string | null;
+  /** killer weapon's prompt (chip tooltip) */
+  prompt?: string;
 }
 
 const MAX = 5;
@@ -39,7 +41,7 @@ export class KillFeed {
       'div',
       `kf-row${mine ? ' is-mine' : ''}`,
       `<span class="kf-name kf-killer${opts.killerIsYou ? ' is-you' : ''}">${esc(killer)}</span>` +
-        `<span class="kf-chip tier-${tier}"><span class="kf-chip__in">${icon(opts.melee ? 'blade' : 'ammo', 'ui-icon')}<span class="kf-chip__name">${esc(weapon)}</span></span></span>` +
+        `<span class="kf-chip tier-${tier}"${opts.prompt ? ` title="${esc(`“${opts.prompt}”`)}"` : ''}><span class="kf-chip__in">${icon(opts.melee ? 'blade' : 'ammo', 'ui-icon')}<span class="kf-chip__name">${esc(weapon)}</span></span></span>` +
         elementGlyph +
         glyph +
         `<span class="kf-name kf-victim${opts.victimIsYou ? ' is-you' : ''}">${esc(victim)}</span>`,

@@ -3,6 +3,8 @@
 //      survives) -> EQUIP -> deployed with that design
 //   o. Esc -> REDEPLOY -> death screen -> OPEN FORGE -> new weapon; Esc -> WEAPON FORGE while alive
 //   p. death screen: killer card + KEEP LOADOUT, then "remix this" seeds the Forge with the killer's design
+//   q. prompt cache: A forges a new prompt ("First forged"), B types it again -> cached instantly
+//      ("Forged by A · 2 uses"), A kills B -> death screen quotes A's prompt
 import { test, expect } from '@playwright/test';
 import { RESPAWN_DELAY_SECONDS } from '@ai-gaem/shared';
 import { EXAMPLE_REVOLVER } from '@ai-gaem/shared/forge/examples';
@@ -51,7 +53,8 @@ test('n. first login: forge flow (stream, lock, reprompt, equip, deploy)', async
   await expect(A.page.getByTestId('forge-editor')).toBeVisible();
   await expect(A.page.getByTestId('forge-equip')).toBeDisabled();
 
-  const first = await forge(A, 'a steampunk crocodile revolver');
+  // unique per run: the prompt cache (forged_prompt / forge LRU) would replay it instantly
+  const first = await forge(A, `a steampunk crocodile revolver ${tag}`);
   // components streamed in one by one (several intermediate counts were rendered)
   console.log(`[e2e] streamed component counts: ${first.counts.join(',')} -> ${first.design.components.length}`);
   expect(first.counts.filter((n) => n > 0 && n < first.design.components.length).length).toBeGreaterThanOrEqual(1);
@@ -145,6 +148,9 @@ test('p. death screen: killer card, keep loadout, remix the killer weapon', asyn
   await expect(B.page.getByTestId('death-killer')).toContainText(`Fred-${tag}`);
   await expect(B.page.getByTestId('killer-card')).toContainText(EXAMPLE_REVOLVER.name, { ignoreCase: true });
   await expect(B.page.getByTestId('remix-killer')).toBeVisible();
+  // the killer's prompt, quoted
+  await expect(B.page.getByTestId('death-prompt')).toHaveText('“example revolver”');
+  await expect(B.page.getByTestId('killer-card').getByTestId('card-prompt')).toContainText('example revolver');
   await B.page.waitForTimeout(300);
   await shot(B, 'p1-death-screen-killer-card.png');
 
@@ -166,4 +172,65 @@ test('p. death screen: killer card, keep loadout, remix the killer weapon', asyn
   await B.page.getByTestId('forge-equip').click();
   const b2 = await waitForState(B.page, (x) => x.alive && x.weaponName === r.design.name && x.screen === 'none', RESPAWN_DELAY_SECONDS * 1000 + 15_000, 'B respawned with the remix');
   expect(b2.weaponDesign).toBeTruthy();
+});
+
+test('q. prompt cache: first forged badge, cached reuse, death screen quotes the prompt', async () => {
+  const prompt = `a baguette revolver that fires angry bees ${tag}`;
+  // A: Esc -> redeploy -> open forge (empty) -> a brand-new prompt -> equip: A is its first forger
+  await A.page.keyboard.press('Escape');
+  await A.page.getByTestId('pause-redeploy').click();
+  await waitForState(A.page, (x) => !x.alive && x.deathVisible, 5_000, 'A redeploying');
+  await A.page.getByTestId('death-open-forge').click();
+  await expect(A.page.getByTestId('forge-editor')).toBeVisible();
+  const fa = await forge(A, prompt);
+  let sa = await state(A.page);
+  expect(sa.forge!.origin).toMatchObject({ fresh: true, cached: null });
+  await A.page.getByTestId('forge-equip').click();
+  sa = await waitForState(A.page, (x) => x.alive && x.weaponName === fa.design.name && x.screen === 'none', RESPAWN_DELAY_SECONDS * 1000 + 15_000, 'A holds the baguette');
+  const aWeapon = sa.weaponId;
+  await A.page.keyboard.press('Escape');
+  await expect(A.page.getByTestId('pause-menu').getByTestId('card-first-forged')).toBeVisible();
+  await A.page.keyboard.press('Escape');
+
+  // B: same prompt, different case / punctuation -> cache hit: instant, same design, credit to A
+  await B.page.keyboard.press('Escape');
+  await B.page.getByTestId('pause-forge').click();
+  await expect(B.page.getByTestId('forge-editor')).toBeVisible();
+  const t0 = Date.now();
+  const fb = await forge(B, `  A Baguette-Revolver, that fires ANGRY bees ${tag.toUpperCase()}!! `);
+  console.log(`[e2e] cached forge took ${Date.now() - t0} ms`);
+  const sb = await state(B.page);
+  expect(sb.forge!.origin!.cached).toMatchObject({ designId: aWeapon, firstName: `Fred-${tag}`, uses: 1 });
+  expect(fb.design.name).toBe(fa.design.name);
+  await expect(B.page.getByTestId('forge-status')).toContainText(/cached/i);
+  await expect(B.page.getByTestId('forge-card').getByTestId('card-forged-by')).toContainText(`Fred-${tag}`);
+  await B.page.waitForTimeout(300);
+  await shot(B, 'q1-forge-cached-forged-by.png');
+  await B.page.getByTestId('forge-equip').click();
+  const b = await waitForState(B.page, (x) => x.alive && x.weaponId === aWeapon && x.screen === 'none', RESPAWN_DELAY_SECONDS * 1000 + 15_000, 'B holds the cached baguette');
+  expect(b.weaponName).toBe(fa.design.name);
+  // uses: A's forge + B's reuse (B's loadout card credits A)
+  await B.page.keyboard.press('Escape');
+  await expect(B.page.getByTestId('pause-menu').getByTestId('card-forged-by')).toContainText(`Fred-${tag} · 2 uses`);
+  await B.page.keyboard.press('Escape');
+
+  // A kills B with the baguette -> B's death screen quotes A's prompt, A's card shows First forged
+  await hook(A, (g) => g.setPerfectAim(true));
+  const aw = (await state(A.page)).weapon;
+  await teleport(A, [4, 0.1, 6], 0);
+  await teleport(B, [4, 0.1, -4], Math.PI);
+  await waitSeenAt(A, B.id, [4, 0.1, -4]);
+  for (let i = 0; i < 80; i++) {
+    if (!(await state(B.page)).alive) break;
+    if (i > 0 && aw.magSize && i % aw.magSize === 0) await A.page.waitForTimeout(aw.reloadTime * 1000 + 300);
+    await aimAt(A, B.id);
+    await fireOnce(A);
+    await A.page.waitForTimeout(Math.ceil(1000 / aw.fireRate) + 150);
+  }
+  await waitForState(B.page, (x) => !x.alive && x.deathVisible, 8_000, 'B killed by the baguette');
+  await expect(B.page.getByTestId('death-killer')).toContainText(`Fred-${tag}`);
+  await expect(B.page.getByTestId('death-prompt')).toHaveText(`“${prompt}”`);
+  await expect(B.page.getByTestId('killer-card').getByTestId('card-first-forged')).toBeVisible();
+  await B.page.waitForTimeout(400);
+  await shot(B, 'q2-death-screen-prompt-first-forged.png');
 });

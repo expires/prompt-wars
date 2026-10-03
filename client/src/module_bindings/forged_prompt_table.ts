@@ -10,8 +10,11 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {
-  designJson: __t.string(),
-  prompt: __t.string(),
-  fresh: __t.bool(),
-};
+export default __t.row({
+  norm: __t.string().primaryKey(),
+  designId: __t.u64().name("design_id"),
+  firstBy: __t.identity().name("first_by"),
+  firstName: __t.string().name("first_name"),
+  at: __t.timestamp(),
+  uses: __t.u32(),
+});

@@ -72,6 +72,8 @@ import {
   packedPoseEqual,
   POSE_FLUSH_MS,
   type PoseFloats,
+  censorText,
+  normalizePrompt,
 } from '@ai-gaem/shared';
 import { PART_CATALOG, PART_RECIPES } from './catalog.generated';
 
@@ -389,6 +391,24 @@ const dotTimer = table(
   },
 );
 
+/**
+ * Prompt cache ("First forged by X"): one row per normalized prompt (@ai-gaem/shared
+ * normalizePrompt), pointing at the first design forged from it. Clients look a prompt up here and
+ * reuse that design instantly (use_forged) instead of forging again.
+ */
+const forgedPrompt = table(
+  { name: 'forged_prompt', public: true },
+  {
+    norm: t.string().primaryKey(),
+    designId: t.u64().index('btree'),
+    firstBy: t.identity(),
+    firstName: t.string(),
+    at: t.timestamp(),
+    /** times this prompt was forged or reused (incl. the first) */
+    uses: t.u32(),
+  },
+);
+
 const spacetimedb = schema({
   player,
   playerPose,
@@ -404,6 +424,7 @@ const spacetimedb = schema({
   config,
   tickTimer,
   dotTimer,
+  forgedPrompt,
 });
 export default spacetimedb;
 
@@ -849,7 +870,7 @@ export const onDisconnect = spacetimedb.clientDisconnected(ctx => {
 // ---------------------------------------------------------------------------
 
 export const set_name = spacetimedb.reducer({ name: t.string() }, (ctx, { name }) => {
-  const clean = name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 24);
+  const clean = censorText(name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 24));
   if (!clean) throw new SenderError('name must not be empty');
   const p = requirePlayer(ctx);
   ctx.db.player.identity.update({ ...p, name: clean });
@@ -1198,8 +1219,8 @@ export const equip_weapon = spacetimedb.reducer({ weaponId: t.u64() }, (ctx, { w
  * Clients find it by owner (`weapon.ownerIdentity`) or, when equipped, via `player.weaponId`.
  */
 export const register_design = spacetimedb.reducer(
-  { designJson: t.string(), prompt: t.string() },
-  (ctx, { designJson, prompt }) => {
+  { designJson: t.string(), prompt: t.string(), fresh: t.bool() },
+  (ctx, { designJson, prompt, fresh }) => {
     if (designJson.length > FORGE_LIMITS.maxDesignJson) throw new SenderError('design json too large');
     const p = requirePlayer(ctx);
     let raw: unknown;
@@ -1213,11 +1234,36 @@ export const register_design = spacetimedb.reducer(
     // locked flags are editor state, not part of the stored weapon
     for (const c of design.components) delete c.locked;
     if (design.projectile) delete design.projectile.locked;
+    // profanity: weapon / part names are broadcast to everyone
+    design.name = censorText(design.name);
+    for (const c of design.components) c.label = censorText(c.label);
+    if (design.projectile) design.projectile.label = censorText(design.projectile.label);
+    const cleanPrompt = censorText(prompt.replace(/[\u0000-\u001f]/g, ' ').trim());
     const w = designToWeapon(design);
-    const row = insertWeapon(ctx, ctx.sender, w, prompt, false, JSON.stringify(design));
+    const row = insertWeapon(ctx, ctx.sender, w, cleanPrompt, false, JSON.stringify(design));
     if (!p.alive) ctx.db.player.identity.update({ ...p, weaponId: row.id, needsLoadout: false });
+    // prompt cache: a design forged straight from a prompt (no previous design / locks / rejects)
+    const norm = normalizePrompt(cleanPrompt);
+    if (fresh && norm) {
+      const fp = ctx.db.forgedPrompt.norm.find(norm);
+      if (!fp) ctx.db.forgedPrompt.insert({ norm, designId: row.id, firstBy: ctx.sender, firstName: p.name, at: ctx.timestamp, uses: 1 });
+      else ctx.db.forgedPrompt.norm.update({ ...fp, uses: fp.uses + 1 });
+    }
   },
 );
+
+/**
+ * Reuse the cached first design of a prompt (forged_prompt) instead of forging it again: counts a
+ * use and, while dead, equips that weapon row (shared, owned by the first forger).
+ */
+export const use_forged = spacetimedb.reducer({ norm: t.string() }, (ctx, { norm }) => {
+  const p = requirePlayer(ctx);
+  const fp = ctx.db.forgedPrompt.norm.find(normalizePrompt(norm));
+  if (!fp) throw new SenderError('unknown prompt');
+  if (!ctx.db.weapon.id.find(fp.designId)) throw new SenderError('design is gone');
+  ctx.db.forgedPrompt.norm.update({ ...fp, uses: fp.uses + 1 });
+  if (!p.alive) ctx.db.player.identity.update({ ...p, weaponId: fp.designId, needsLoadout: false });
+});
 
 /**
  * Esc menu "redeploy": die on the spot (no killer credit) so the loadout can be changed, then
@@ -1257,9 +1303,10 @@ export const register_weapon = spacetimedb.reducer(
       throw new SenderError('invalid json');
     }
     const w = clampWeapon(raw);
+    w.name = censorText(w.name);
     w.parts = filterKnownParts(w.parts, KNOWN_PART_IDS);
     if (w.parts.length === 0) w.parts = recipePartsFor(w.class, ctx.random());
-    insertWeapon(ctx, ctx.sender, w, prompt, false);
+    insertWeapon(ctx, ctx.sender, w, censorText(prompt), false);
   },
 );
 
@@ -1365,7 +1412,7 @@ export const generate_weapon = spacetimedb.procedure(
   { prompt: t.string(), weaponClass: t.string(), templatesJson: t.string() },
   GenerateResult,
   (ctx, { prompt, weaponClass, templatesJson }) => {
-    const cleanPrompt = prompt.slice(0, 300);
+    const cleanPrompt = censorText(prompt.slice(0, 300));
     const allTemplates = knownTemplates(templatesJson);
     const setup = ctx.withTx(tx => {
       const cfg = tx.db.config.id.find(0);
@@ -1435,6 +1482,7 @@ export const generate_weapon = spacetimedb.procedure(
     }
 
     const w = clampWeapon(raw);
+    w.name = censorText(w.name);
     w.parts = filterKnownParts(w.parts, KNOWN_PART_IDS);
     if (w.parts.length === 0) w.parts = recipePartsFor(w.class, setup.recipeRoll);
 

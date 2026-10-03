@@ -4,6 +4,7 @@ import './menus.css';
 import { el, esc, isolate } from '../dom';
 import { icon } from '../icons';
 import { cardDataFor, renderWeaponCard } from '../WeaponCard';
+import { localIdentity } from '../forgeCredit';
 import type { Weapon } from '../../weapons/types';
 
 export interface LandingState {
@@ -133,7 +134,7 @@ export class Landing {
     this.hint.innerHTML = s.needsLoadout
       ? '<b>Forge a weapon</b> to start.'
       : `Deploying with <b>${esc(s.weapon?.name ?? 'your weapon')}</b>`;
-    renderWeaponCard(this.card, s.weapon ? cardDataFor(s.weapon, s.weapon.owner ? s.callsign : undefined) : null);
+    renderWeaponCard(this.card, s.weapon ? cardDataFor(s.weapon, s.weapon.owner ? s.callsign : undefined, localIdentity() || undefined) : null);
     const st = this.statusEl;
     st.className = `landing-status ${s.statusKind ?? 'ok'}`;
     st.lastElementChild!.textContent = s.status;
