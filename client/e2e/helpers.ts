@@ -80,6 +80,23 @@ export async function aimAt(p: Player, targetId: string) {
   expect(ok, `${p.name} can aim at ${targetId}`).toBe(true);
 }
 
+export async function aimAtHead(p: Player, targetId: string) {
+  const ok = await p.page.evaluate((id) => (window as unknown as Win).__game.aimAtHead(id), targetId);
+  expect(ok, `${p.name} can aim at ${targetId}'s head`).toBe(true);
+}
+
+/** run `fn(window.__game, args)` in the page */
+export function hook<A = undefined, R = unknown>(p: Player, fn: (g: GameTestHook, args: A) => R, args?: A): Promise<R> {
+  return p.page.evaluate(
+    ([src, a]) => {
+      // eslint-disable-next-line no-new-func
+      const f = new Function(`return (${src})`)() as (g: GameTestHook, args: unknown) => R;
+      return f((window as unknown as Win).__game, a);
+    },
+    [fn.toString(), args ?? null] as const,
+  ) as Promise<R>;
+}
+
 export async function fireOnce(p: Player) {
   return p.page.evaluate(() => (window as unknown as Win).__game.fireOnce());
 }

@@ -90,6 +90,11 @@ export interface Weapon {
   slowPercent: number;
   /** Seconds the trigger must be held before each shot fires. */
   chargeTime: number;
+  /**
+   * Damage multiplier for a direct hit on the head hitbox (1-3). Applied server-side; head
+   * damage per shot is capped at MAX_HEADSHOT_DAMAGE. Always 1 for streams and splash weapons.
+   */
+  headshotMultiplier: number;
   parts: WeaponPart[];
   colors: WeaponColors;
 }
@@ -103,6 +108,49 @@ export const MAX_HP = 100;
 export const SPLASH_EDGE_FRACTION = 0.25;
 export const SLOW_DURATION = 1.5;
 export const RESPAWN_DELAY_SECONDS = 3;
+
+/** Hit zones reported by clients (`report_hit.zone`). */
+export const HIT_ZONE_BODY = 0;
+export const HIT_ZONE_HEAD = 1;
+/** Max damage a single headshot can deal (body shots stay capped at 95 by clampWeapon). */
+export const MAX_HEADSHOT_DAMAGE = 150;
+
+/**
+ * Player hitbox geometry (feet-relative, metres), shared by the client hitboxes and the
+ * server's headshot plausibility check. Crouching shrinks the player from 1.8 m to 1.2 m.
+ */
+export const PLAYER_HEIGHT = 1.8;
+export const PLAYER_CROUCH_HEIGHT = 1.2;
+export const HEAD_RADIUS = 0.16;
+/** head sphere centre above the feet */
+export const HEAD_CENTER_STANDING = 1.66;
+export const HEAD_CENTER_CROUCHED = HEAD_CENTER_STANDING - (PLAYER_HEIGHT - PLAYER_CROUCH_HEIGHT);
+
+/** Damage of a direct hit: body = `bodyDamage`, head = bodyDamage * multiplier, capped at 150. */
+export function zoneDamage(weapon: Pick<Weapon, 'headshotMultiplier'>, bodyDamage: number, zone: number): number {
+  if (zone !== HIT_ZONE_HEAD) return bodyDamage;
+  const mult = Math.min(3, Math.max(1, weapon.headshotMultiplier || 1));
+  return Math.min(bodyDamage * mult, Math.max(bodyDamage, MAX_HEADSHOT_DAMAGE));
+}
+
+/**
+ * Server-side sanity check for a claimed headshot: is the impact point plausibly at the head of
+ * a player whose last known feet position is (fx, fy, fz)? Generous tolerances absorb
+ * interpolation delay (remote players are rendered ~100 ms in the past), jumping and the crouch
+ * transition, but rule out claiming a head hit at the feet or legs.
+ */
+export function isPlausibleHeadHit(
+  feet: readonly [number, number, number],
+  crouching: boolean,
+  impact: readonly [number, number, number],
+): boolean {
+  const centre = crouching ? HEAD_CENTER_CROUCHED : HEAD_CENTER_STANDING;
+  const dy = impact[1] - feet[1];
+  const VERT_TOL = 0.35;
+  if (dy < centre - HEAD_RADIUS - VERT_TOL || dy > centre + HEAD_RADIUS + VERT_TOL) return false;
+  const HORIZ_TOL = 1.5;
+  return Math.hypot(impact[0] - feet[0], impact[2] - feet[2]) <= HORIZ_TOL;
+}
 
 /** Splash damage at `distance` from the impact point, linear falloff to 25% at the edge. */
 export function splashDamageAt(weapon: Pick<Weapon, 'damage' | 'pellets' | 'splashRadius'>, distance: number): number {

@@ -5,7 +5,10 @@ export class Input {
   mouseDX = 0;
   mouseDY = 0;
   mouseDown = false;
+  /** right mouse button held (ADS) */
+  rightDown = false;
   private mouseClicked = false;
+  private rightClicked = false;
   locked = false;
   /** when true, game keys are ignored (e.g. typing into a text box) */
   suspended = false;
@@ -17,11 +20,15 @@ export class Input {
       if (!this.keys.has(e.code)) this.pressed.add(e.code);
       this.keys.add(e.code);
       if (['Space', 'F2', 'Tab'].includes(e.code) || (this.locked && e.code.startsWith('Arrow'))) e.preventDefault();
+      // crouch on Ctrl: swallow browser shortcuts (Ctrl+S/D/F...) while playing. Ctrl+W can't be blocked
+      // outside fullscreen, which is why C is the primary crouch key.
+      if (this.locked && (e.ctrlKey || e.metaKey) && e.code !== 'KeyW') e.preventDefault();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => {
       this.keys.clear();
       this.mouseDown = false;
+      this.rightDown = false;
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.locked) return;
@@ -29,17 +36,27 @@ export class Input {
       this.mouseDY += e.movementY;
     });
     document.addEventListener('mousedown', (e) => {
-      if (!this.locked || e.button !== 0) return;
-      this.mouseDown = true;
-      this.mouseClicked = true;
+      if (!this.locked) return;
+      if (e.button === 0) {
+        this.mouseDown = true;
+        this.mouseClicked = true;
+      } else if (e.button === 2) {
+        this.rightDown = true;
+        this.rightClicked = true;
+      }
     });
     document.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.mouseDown = false;
+      if (e.button === 2) this.rightDown = false;
+    });
+    document.addEventListener('contextmenu', (e) => {
+      if (this.locked) e.preventDefault();
     });
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.element;
       if (!this.locked) {
         this.mouseDown = false;
+        this.rightDown = false;
         this.keys.clear();
       }
       this.lockListeners.forEach((cb) => cb(this.locked));
@@ -72,6 +89,10 @@ export class Input {
     return this.mouseClicked;
   }
 
+  wasRightClicked() {
+    return this.rightClicked;
+  }
+
   consumeMouse() {
     const d = { dx: this.mouseDX, dy: this.mouseDY };
     this.mouseDX = 0;
@@ -82,6 +103,7 @@ export class Input {
   endFrame() {
     this.pressed.clear();
     this.mouseClicked = false;
+    this.rightClicked = false;
   }
 }
 

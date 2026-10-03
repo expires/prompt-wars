@@ -24,4 +24,5 @@ export default __t.row({
   knockY: __t.f32().name("knock_y"),
   knockZ: __t.f32().name("knock_z"),
   slowPercent: __t.f32().name("slow_percent"),
+  headshot: __t.bool(),
 });

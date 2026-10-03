@@ -3,6 +3,22 @@ import { buildWeaponModel, type WeaponModel } from './buildWeaponModel';
 import type { Weapon } from './types';
 
 const ANCHOR = new THREE.Vector3(0.19, -0.19, -0.5);
+/** ADS: centred, closer; y is adjusted per weapon so the top of the gun sits on the crosshair */
+const ADS_ANCHOR = new THREE.Vector3(0, -0.02, -0.46);
+
+export interface ViewmodelState {
+  /** horizontal speed m/s */
+  speed: number;
+  grounded: boolean;
+  /** 0..1 ADS blend */
+  ads: number;
+  sprinting: boolean;
+  crouched: boolean;
+  /** sideways velocity in camera space (m/s, + = right) for inertia tilt */
+  strafe: number;
+  /** camera landing dip (m, negative = down) */
+  dip: number;
+}
 const MAX_LEN = 0.6;
 const MAX_LEN_MELEE = 0.75;
 const MAX_HEIGHT = 0.28;
@@ -19,6 +35,13 @@ export class Viewmodel {
   private bobT = 0;
   private sway = new THREE.Vector2();
   private flashLife = 0;
+  private sprintT = 0;
+  private strafeT = 0;
+  private crouchT = 0;
+  /** ADS anchor for the current model (centre x, top of the gun on the crosshair) */
+  private readonly adsAnchor = ADS_ANCHOR.clone();
+  /** hide the model at full ADS (scoped weapons draw a scope overlay instead) */
+  hideWhenAimed = false;
   /** 0..1 while reloading (drives the dip animation) */
   reloadProgress = -1;
 
@@ -68,7 +91,11 @@ export class Viewmodel {
       holder.scale.setScalar(s);
       // keep the gun's rear at roughly the anchor so long guns extend forward
       holder.position.set(0, 0, -Math.max(0, bb.max.z * s - 0.12));
+      // ADS: centre the gun horizontally and put its top edge just under the screen centre
+      const cx = ((bb.min.x + bb.max.x) / 2) * s;
+      this.adsAnchor.set(-cx, -bb.max.y * s - 0.008, ADS_ANCHOR.z);
     }
+    if (melee) this.adsAnchor.copy(ANCHOR);
     m.muzzle.add(this.flash);
     this.flash.position.set(0, 0, -0.04);
     this.pivot.add(holder);
@@ -102,20 +129,39 @@ export class Viewmodel {
     this.sway.y = THREE.MathUtils.clamp(this.sway.y + dy * 0.00025, -0.04, 0.04);
   }
 
-  update(dt: number, speed: number, grounded: boolean) {
+  update(dt: number, st: ViewmodelState) {
+    const ease = (cur: number, target: number, rate: number) => cur + (target - cur) * (1 - Math.exp(-dt * rate));
     this.recoil = Math.max(0, this.recoil - dt * 8);
     this.swing = Math.max(0, this.swing - dt * 3.5);
     this.sway.multiplyScalar(Math.exp(-dt * 10));
-    if (grounded) this.bobT += dt * speed * 1.6;
-    const bobAmt = Math.min(1, speed / 8) * 0.012;
+    this.sprintT = ease(this.sprintT, st.sprinting && st.speed > 3 ? 1 : 0, 10);
+    this.strafeT = ease(this.strafeT, THREE.MathUtils.clamp(st.strafe / 6.5, -1, 1), 8);
+    this.crouchT = ease(this.crouchT, st.crouched ? 1 : 0, 10);
+    const ads = st.ads * st.ads * (3 - 2 * st.ads); // smoothstep
+    if (st.grounded) this.bobT += dt * st.speed * 1.65;
+    const bobAmt = Math.min(1.3, st.speed / 6) * 0.014 * (1 - 0.85 * ads) * (1 + 0.6 * this.sprintT);
+
+    // anchor: hip -> ADS
+    this.anchor.position.lerpVectors(ANCHOR, this.adsAnchor, ads);
+    this.anchor.visible = !(this.hideWhenAimed && st.ads > 0.95);
 
     const p = this.pivot;
+    const swayK = 1 - 0.7 * ads;
     p.position.set(
-      this.sway.x + Math.sin(this.bobT) * bobAmt,
-      this.sway.y + Math.abs(Math.cos(this.bobT)) * bobAmt - this.recoil * 0.01,
-      this.recoil * 0.05,
+      this.sway.x * swayK + Math.sin(this.bobT) * bobAmt - this.strafeT * 0.012 * swayK,
+      this.sway.y * swayK + Math.abs(Math.cos(this.bobT)) * bobAmt - this.recoil * 0.01 * (1 - 0.5 * ads) + st.dip * 0.25,
+      this.recoil * (0.05 + 0.03 * ads),
     );
-    p.rotation.set(this.recoil * 0.12, 0, 0);
+    p.rotation.set(this.recoil * 0.12 * (1 - 0.6 * ads), 0, -this.strafeT * 0.06 * swayK + this.crouchT * 0.06 * (1 - ads));
+    // sprint pose: muzzle down and across the body
+    if (this.sprintT > 0.001) {
+      const k = this.sprintT;
+      p.rotation.x -= 0.45 * k;
+      p.rotation.y += 0.7 * k;
+      p.rotation.z += 0.15 * k;
+      p.position.x -= 0.06 * k;
+      p.position.y -= 0.05 * k;
+    }
     if (this.reloadProgress >= 0) {
       const k = Math.sin(Math.PI * this.reloadProgress);
       p.rotation.x -= k * 0.8;

@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { RESPAWN_DELAY_SECONDS, clampWeapon } from '@ai-gaem/shared';
+import { HEAD_CENTER_CROUCHED, HEAD_CENTER_STANDING, MAX_HEADSHOT_DAMAGE, RESPAWN_DELAY_SECONDS, clampWeapon } from '@ai-gaem/shared';
 import {
   SERVER,
   aimAt,
+  aimAtHead,
+  hook,
   fireOnce,
   joinGame,
   shot,
@@ -180,6 +182,8 @@ test('d. server rejects shots faster than fireRate', async () => {
     await A.page.waitForTimeout(300); // server reload timer
   }
   await A.page.waitForTimeout(interval * 1000 + 200);
+  // accuracy isn't under test here: no spread / bloom / recoil
+  await hook(A, (g) => g.setPerfectAim(true));
   // spam 10 shots ~50 ms apart (client cooldown bypassed; the server must enforce it)
   const spamMs = await A.page.evaluate((id) => {
     const g = (window as unknown as { __game: { aimAt(id: string): boolean; fireOnce(): boolean } }).__game;
@@ -209,4 +213,158 @@ test('d. server rejects shots faster than fireRate', async () => {
   expect(drop).toBeLessThan(10 * dmg);
   expect(b1.alive).toBe(true);
   await shot(B, 'd1-bob-after-spam.png');
+});
+
+/** make sure B is alive with full HP (kill + keep-loadout respawn if needed) */
+async function freshB() {
+  let b = await state(B.page);
+  if (b.alive && b.hp === 100) return b;
+  if (b.alive) {
+    await lineUp();
+    await hook(A, (g) => g.setPerfectAim(true));
+    await killB();
+  }
+  await waitForState(B.page, (s) => !s.alive && s.deathVisible, 5_000, 'B dead');
+  await B.page.getByTestId('keep-loadout').click();
+  b = await waitForState(B.page, (s) => s.alive && s.hp === 100, RESPAWN_DELAY_SECONDS * 1000 + 8_000, 'B respawned');
+  return b;
+}
+
+/** A: full magazine on client + server, cooldown expired */
+async function reloadA() {
+  const a = await state(A.page);
+  if (a.ammo < a.weapon.magSize) {
+    await hook(A, (g) => g.reload());
+    await waitForState(A.page, (s) => s.ammo === s.weapon.magSize, a.weapon.reloadTime * 1000 + 3000, 'A reloaded');
+  }
+  await A.page.waitForTimeout(400 + 1000 / a.weapon.fireRate);
+}
+
+/** wait for B's hp to settle after a shot and return the drop */
+async function hpDrop(before: number, gapMs: number) {
+  await A.page.waitForTimeout(gapMs);
+  const b = await state(B.page);
+  return { drop: +(before - b.hp).toFixed(2), b };
+}
+
+test('e. headshots: server applies the multiplier, rejects implausible head hits, kill feed icon', async () => {
+  test.skip(SERVER !== 'local', 'local only');
+  await freshB();
+  await lineUp();
+  await reloadA();
+  await hook(A, (g) => g.setPerfectAim(true));
+  const a0 = await state(A.page);
+  const w = a0.weapon;
+  expect(w.class).toBe('pistol');
+  const body = w.damage * w.pellets;
+  const head = Math.min(body * w.headshotMultiplier, Math.max(body, MAX_HEADSHOT_DAMAGE));
+  expect(w.headshotMultiplier).toBe(2);
+  const gapMs = Math.ceil(1000 / w.fireRate) + 150;
+  const b0 = await state(B.page);
+  const rb = (await state(A.page)).playersSeen.find((p) => p.id === B.id)!;
+  expect(rb.head[1] - rb.pos[1]).toBeCloseTo(HEAD_CENTER_STANDING, 1);
+
+  // 1) real headshot through the client raycast (head hitbox)
+  await aimAtHead(A, B.id);
+  await hook(A, (g) => g.holdHitmarker(true));
+  expect(await fireOnce(A)).toBe(true);
+  const s1 = await waitForState(A.page, (s) => s.hitmarker.includes('headshot'), 2_000, 'A headshot hitmarker');
+  expect(s1.hitmarker).toContain('show');
+  await shot(A, 'e1-alice-headshot-hitmarker.png');
+  await hook(A, (g) => g.holdHitmarker(false));
+  let { drop, b } = await hpDrop(b0.hp, gapMs);
+  console.log(`[e2e] headshot: body=${body} head=${head} drop=${drop}`);
+  expect(drop).toBeCloseTo(head, 2);
+
+  // 2) body shot through the client raycast: plain damage
+  await aimAt(A, B.id);
+  await fireOnce(A);
+  ({ drop, b } = await hpDrop(b.hp, gapMs));
+  expect(drop).toBeCloseTo(body, 2);
+
+  // 3) forged "head" hit at B's feet: the server downgrades it to a body hit
+  const bFeet = b.pos;
+  await hook(A, (g, args) => g.reportHitRaw(args.id, 1, args.p), { id: B.id, p: [bFeet[0], bFeet[1] + 0.3, bFeet[2]] as [number, number, number] });
+  ({ drop, b } = await hpDrop(b.hp, gapMs));
+  console.log(`[e2e] implausible head zone at the feet: drop=${drop} (body=${body})`);
+  expect(drop).toBeCloseTo(body, 2);
+
+  // 4) headshot finishes B: kill feed shows the headshot icon on both screens
+  const killer = (await state(A.page)).kills;
+  for (let i = 0; i < 6 && b.alive; i++) {
+    await aimAtHead(A, B.id);
+    await fireOnce(A);
+    ({ b } = await hpDrop(b.hp, gapMs));
+  }
+  expect(b.alive).toBe(false);
+  await waitForState(A.page, (s) => s.kills === killer + 1, 5_000, 'A kill credited');
+  await expect(A.page.getByTestId('kf-headshot').first()).toBeVisible();
+  await expect(B.page.getByTestId('kf-headshot').first()).toBeVisible();
+  await shot(A, 'e2-alice-killfeed-headshot.png');
+});
+
+test('f. crouch: replicated, lowers remote hitboxes, crouched headshots validated', async () => {
+  test.skip(SERVER !== 'local', 'local only');
+  await freshB();
+  await lineUp();
+  await reloadA();
+  await hook(A, (g) => g.setPerfectAim(true));
+
+  // local crouch: eye height eases down, row replicates
+  await hook(B, (g) => g.setCrouch(true));
+  const bc = await waitForState(B.page, (s) => s.crouching && s.eyeHeight < 1.1 && s.serverCrouching, 5_000, 'B crouched locally + on server');
+  expect(bc.eyeHeight).toBeCloseTo(1.02, 1);
+  // remote: A renders B crouched with the head hitbox lowered
+  const seen = await waitForState(
+    A.page,
+    (s) => s.playersSeen.some((p) => p.id === B.id && p.crouching && p.crouchT === 1),
+    5_000,
+    'A sees B crouched',
+  );
+  const rb = seen.playersSeen.find((p) => p.id === B.id)!;
+  expect(rb.head[1] - rb.pos[1]).toBeCloseTo(HEAD_CENTER_CROUCHED, 1);
+  await aimAt(A, B.id);
+  await A.page.waitForTimeout(300);
+  await shot(A, 'f1-alice-sees-bob-crouched.png');
+  await shot(B, 'f2-bob-crouched-view.png');
+
+  const a0 = await state(A.page);
+  const w = a0.weapon;
+  const body = w.damage * w.pellets;
+  const head = Math.min(body * w.headshotMultiplier, Math.max(body, MAX_HEADSHOT_DAMAGE));
+  const gapMs = Math.ceil(1000 / w.fireRate) + 150;
+  let b = await state(B.page);
+
+  // forged head hit at *standing* head height while B is crouched: body damage only
+  await hook(A, (g, args) => g.reportHitRaw(args.id, 1, args.p), {
+    id: B.id,
+    p: [b.pos[0], b.pos[1] + HEAD_CENTER_STANDING + 0.3, b.pos[2]] as [number, number, number],
+  });
+  let drop: number;
+  ({ drop, b } = await hpDrop(b.hp, gapMs));
+  expect(drop).toBeCloseTo(body, 2);
+
+  // a real headshot on the crouched head counts as a headshot
+  await aimAtHead(A, B.id);
+  await fireOnce(A);
+  ({ drop, b } = await hpDrop(b.hp, gapMs));
+  console.log(`[e2e] crouched headshot drop=${drop} (head=${head})`);
+  expect(drop).toBeCloseTo(Math.min(head, b.hp + drop), 2);
+
+  // stand up again: replicated
+  await hook(B, (g) => g.setCrouch(false));
+  await waitForState(B.page, (s) => !s.crouching && s.eyeHeight > 1.55 && !s.serverCrouching, 5_000, 'B standing');
+  await waitForState(A.page, (s) => s.playersSeen.some((p) => p.id === B.id && !p.crouching && p.crouchT === 0), 5_000, 'A sees B standing');
+  await hook(B, (g) => g.setCrouch(null));
+
+  // ADS view (screenshot): zoomed FOV, centred viewmodel, tighter spread
+  await hook(A, (g) => g.setPerfectAim(false));
+  const hip = await state(A.page);
+  await hook(A, (g) => g.setAds(true));
+  const ads = await waitForState(A.page, (s) => s.ads === 1 && s.fov < hip.fov * 0.85, 3_000, 'A aiming');
+  expect(ads.spread).toBeLessThan(hip.spread);
+  await aimAt(A, B.id);
+  await A.page.waitForTimeout(400);
+  await shot(A, 'f3-alice-ads.png');
+  await hook(A, (g) => g.setAds(null));
 });

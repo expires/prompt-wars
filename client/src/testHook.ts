@@ -20,6 +20,21 @@ export interface GameTestHook {
   reload(): void;
   /** what clampWeapon() makes of the current weapon (test: stats already within bounds) */
   clampCurrentWeapon(): unknown;
+  /** force crouch on/off (null = back to keyboard control) */
+  setCrouch(on: boolean | null): void;
+  /** force aim-down-sights on/off (null = back to right mouse) */
+  setAds(on: boolean | null): void;
+  /** point the camera at a remote player's head hitbox centre; false if not in the scene */
+  aimAtHead(playerId: string): boolean;
+  /** disable spread / bloom / recoil so test shots land exactly where aimed */
+  setPerfectAim(on: boolean): void;
+  /**
+   * Fire a network shot (no local raycast) and report a hit on `playerId` with an arbitrary zone
+   * and impact point: exercises the server's headshot validation. Returns the shot seq.
+   */
+  reportHitRaw(playerId: string, zone: number, point: [number, number, number]): number;
+  /** keep the hitmarker visible (screenshots) */
+  holdHitmarker(on: boolean): void;
 }
 
 function getState(game: Game) {
@@ -27,7 +42,17 @@ function getState(game: Game) {
   const f = ready ? game.player.feet : new THREE.Vector3();
   const w = ready ? game.weapons.weapon : undefined;
   const net = game.net as (typeof game.net & { connected?: boolean }) | undefined;
+  const p = ready ? game.player : undefined;
   return {
+    crouching: p?.crouched ?? false,
+    eyeHeight: p?.eyeHeight ?? 0,
+    ceilingBlocked: p?.ceilingBlocked() ?? false,
+    sprinting: p?.sprinting ?? false,
+    ads: ready ? game.ads : 0,
+    fov: ready ? game.rc.camera.fov : 0,
+    spread: ready ? game.weapons.currentSpread() : 0,
+    hitmarker: ready ? (document.querySelector('[data-testid=hitmarker]')?.className ?? '') : '',
+    serverCrouching: game.me?.crouching ?? false,
     ready,
     connected: net?.connected ?? ready,
     authoritative: net?.authoritative ?? false,
@@ -65,6 +90,11 @@ function getState(game: Game) {
             pos: [r.position.x, r.position.y, r.position.z] as [number, number, number],
             /** latest server position */
             netPos: r.state.pos,
+            /** server crouch state + rendered crouch blend (0..1) */
+            crouching: !!r.state.crouching,
+            crouchT: r.crouchT,
+            /** rendered head hitbox centre */
+            head: [r.head.x, r.head.y, r.head.z] as [number, number, number],
           };
         })
       : [],
@@ -101,6 +131,32 @@ export function installTestHook(game: Game) {
     clampCurrentWeapon() {
       const { id: _id, ...w } = game.weapons.weapon;
       return clampWeapon(w);
+    },
+    setCrouch(on) {
+      game.player.forceCrouch = on;
+    },
+    setAds(on) {
+      game.forceAds = on;
+    },
+    aimAtHead(playerId) {
+      const c = game.remotes.headOf(playerId);
+      if (!c) return false;
+      game.lookAt(c);
+      game.sendTransformNow();
+      return true;
+    },
+    setPerfectAim(on) {
+      game.weapons.perfectAim = on;
+    },
+    reportHitRaw(playerId, zone, point) {
+      const eye = game.player.eye();
+      const dir = new THREE.Vector3(...point).sub(eye).normalize();
+      const seq = game.net.fire([eye.x, eye.y, eye.z], [dir.x, dir.y, dir.z]);
+      game.net.reportHit(playerId, game.weapons.weaponId, { seq, pellets: 1, point, zone });
+      return seq;
+    },
+    holdHitmarker(on) {
+      game.hud.holdHitmarker = on;
     },
   };
   (window as unknown as { __game: GameTestHook }).__game = hook;

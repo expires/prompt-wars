@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import type RAPIER from '@dimforge/rapier3d-compat';
 import type { PhysicsContext } from '../engine/physics';
 import { Humanoid } from './humanoid';
-import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CENTER_OFFSET } from './PlayerController';
+import { Hitboxes } from './hitboxes';
+import { CENTER_OFFSET } from './PlayerController';
 import type { HitTarget, TargetRegistry } from '../weapons/targets';
 import type { Vec3 } from '../map/types';
 
@@ -35,19 +35,20 @@ export interface Dummy extends HitTarget {
   hp: number;
   model: Humanoid;
   bar: HpBar;
-  collider: RAPIER.Collider;
+  hitboxes: Hitboxes;
+  crouched: boolean;
   respawnAt: number;
   flash: number;
 }
 
-/** Stationary target dummies (capsule colliders matching the player) with HP bars. */
+/** Stationary target dummies (head + body hitboxes like remote players) with HP bars. Every third one crouches. */
 export class TargetDummies {
   readonly dummies: Dummy[] = [];
   private time = 0;
   onKilled?: (d: Dummy) => void;
 
   constructor(
-    private readonly physics: PhysicsContext,
+    physics: PhysicsContext,
     scene: THREE.Scene,
     registry: TargetRegistry,
     positions: Vec3[],
@@ -61,22 +62,29 @@ export class TargetDummies {
       const bar = new HpBar();
       bar.root.position.set(p[0], p[1] + 2.1, p[2]);
       scene.add(bar.root);
-      const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(p[0], p[1] + CENTER_OFFSET, p[2]));
-      const collider = world.createCollider(RAPIER.ColliderDesc.capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS), body);
+      const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(p[0], p[1], p[2]));
+      const crouched = i % 3 === 1;
       const d: Dummy = {
         id: `dummy-${i}`,
         kind: 'dummy',
         hp: MAX_HP,
         model,
         bar,
-        collider,
+        hitboxes: undefined as unknown as Hitboxes,
+        crouched,
         respawnAt: 0,
         flash: 0,
-        getCenter: (out) => out.set(p[0], p[1] + CENTER_OFFSET, p[2]),
+        getCenter: (out) => out.set(p[0], p[1] + (crouched ? CENTER_OFFSET - 0.3 : CENTER_OFFSET), p[2]),
         alive: () => d.hp > 0,
         applyDamage: (amount) => this.damage(d, amount),
       };
-      registry.add(collider, d);
+      d.hitboxes = new Hitboxes(physics, body, registry, d);
+      if (crouched) {
+        d.hitboxes.setCrouch(1);
+        model.setCrouch(1);
+        model.animate(0, 0);
+        bar.root.position.y -= 0.6;
+      }
       this.dummies.push(d);
     });
   }
@@ -89,7 +97,7 @@ export class TargetDummies {
     if (d.hp <= 0) {
       d.model.root.visible = false;
       d.bar.root.visible = false;
-      d.collider.setEnabled(false);
+      d.hitboxes.setEnabled(false);
       d.respawnAt = this.time + RESPAWN_S;
       this.onKilled?.(d);
       return true;
@@ -102,7 +110,7 @@ export class TargetDummies {
     d.bar.set(1);
     d.model.root.visible = true;
     d.bar.root.visible = true;
-    d.collider.setEnabled(true);
+    d.hitboxes.setEnabled(true);
   }
 
   update(dt: number, camera: THREE.Camera) {
@@ -118,6 +126,6 @@ export class TargetDummies {
   }
 
   dispose() {
-    for (const d of this.dummies) this.physics.world.removeCollider(d.collider, false);
+    for (const d of this.dummies) d.hitboxes.dispose();
   }
 }

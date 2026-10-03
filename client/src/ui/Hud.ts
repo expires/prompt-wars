@@ -1,4 +1,5 @@
 import './hud.css';
+import { SettingsPanel } from './SettingsPanel';
 
 export interface DeathScreenHandlers {
   onKeepLoadout(): void;
@@ -24,6 +25,9 @@ export class Hud {
   private readonly weaponName: HTMLElement;
   private readonly killfeed = el('div', 'panel killfeed');
   private readonly hitmarker = el('div', 'hitmarker');
+  private readonly crosshair = el('div', 'crosshair');
+  private readonly scope = el('div', 'scope');
+  private crossGap = -1;
   private readonly vignette = el('div', 'damage-vignette');
   private readonly debugEl = el('div', 'panel debug');
   private readonly spawnEditorEl = el('div', 'panel spawn-editor');
@@ -38,16 +42,21 @@ export class Hud {
   private keepLabel = 'Keep loadout';
   private hitTimer = 0;
   private dmgTimer = 0;
+  /** test hook: keep the hitmarker on screen (screenshots) */
+  holdHitmarker = false;
+  readonly settingsPanel: SettingsPanel;
   deathHandlers?: DeathScreenHandlers;
 
   constructor(parent: HTMLElement = document.body) {
-    const cross = el(
-      'div',
-      'crosshair',
-      `<svg width="24" height="24" viewBox="0 0 24 24" stroke="#fff" stroke-width="2"><path d="M12 2v6M12 16v6M2 12h6M16 12h6"/><circle cx="12" cy="12" r="1" fill="#fff" stroke="none"/></svg>`,
-    );
+    // dynamic crosshair: four lines whose gap follows the current weapon spread
+    this.crosshair.innerHTML = `<i class="l t"></i><i class="l b"></i><i class="l lft"></i><i class="l r"></i><i class="dot"></i>`;
+    this.crosshair.dataset.testid = 'crosshair';
     this.hitmarker.innerHTML = `<svg width="30" height="30" viewBox="0 0 30 30" stroke="currentColor" stroke-width="2.5"><path d="M4 4l7 7M26 4l-7 7M4 26l7-7M26 26l-7-7"/></svg>`;
-    this.root.append(cross, this.hitmarker, this.vignette);
+    this.hitmarker.dataset.testid = 'hitmarker';
+    this.scope.innerHTML = `<div class="scope-ring"></div><div class="scope-h"></div><div class="scope-v"></div>`;
+    this.scope.hidden = true;
+    this.root.append(this.scope, this.crosshair, this.hitmarker, this.vignette);
+    this.setCrosshairGap(6);
 
     const hp = el('div', 'panel hp');
     hp.append(el('div', 'label', 'HEALTH'));
@@ -80,16 +89,21 @@ export class Hud {
       <p>Click to play</p>
       <div class="controls">
         <kbd>WASD</kbd><span>move</span>
-        <kbd>Shift</kbd><span>sprint</span>
+        <kbd>Shift</kbd><span>sprint (forward)</span>
+        <kbd>C / Ctrl</kbd><span>crouch (hold, or toggle in settings)</span>
         <kbd>Space</kbd><span>jump</span>
         <kbd>Mouse</kbd><span>look / fire</span>
+        <kbd>Right mouse</kbd><span>aim down sights</span>
+        <kbd>Arrows / Q E</kbd><span>turn (trackpad fallback)</span>
         <kbd>R</kbd><span>reload</span>
         <kbd>1-6</kbd><span>debug: swap sample weapon</span>
         <kbd>K</kbd><span>debug: die</span>
         <kbd>F2</kbd><span>spawn editor (P = save spawn)</span>
         <kbd>F3</kbd><span>debug info</span>
-        <kbd>Esc</kbd><span>release mouse</span>
+        <kbd>Esc</kbd><span>release mouse / settings</span>
       </div>`;
+    this.settingsPanel = new SettingsPanel();
+    this.clickOverlay.append(this.settingsPanel.root);
 
     // death screen
     this.deathOverlay = el('div', 'overlay death');
@@ -202,10 +216,30 @@ export class Hud {
     this.weaponName.textContent = name;
   }
 
-  hitMarker(kill = false) {
+  hitMarker(kill = false, headshot = false) {
     this.hitmarker.classList.toggle('kill', kill);
+    this.hitmarker.classList.toggle('headshot', headshot);
+    this.hitmarker.classList.remove('show');
+    void this.hitmarker.offsetWidth; // restart the pop animation
     this.hitmarker.classList.add('show');
-    this.hitTimer = kill ? 0.3 : 0.12;
+    this.hitTimer = kill ? 0.35 : headshot ? 0.3 : 0.14;
+  }
+
+  /** crosshair arm gap in px (from the weapon's current spread); hidden while aiming */
+  setCrosshairGap(px: number) {
+    const g = Math.round(Math.min(80, Math.max(3, px)));
+    if (g === this.crossGap) return;
+    this.crossGap = g;
+    this.crosshair.style.setProperty('--gap', `${g}px`);
+  }
+
+  setCrosshairVisible(lines: boolean, dot = true) {
+    this.crosshair.classList.toggle('no-lines', !lines);
+    this.crosshair.classList.toggle('no-dot', !dot);
+  }
+
+  showScope(on: boolean) {
+    this.scope.hidden = !on;
   }
 
   damageFlash() {
@@ -213,8 +247,11 @@ export class Hud {
     this.dmgTimer = 0.15;
   }
 
-  addKill(killer: string, weapon: string, victim: string) {
-    const e = el('div', 'entry', `<b>${esc(killer)}</b><i>[${esc(weapon)}]</i>${esc(victim)}`);
+  addKill(killer: string, weapon: string, victim: string, headshot = false) {
+    const hs = headshot
+      ? `<span class="hs" data-testid="kf-headshot" title="headshot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="7" r="4.5"/><path d="M5.5 13.5h5M8 0.5v3M8 10.5v3M0.5 7h3M12.5 7h3"/></svg></span>`
+      : '';
+    const e = el('div', 'entry', `<b>${esc(killer)}</b><i>[${esc(weapon)}]</i>${hs}${esc(victim)}`);
     this.killfeed.prepend(e);
     while (this.killfeed.children.length > 5) this.killfeed.lastChild?.remove();
     setTimeout(() => e.remove(), 6000);
@@ -231,7 +268,7 @@ export class Hud {
   }
 
   update(dt: number) {
-    if (this.hitTimer > 0 && (this.hitTimer -= dt) <= 0) this.hitmarker.classList.remove('show');
+    if (!this.holdHitmarker && this.hitTimer > 0 && (this.hitTimer -= dt) <= 0) this.hitmarker.classList.remove('show');
     if (this.dmgTimer > 0 && (this.dmgTimer -= dt) <= 0) this.vignette.classList.remove('show');
   }
 }

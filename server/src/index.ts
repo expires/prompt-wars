@@ -19,6 +19,10 @@ import {
   clampWeapon,
   filterCatalogForClass,
   filterKnownParts,
+  HIT_ZONE_BODY,
+  HIT_ZONE_HEAD,
+  isPlausibleHeadHit,
+  zoneDamage,
   parseJsonObject,
   randomRawWeapon,
   splashDamageAt,
@@ -59,6 +63,8 @@ const player = table(
     dotUntil: t.timestamp(),
     dotSource: t.identity(),
     dotWeaponId: t.u64(),
+    /** Crouch state (client-authoritative, sent with update_transform); lowers the head hitbox. */
+    crouching: t.bool().default(false),
   },
 );
 
@@ -141,6 +147,8 @@ const hitEvent = table(
     knockY: t.f32(),
     knockZ: t.f32(),
     slowPercent: t.f32(),
+    /** Direct hit on the head hitbox (multiplier applied). */
+    headshot: t.bool().default(false),
   },
 );
 
@@ -286,6 +294,7 @@ function spawnPlayer(ctx: Ctx, p: PlayerRow, weaponId: bigint): PlayerRow {
     dotUntil: EPOCH,
     dotSource: p.identity,
     dotWeaponId: 0n,
+    crouching: false,
   };
 }
 
@@ -296,7 +305,7 @@ function applyDamage(
   amount: number,
   attacker: Identity,
   weaponId: bigint,
-  opts: { dot?: boolean; x?: number; y?: number; z?: number; knock?: [number, number, number]; slow?: number } = {},
+  opts: { dot?: boolean; x?: number; y?: number; z?: number; knock?: [number, number, number]; slow?: number; headshot?: boolean } = {},
 ): PlayerRow {
   if (!target.alive || amount <= 0) return target;
   const hp = Math.max(0, target.hp - amount);
@@ -334,6 +343,7 @@ function applyDamage(
     knockY: knock[1],
     knockZ: knock[2],
     slowPercent: opts.slow ?? 0,
+    headshot: !!opts.headshot,
   });
   return next;
 }
@@ -429,6 +439,7 @@ export const onConnect = spacetimedb.clientConnected(ctx => {
     dotUntil: EPOCH,
     dotSource: ctx.sender,
     dotWeaponId: 0n,
+    crouching: false,
   };
   // New players start with the preset pistol (later respawns without keepLoadout roll a random preset).
   ctx.db.player.insert(spawnPlayer(ctx, base, starterPresetId(ctx)));
@@ -450,14 +461,14 @@ export const set_name = spacetimedb.reducer({ name: t.string() }, (ctx, { name }
   ctx.db.player.identity.update({ ...p, name: clean });
 });
 
-/** Client-authoritative movement. Call ~15-20 Hz. Ignored while dead. */
+/** Client-authoritative movement + crouch state. Call ~15-20 Hz (and on crouch changes). Ignored while dead. */
 export const update_transform = spacetimedb.reducer(
-  { x: t.f32(), y: t.f32(), z: t.f32(), yaw: t.f32(), pitch: t.f32() },
-  (ctx, { x, y, z, yaw, pitch }) => {
+  { x: t.f32(), y: t.f32(), z: t.f32(), yaw: t.f32(), pitch: t.f32(), crouching: t.bool() },
+  (ctx, { x, y, z, yaw, pitch, crouching }) => {
     finite(x, y, z, yaw, pitch);
     const p = requirePlayer(ctx);
     if (!p.alive) return;
-    ctx.db.player.identity.update({ ...p, x, y, z, yaw, pitch });
+    ctx.db.player.identity.update({ ...p, x, y, z, yaw, pitch, crouching });
   },
 );
 
@@ -525,11 +536,14 @@ export const fire = spacetimedb.reducer(
 /**
  * Report that shot `seq` hit `target`. `pellets` = pellets that connected (shotguns; use 1
  * otherwise). (ix,iy,iz) = impact point (used for splash falloff; for direct hits pass the
- * hit position). Damage comes only from stored weapon stats.
+ * hit position). `zone` = hit zone (0 body, 1 head; anything else counts as body). Damage comes
+ * only from stored weapon stats: head hits apply the weapon's headshotMultiplier (capped at
+ * 150), but only if the impact point is plausibly at the target's head (stored position +
+ * crouch state); otherwise the hit is downgraded to a body hit.
  */
 export const report_hit = spacetimedb.reducer(
-  { seq: t.u32(), target: t.identity(), pellets: t.u32(), ix: t.f32(), iy: t.f32(), iz: t.f32() },
-  (ctx, { seq, target, pellets, ix, iy, iz }) => {
+  { seq: t.u32(), target: t.identity(), pellets: t.u32(), ix: t.f32(), iy: t.f32(), iz: t.f32(), zone: t.u8() },
+  (ctx, { seq, target, pellets, ix, iy, iz, zone }) => {
     finite(ix, iy, iz);
     if (target.isEqual(ctx.sender)) return;
     const shooter = requirePlayer(ctx);
@@ -552,6 +566,7 @@ export const report_hit = spacetimedb.reducer(
     const maxRange = w.range * RANGE_TOLERANCE_MULT + RANGE_TOLERANCE_ADD;
     const toVictim = dist(s.ox, s.oy, s.oz, victim.x, victim.y, victim.z);
     let damage: number;
+    let headshot = false;
     if (w.splashRadius > 0) {
       if (dist(s.ox, s.oy, s.oz, ix, iy, iz) > maxRange) return;
       const d = Math.max(0, dist(ix, iy, iz, victim.x, victim.y, victim.z) - 1.0); // 1 m latency slack
@@ -559,7 +574,12 @@ export const report_hit = spacetimedb.reducer(
     } else {
       if (toVictim > maxRange) return;
       const n = Math.max(1, Math.min(pellets, w.pellets));
-      damage = w.damage * n;
+      headshot =
+        zone === HIT_ZONE_HEAD &&
+        w.fireMode !== 'stream' &&
+        w.fireMode !== 'melee' &&
+        isPlausibleHeadHit([victim.x, victim.y, victim.z], victim.crouching, [ix, iy, iz]);
+      damage = zoneDamage(w, w.damage * n, headshot ? HIT_ZONE_HEAD : HIT_ZONE_BODY);
     }
     if (damage <= 0) return;
 
@@ -575,7 +595,7 @@ export const report_hit = spacetimedb.reducer(
       knock = [((victim.x - cx) / len) * w.knockback, ((victim.y - cy) / len) * w.knockback + w.knockback * 0.3, ((victim.z - cz) / len) * w.knockback];
     }
 
-    let v = applyDamage(ctx, victim, damage, ctx.sender, wRow.id, { x: ix, y: iy, z: iz, knock, slow: w.slowPercent });
+    let v = applyDamage(ctx, victim, damage, ctx.sender, wRow.id, { x: ix, y: iy, z: iz, knock, slow: w.slowPercent, headshot });
     if (!v.alive) return;
 
     // Status effects (refresh, don't stack).

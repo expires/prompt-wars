@@ -22,6 +22,8 @@ export interface NetPlayer {
   /** movement slow (percent, 0-60) active until slowUntil (ms since epoch) */
   slowPercent?: number;
   slowUntil?: number;
+  /** crouched (lower hitboxes, crouched model) */
+  crouching?: boolean;
 }
 
 export interface KillEvent {
@@ -31,6 +33,8 @@ export interface KillEvent {
   victimName: string;
   weaponName: string;
   at: number;
+  /** the killing blow was a headshot */
+  headshot?: boolean;
 }
 
 /** A shot fired by a remote player (for tracers / projectiles / muzzle flashes). */
@@ -50,13 +54,24 @@ export interface LocalHitEvent {
   dot: boolean;
   knock: Vec3;
   slowPercent: number;
+  headshot: boolean;
 }
 
-/** Extra info for a hit report: which shot hit, how many pellets connected, where. */
+/** Extra info for a hit report: which shot hit, how many pellets connected, where, which zone. */
 export interface HitInfo {
   seq: number;
   pellets: number;
   point: Vec3;
+  /** 0 body, 1 head (server re-validates and applies the weapon's headshot multiplier) */
+  zone: number;
+}
+
+/** Damage the server applied to someone else, from a shot by the local player. */
+export interface HitConfirmEvent {
+  targetId: string;
+  damage: number;
+  killed: boolean;
+  headshot: boolean;
 }
 
 export interface GenerateWeaponResult {
@@ -76,8 +91,8 @@ export interface NetClient {
   readonly authoritative: boolean;
   connect(): Promise<void>;
   disconnect(): void;
-  /** called at a fixed rate (~15Hz) with the local player's transform; `force` skips throttling */
-  sendTransform(pos: Vec3, yaw: number, pitch: number, force?: boolean): void;
+  /** called at a fixed rate (~15Hz) with the local player's transform + crouch state; `force` skips throttling */
+  sendTransform(pos: Vec3, yaw: number, pitch: number, crouching: boolean, force?: boolean): void;
   /** a shot was fired locally; returns the shot sequence number used by reportHit */
   fire(origin: Vec3, dir: Vec3): number;
   /** client-detected hit on another player; server validates & applies damage */
@@ -99,6 +114,8 @@ export interface NetClient {
   onShot?(cb: (e: ShotEvent) => void): () => void;
   /** damage applied to the local player */
   onLocalHit?(cb: (e: LocalHitEvent) => void): () => void;
+  /** server-confirmed damage dealt by the local player */
+  onHitConfirmed?(cb: (e: HitConfirmEvent) => void): () => void;
   /** fires when a weapon definition arrives/changes */
   onWeaponsChanged?(cb: () => void): () => void;
   /** current local player state, if known */

@@ -51,7 +51,7 @@ export class SpawnEditor {
       this.spawns.pop();
       this.persist('removed last spawn');
     }
-    if (this.input.wasPressed('KeyC')) {
+    if (this.input.wasPressed('Delete')) {
       this.spawns = [];
       this.persist('cleared spawns');
     }
@@ -66,7 +66,7 @@ export class SpawnEditor {
 
   private refreshHud() {
     this.hud.setSpawnEditor(
-      this.active ? `SPAWN EDITOR (${this.mapId}) — ${this.spawns.length} saved · P save · Backspace undo · C clear · F2 close` : null,
+      this.active ? `SPAWN EDITOR (${this.mapId}) — ${this.spawns.length} saved · P save · Backspace undo · Delete clear · F2 close` : null,
     );
   }
 

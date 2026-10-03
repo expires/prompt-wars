@@ -1,3 +1,4 @@
+import { zoneDamage } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
 import type { HitInfo, KillEvent, NetClient, NetPlayer, Vec3 } from './NetClient';
 
@@ -60,6 +61,8 @@ export class OfflineNetClient implements NetClient {
       b.pos = [b.cx + Math.cos(a) * b.r, b.pos[1], b.cz + Math.sin(a) * b.r];
       // face along the direction of travel (tangent); yaw 0 faces -Z
       b.yaw = Math.atan2(Math.sin(a), -Math.cos(a));
+      // crouch for ~1.5 s out of every 5 (exercises remote crouch + hitboxes)
+      b.crouching = (this.t + b.phase) % 5 < 1.5;
     }
     this.emitPlayers();
   }
@@ -69,7 +72,7 @@ export class OfflineNetClient implements NetClient {
     this.playersCbs.forEach((cb) => cb(snapshot));
   }
 
-  sendTransform(_pos: Vec3, _yaw: number, _pitch: number) {
+  sendTransform(_pos: Vec3, _yaw: number, _pitch: number, _crouching: boolean) {
     // nothing to send offline
   }
 
@@ -81,11 +84,20 @@ export class OfflineNetClient implements NetClient {
     const bot = this.bots.find((b) => b.id === targetId);
     if (!bot || !bot.alive) return;
     const w = this.weapons.get(weaponId);
-    bot.hp -= (w?.damage ?? 20) * Math.max(1, info?.pellets ?? 1);
+    const body = (w?.damage ?? 20) * Math.max(1, info?.pellets ?? 1);
+    bot.hp -= w ? zoneDamage(w, body, info?.zone ?? 0) : body;
     if (bot.hp <= 0) {
       bot.alive = false;
       bot.hp = 0;
-      const e: KillEvent = { killerId: this.localId, killerName: 'You', victimId: bot.id, victimName: bot.name, weaponName: w?.name ?? weaponId, at: Date.now() };
+      const e: KillEvent = {
+        killerId: this.localId,
+        killerName: 'You',
+        victimId: bot.id,
+        victimName: bot.name,
+        weaponName: w?.name ?? weaponId,
+        at: Date.now(),
+        headshot: info?.zone === 1,
+      };
       this.killCbs.forEach((cb) => cb(e));
       setTimeout(() => {
         bot.alive = true;

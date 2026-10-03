@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { PhysicsContext } from '../engine/physics';
 import { Humanoid } from '../player/humanoid';
-import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, CENTER_OFFSET } from '../player/PlayerController';
+import { CENTER_OFFSET } from '../player/PlayerController';
+import { Hitboxes } from '../player/hitboxes';
 import { buildWeaponModel } from '../weapons/buildWeaponModel';
 import type { HitTarget, TargetRegistry } from '../weapons/targets';
 import type { NetClient, NetPlayer } from './NetClient';
@@ -10,19 +11,24 @@ import type { NetClient, NetPlayer } from './NetClient';
 /** render remote players this far in the past so we always have two snapshots to blend */
 const INTERP_DELAY_MS = 100;
 const MAX_SNAPSHOTS = 30;
+/** crouch blend speed (full transition in ~0.15 s) */
+const CROUCH_RATE = 1 / 0.15;
 
 interface Snapshot {
   t: number;
   pos: THREE.Vector3;
   yaw: number;
   pitch: number;
+  crouching: boolean;
 }
 
 interface Remote {
   id: string;
   model: Humanoid;
   body: RAPIER.RigidBody;
-  collider: RAPIER.Collider;
+  hitboxes: Hitboxes;
+  /** 0 standing .. 1 crouched (smoothed) */
+  crouchT: number;
   snaps: Snapshot[];
   state: NetPlayer;
   weaponId?: string;
@@ -42,9 +48,9 @@ function lerpAngle(a: number, b: number, t: number) {
 }
 
 /**
- * Renders remote players from NetClient snapshots with interpolation, and
- * gives each a kinematic capsule collider so local hitscan can hit them
- * (hits are reported to the server, which is authoritative).
+ * Renders remote players from NetClient snapshots with interpolation, and gives each kinematic
+ * head + body hitboxes (lowered while crouched) so local hitscan can hit them; hits are
+ * reported with their zone to the server, which is authoritative.
  */
 export class RemotePlayers {
   private remotes = new Map<string, Remote>();
@@ -69,21 +75,39 @@ export class RemotePlayers {
     return [...this.remotes.keys()];
   }
 
-  get(id: string): { state: NetPlayer; position: THREE.Vector3; visible: boolean; hasWeaponModel: boolean } | undefined {
+  get(id: string):
+    | { state: NetPlayer; position: THREE.Vector3; visible: boolean; hasWeaponModel: boolean; crouchT: number; head: THREE.Vector3 }
+    | undefined {
     const r = this.remotes.get(id);
     if (!r) return undefined;
-    return { state: r.state, position: r.model.root.position.clone(), visible: r.model.root.visible, hasWeaponModel: r.model.hand.children.length > 0 };
+    return {
+      state: r.state,
+      position: r.model.root.position.clone(),
+      visible: r.model.root.visible,
+      hasWeaponModel: r.model.hand.children.length > 0,
+      crouchT: r.crouchT,
+      head: this.headOf(id)!,
+    };
   }
 
-  colliderOf(id: string): RAPIER.Collider | undefined {
-    return this.remotes.get(id)?.collider;
+  /** colliders of a remote player (shot raycasts exclude the shooter's own hitboxes) */
+  collidersOf(id: string): RAPIER.Collider[] {
+    const r = this.remotes.get(id);
+    return r ? [r.hitboxes.body, r.hitboxes.head] : [];
   }
 
   /** interpolated body centre (for aiming) */
   centerOf(id: string, out = new THREE.Vector3()): THREE.Vector3 | undefined {
     const r = this.remotes.get(id);
     if (!r) return undefined;
-    return out.copy(r.model.root.position).setY(r.model.root.position.y + CENTER_OFFSET);
+    return out.copy(r.model.root.position).setY(r.model.root.position.y + CENTER_OFFSET - 0.3 * r.crouchT);
+  }
+
+  /** interpolated head-hitbox centre (for aiming / tests) */
+  headOf(id: string, out = new THREE.Vector3()): THREE.Vector3 | undefined {
+    const r = this.remotes.get(id);
+    if (!r) return undefined;
+    return out.copy(r.model.root.position).setY(r.model.root.position.y + Hitboxes.headHeight(r.crouchT));
   }
 
   private applySnapshot(players: NetPlayer[]) {
@@ -95,10 +119,10 @@ export class RemotePlayers {
       let r = this.remotes.get(p.id);
       if (!r) r = this.create(p);
       r.state = p;
-      r.snaps.push({ t: now, pos: new THREE.Vector3(...p.pos), yaw: p.yaw, pitch: p.pitch });
+      r.snaps.push({ t: now, pos: new THREE.Vector3(...p.pos), yaw: p.yaw, pitch: p.pitch, crouching: !!p.crouching });
       if (r.snaps.length > MAX_SNAPSHOTS) r.snaps.shift();
       r.model.root.visible = p.alive;
-      r.collider.setEnabled(p.alive);
+      r.hitboxes.setEnabled(p.alive);
       if (p.color) r.model.setColor(p.color);
       if (p.weaponId !== r.weaponId || r.modelWeaponId !== (p.weaponId ?? '')) this.setWeapon(r, p.weaponId);
       const tag = `${p.name}  ${Math.max(0, Math.round(p.hp))}`;
@@ -114,10 +138,8 @@ export class RemotePlayers {
     const { RAPIER, world } = this.physics;
     const model = new Humanoid(p.color ?? 0xd04040);
     this.scene.add(model.root);
-    const body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(p.pos[0], p.pos[1] + CENTER_OFFSET, p.pos[2]),
-    );
-    const collider = world.createCollider(RAPIER.ColliderDesc.capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS), body);
+    // body origin = feet; hitboxes are offset from it
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(p.pos[0], p.pos[1], p.pos[2]));
     const nameTag = createNameTag();
     nameTag.position.set(0, 2.15, 0);
     model.root.add(nameTag);
@@ -126,7 +148,8 @@ export class RemotePlayers {
       id: p.id,
       model,
       body,
-      collider,
+      hitboxes: undefined as unknown as Hitboxes,
+      crouchT: p.crouching ? 1 : 0,
       snaps: [],
       state: p,
       modelWeaponId: '',
@@ -136,7 +159,7 @@ export class RemotePlayers {
       target: {
         id: p.id,
         kind: 'player',
-        getCenter: (out) => out.copy(model.root.position).setY(model.root.position.y + CENTER_OFFSET),
+        getCenter: (out) => out.copy(model.root.position).setY(model.root.position.y + CENTER_OFFSET - 0.3 * r.crouchT),
         alive: () => r.state.alive,
         applyDamage: (_amount, weaponId, info) => {
           this.net.reportHit(p.id, weaponId, info);
@@ -144,7 +167,7 @@ export class RemotePlayers {
         },
       },
     };
-    this.targets.add(collider, r.target);
+    r.hitboxes = new Hitboxes(this.physics, body, this.targets, r.target);
     this.remotes.set(p.id, r);
     return r;
   }
@@ -163,7 +186,7 @@ export class RemotePlayers {
   private removeRemote(id: string) {
     const r = this.remotes.get(id);
     if (!r) return;
-    this.targets.remove(r.collider);
+    r.hitboxes.dispose();
     this.physics.world.removeRigidBody(r.body);
     this.scene.remove(r.model.root);
     (r.nameTag.material as THREE.SpriteMaterial).map?.dispose();
@@ -178,7 +201,7 @@ export class RemotePlayers {
     for (const r of this.remotes.values()) {
       const s = r.snaps;
       if (!s.length) continue;
-      let pos: THREE.Vector3, yaw: number, pitch: number;
+      let pos: THREE.Vector3, yaw: number, pitch: number, crouching: boolean;
       // find the pair surrounding renderT
       let i = s.length - 1;
       while (i > 0 && s[i - 1].t > renderT) i--;
@@ -187,20 +210,28 @@ export class RemotePlayers {
         pos = last.pos;
         yaw = last.yaw;
         pitch = last.pitch;
+        crouching = last.crouching;
       } else {
         const a = s[i - 1], b = s[i];
         const t = THREE.MathUtils.clamp((renderT - a.t) / Math.max(1, b.t - a.t), 0, 1);
         pos = a.pos.clone().lerp(b.pos, t);
         yaw = lerpAngle(a.yaw, b.yaw, t);
         pitch = THREE.MathUtils.lerp(a.pitch, b.pitch, t);
+        crouching = a.crouching;
       }
+      // crouch: ease toward the (delayed) snapshot state; model + hitboxes follow the same blend
+      const ct = crouching ? 1 : 0;
+      r.crouchT = ct > r.crouchT ? Math.min(ct, r.crouchT + dt * CROUCH_RATE) : Math.max(ct, r.crouchT - dt * CROUCH_RATE);
+      r.model.setCrouch(r.crouchT);
+      r.hitboxes.setCrouch(r.crouchT);
+      r.nameTag.position.y = 2.15 - 0.6 * r.crouchT;
       r.model.root.position.copy(pos);
       r.model.root.rotation.y = yaw;
       r.model.setPitch(pitch);
       const speed = dt > 0 ? Math.hypot(pos.x - r.lastPos.x, pos.z - r.lastPos.z) / dt : 0;
       r.model.animate(dt, speed);
       r.lastPos.copy(pos);
-      r.body.setNextKinematicTranslation({ x: pos.x, y: pos.y + CENTER_OFFSET, z: pos.z });
+      r.body.setNextKinematicTranslation({ x: pos.x, y: pos.y, z: pos.z });
     }
   }
 

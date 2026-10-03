@@ -17,4 +17,5 @@ export default {
   ix: __t.f32(),
   iy: __t.f32(),
   iz: __t.f32(),
+  zone: __t.u8(),
 };

@@ -102,7 +102,7 @@ Reply with ONE JSON object and nothing else (no markdown fences). Shape:
   "reloadTime": number (s), "range": number (m), "spread": number (deg),
   "projectileSpeed": number (m/s, 0 for hitscan/stream/melee), "splashRadius": number (m),
   "gravityScale": number, "fuseTime": number (s), "dotDamage": number (total), "dotDuration": number (s),
-  "knockback": number, "slowPercent": number, "chargeTime": number (s),
+  "knockback": number, "slowPercent": number, "chargeTime": number (s), "headshotMultiplier": number (1-3),
   "colors": { "primary": "#rrggbb", "secondary": "#rrggbb", "accent": "#rrggbb" },
   "parts": [ { "partId": string from the catalog, "scale"?: number | [x,y,z], "color"?: "#rrggbb", "offset"?: [x,y,z] } ]
 }

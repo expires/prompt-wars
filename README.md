@@ -75,6 +75,13 @@ bounds, max 95 damage per shot (direct + DoT, so no one-shots from 100 HP), shot
 limited to 0.8/s, sustained DPS budget 55 (melee 80 at <= 3 m, streams up to 70 at short range),
 with splash / slow / knockback costing budget. Tests: `pnpm --filter @ai-gaem/shared test`.
 
+Headshots: every weapon has a `headshotMultiplier` in [1, 3] (class bounds: default 2, sniper 2.5
+(2-3), SMG/LMG 1.75, blowgun 1.5, shotgun 1 (max 1.25); forced to 1 for streams and anything with
+splash). Head damage per shot = min(body * multiplier, 150) (`zoneDamage`), so body shots stay
+<= 95 while a sniper headshot one-taps. The server only honours `zone = head` if the impact point is
+within the target's head height (stored feet position + `crouching`, +-0.35 m vertical / 1.5 m
+horizontal slack for interpolation delay, `isPlausibleHeadHit`); otherwise it's a body hit.
+
 ## Client
 
 Vite + TypeScript + Three.js + Rapier (`@dimforge/rapier3d-compat`) in `client/`.
@@ -107,9 +114,11 @@ keeps your identity). Multiplayer always uses the procedural TEST MAP; you spawn
 spawn point.
 
 How it plays: movement is client-authoritative (`update_transform` at 15 Hz); every shot calls
-`fire(seq, origin, dir)` and every local raycast hit on a remote player's capsule calls
-`report_hit(seq, target, pellets, impact)` — the server validates cooldown / ammo / range against
-the stored weapon and applies damage. HP, death, kills/deaths, slow and knockback come from the
+`fire(seq, origin, dir)` and every local raycast hit on a remote player's hitboxes (head sphere +
+body capsule, lowered while crouched) calls `report_hit(seq, target, pellets, impact, zone)` — the
+server validates cooldown / ammo / range (and head plausibility) against the stored weapon and
+applies damage. `update_transform` also carries `crouching` (sent immediately on change), stored on
+the `player` row; `hit_event.headshot` drives the kill-feed headshot icon. HP, death, kills/deaths, slow and knockback come from the
 `player` row and `hit_event`; other players' shots are drawn from `shot_event`; the kill feed comes
 from `hit_event.killed`. Remote players are interpolated humanoids (100 ms delay) with name tags
 and HP bars, hidden while dead. On death: **Keep loadout** waits for `respawnAt` and calls
@@ -125,8 +134,9 @@ pnpm e2e:maincloud       # smoke test (a) against Maincloud (publish there first
 ```
 
 Tests live in `client/e2e/` (two browser contexts, headless Chromium with SwiftShader WebGL) and
-drive the game through `window.__game` (`getState()`, `teleport`, `aimAt(id)`, `lookAt`,
-`fireOnce`, `reload`) instead of mouse look:
+drive the game through `window.__game` (`getState()`, `teleport`, `aimAt(id)`, `aimAtHead(id)`,
+`lookAt`, `fireOnce`, `reload`, `setCrouch`, `setAds`, `setPerfectAim`, `reportHitRaw`,
+`holdHitmarker`) instead of mouse look:
 
 - **a** both players see each other; moving A is reflected on B (`@smoke`)
 - **b** A kills B with the pistol: HP drops by exactly the server's per-shot damage, kill feed on
@@ -136,6 +146,12 @@ drive the game through `window.__game` (`getState()`, `teleport`, `aimAt(id)`, `
   with a multi-mesh viewmodel built from library parts, also visible in B's hand on A's screen
 - **d** firing 10 shots in 450 ms (local cooldown bypassed) only lands what the server's fire-rate
   check allows
+- **e** headshots: a client-raycast head hit does `damage * headshotMultiplier`, a body hit plain
+  damage, a forged head hit at the feet (`reportHitRaw`) is downgraded to body damage; the headshot
+  kill shows the kill-feed headshot icon on both screens (gold hitmarker screenshot)
+- **f** crouch: B's crouch replicates (server row + A renders B crouched, head hitbox lowered);
+  forged standing-height head hit on a crouched B = body damage, a real crouched headshot counts;
+  standing up replicates; ADS zooms the FOV and tightens spread (screenshot)
 
 Screenshots of every step go to `client/e2e/screenshots/` (`maincloud-*` for the smoke run). The
 Playwright config uses Playwright's Chromium if installed (`npx playwright install chromium`),
@@ -162,16 +178,25 @@ URL params:
 | Key | Action |
 | --- | --- |
 | Click | lock mouse / play |
-| WASD | move |
-| Shift | sprint |
-| Space | jump |
+| WASD | move (Source-style accel + friction: walk 4.5 m/s) |
+| Shift | sprint, forward only (6.5 m/s, +6° FOV; firing cancels it) |
+| C / Ctrl | crouch (hold, or toggle in settings): 2.2 m/s, 1.2 m tall, tighter spread; crouch in the air to tuck your legs (crouch-jump) |
+| Space | jump (1.1 m, 100 ms coyote time + 100 ms buffer) |
 | Mouse / LMB | look / fire (hold for auto) |
+| RMB | aim down sights (hold or toggle): ~0.75x FOV (sniper 0.4x scope), centred viewmodel, less spread, 62% move speed |
+| Arrows / Q E | keyboard turning (trackpad / palm-rejection fallback; speed in settings) |
 | R | reload |
 | 1-6 | debug (offline only): swap sample weapon (rifle, shotgun, rocket, grenade arc, flamethrower stream, sword) |
 | K | debug (offline only): kill yourself (death screen) |
-| F2 | spawn editor: **P** save current position as spawn, **Backspace** undo, **C** clear |
+| F2 | spawn editor: **P** save current position as spawn, **Backspace** undo, **Delete** clear |
 | F3 | debug overlay (fps, position, grounded) |
-| Esc | release mouse |
+| Esc | release mouse; the pause screen has a **Settings** panel (sensitivity, ADS sensitivity, FOV, key-turn speed, volume, toggle crouch / aim, invert Y, head bob; saved in `localStorage` `ai-gaem.settings`) |
+
+Feel: spread per weapon class (`src/weapons/handling.ts`): base spread x ADS / crouch / movement /
+airborne multipliers + per-shot bloom that recovers over time; recoil is a CS-style aim punch with
+spring recovery (`src/player/CameraRig.ts`, which also does speed-scaled head bob, landing dip and
+FOV). Procedural WebAudio sounds (`src/audio/Sfx.ts`): gunshots by class (remote ones panned and
+attenuated), hit tick, headshot ding, kill chime, footsteps, jump / land, reload.
 
 Spawn points saved with the editor go to `localStorage` (`ai-gaem.spawns.<mapId>`) and are logged
 as JSON in the console so they can be pasted into code / the server.

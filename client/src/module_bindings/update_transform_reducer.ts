@@ -16,4 +16,5 @@ export default {
   z: __t.f32(),
   yaw: __t.f32(),
   pitch: __t.f32(),
+  crouching: __t.bool(),
 };

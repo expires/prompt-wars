@@ -31,6 +31,7 @@ export const NUMERIC_STATS = [
   'knockback',
   'slowPercent',
   'chargeTime',
+  'headshotMultiplier',
 ] as const;
 export type NumericStat = (typeof NUMERIC_STATS)[number];
 export type StatBounds = Record<NumericStat, [number, number]>;
@@ -74,7 +75,11 @@ export const GLOBAL_BOUNDS: StatBounds = {
   knockback: [0, 20],
   slowPercent: [0, 60],
   chargeTime: [0, 2],
+  headshotMultiplier: [1, 3],
 };
+
+/** Default head damage multiplier; per-class overrides below (sniper higher, shotguns / explosives 1). */
+export const DEFAULT_HEADSHOT_MULTIPLIER = 2;
 
 const ZERO_EXTRAS = {
   projectileSpeed: 0,
@@ -114,54 +119,54 @@ function tpl(
     class: cls,
     modes,
     blurb,
-    defaults: { pellets: 1, ...ZERO_EXTRAS, ...defaults },
+    defaults: { pellets: 1, ...ZERO_EXTRAS, headshotMultiplier: DEFAULT_HEADSHOT_MULTIPLIER, ...defaults },
     bounds,
   };
 }
 
 export const CLASS_TEMPLATES: Record<WeaponClass, ClassTemplate> = {
   pistol: tpl('pistol', ['hitscan', 'projectile'], 'Sidearm: accurate, mid damage, quick reload.',
-    { damage: 20, fireRate: 3, magSize: 12, reloadTime: 1.2, range: 35, spread: 1.5 },
-    { damage: [10, 45], pellets: [1, 2], fireRate: [1, 6], magSize: [5, 20], reloadTime: [0.8, 2], range: [20, 50], spread: [0.5, 4], projectileSpeed: [0, 120], splashRadius: [0, 1] }),
+    { damage: 20, fireRate: 3, magSize: 12, reloadTime: 1.2, range: 35, spread: 1.5, headshotMultiplier: 2 },
+    { damage: [10, 45], pellets: [1, 2], fireRate: [1, 6], magSize: [5, 20], reloadTime: [0.8, 2], range: [20, 50], spread: [0.5, 4], projectileSpeed: [0, 120], splashRadius: [0, 1], headshotMultiplier: [1.5, 2.5] }),
   smg: tpl('smg', ['hitscan'], 'Fast-firing, low damage, short range, high spread.',
-    { damage: 8, fireRate: 12, magSize: 30, reloadTime: 2, range: 25, spread: 3.5 },
-    { damage: [5, 18], pellets: [1, 1], fireRate: [8, 18], magSize: [20, 50], reloadTime: [1.2, 3], range: [15, 35], spread: [2, 6], splashRadius: [0, 0] }),
+    { damage: 8, fireRate: 12, magSize: 30, reloadTime: 2, range: 25, spread: 3.5, headshotMultiplier: 1.75 },
+    { damage: [5, 18], pellets: [1, 1], fireRate: [8, 18], magSize: [20, 50], reloadTime: [1.2, 3], range: [15, 35], spread: [2, 6], splashRadius: [0, 0], headshotMultiplier: [1.25, 2] }),
   rifle: tpl('rifle', ['hitscan'], 'Automatic or burst rifle: all-rounder, long range.',
-    { damage: 12, fireRate: 10, magSize: 20, reloadTime: 2.4, range: 70, spread: 1.2 },
-    { damage: [8, 35], pellets: [1, 1], fireRate: [3, 12], magSize: [10, 40], reloadTime: [1.5, 3.5], range: [40, 90], spread: [0.5, 3], splashRadius: [0, 0] }),
+    { damage: 12, fireRate: 10, magSize: 20, reloadTime: 2.4, range: 70, spread: 1.2, headshotMultiplier: 2 },
+    { damage: [8, 35], pellets: [1, 1], fireRate: [3, 12], magSize: [10, 40], reloadTime: [1.5, 3.5], range: [40, 90], spread: [0.5, 3], splashRadius: [0, 0], headshotMultiplier: [1.5, 2.5] }),
   shotgun: tpl('shotgun', ['hitscan', 'projectile'], 'Many pellets, wide spread, devastating up close.',
-    { damage: 8, pellets: 8, fireRate: 0.8, magSize: 6, reloadTime: 2.5, range: 15, spread: 7, knockback: 4 },
-    { damage: [3, 14], pellets: [4, 12], fireRate: [0.5, 3], magSize: [2, 10], reloadTime: [1.5, 3.5], range: [8, 25], spread: [4, 14], projectileSpeed: [0, 90], splashRadius: [0, 0] }),
+    { damage: 8, pellets: 8, fireRate: 0.8, magSize: 6, reloadTime: 2.5, range: 15, spread: 7, knockback: 4, headshotMultiplier: 1 },
+    { damage: [3, 14], pellets: [4, 12], fireRate: [0.5, 3], magSize: [2, 10], reloadTime: [1.5, 3.5], range: [8, 25], spread: [4, 14], projectileSpeed: [0, 90], splashRadius: [0, 0], headshotMultiplier: [1, 1.25] }),
   sniper: tpl('sniper', ['hitscan'], 'Huge single shots, slow, very long range, optional charge.',
-    { damage: 80, fireRate: 0.6, magSize: 5, reloadTime: 3, range: 150, spread: 0.1 },
-    { damage: [50, 95], pellets: [1, 1], fireRate: [0.3, 0.8], magSize: [1, 6], reloadTime: [2, 4], range: [80, 200], spread: [0, 1], splashRadius: [0, 0], chargeTime: [0, 1.5] }),
+    { damage: 80, fireRate: 0.6, magSize: 5, reloadTime: 3, range: 150, spread: 0.1, headshotMultiplier: 2.5 },
+    { damage: [50, 95], pellets: [1, 1], fireRate: [0.3, 0.8], magSize: [1, 6], reloadTime: [2, 4], range: [80, 200], spread: [0, 1], splashRadius: [0, 0], chargeTime: [0, 1.5], headshotMultiplier: [2, 3] }),
   lmg: tpl('lmg', ['hitscan'], 'Huge magazine, long reload, sustained suppressing fire.',
-    { damage: 8, fireRate: 9, magSize: 100, reloadTime: 4.5, range: 50, spread: 3.5 },
-    { damage: [6, 20], pellets: [1, 1], fireRate: [6, 14], magSize: [50, 150], reloadTime: [3.5, 6], range: [35, 70], spread: [2, 6], splashRadius: [0, 0] }),
+    { damage: 8, fireRate: 9, magSize: 100, reloadTime: 4.5, range: 50, spread: 3.5, headshotMultiplier: 1.75 },
+    { damage: [6, 20], pellets: [1, 1], fireRate: [6, 14], magSize: [50, 150], reloadTime: [3.5, 6], range: [35, 70], spread: [2, 6], splashRadius: [0, 0], headshotMultiplier: [1.25, 2] }),
   rocket_launcher: tpl('rocket_launcher', ['projectile'], 'Slow straight rockets with splash damage and knockback.',
-    { damage: 90, fireRate: 0.6, magSize: 1, reloadTime: 2, range: 100, spread: 0.5, projectileSpeed: 30, splashRadius: 4, knockback: 8 },
-    { damage: [50, 95], pellets: [1, 1], fireRate: [0.3, 0.8], magSize: [1, 4], reloadTime: [1.5, 4], range: [60, 150], spread: [0, 2], projectileSpeed: [15, 50], splashRadius: [2, 6], gravityScale: [0, 0.3] }),
+    { damage: 90, fireRate: 0.6, magSize: 1, reloadTime: 2, range: 100, spread: 0.5, projectileSpeed: 30, splashRadius: 4, knockback: 8, headshotMultiplier: 1 },
+    { damage: [50, 95], pellets: [1, 1], fireRate: [0.3, 0.8], magSize: [1, 4], reloadTime: [1.5, 4], range: [60, 150], spread: [0, 2], projectileSpeed: [15, 50], splashRadius: [2, 6], gravityScale: [0, 0.3], headshotMultiplier: [1, 1] }),
   grenade_launcher: tpl('grenade_launcher', ['arc'], 'Lobbed bouncing grenades with a fuse and splash.',
-    { damage: 70, fireRate: 0.8, magSize: 6, reloadTime: 3, range: 50, spread: 1, projectileSpeed: 22, splashRadius: 3.5, gravityScale: 1, fuseTime: 1.5, knockback: 6 },
-    { damage: [35, 90], pellets: [1, 1], fireRate: [0.5, 1.5], magSize: [2, 8], reloadTime: [2.5, 4], range: [25, 60], spread: [0, 3], projectileSpeed: [12, 35], splashRadius: [2.5, 5], gravityScale: [0.6, 1.5], fuseTime: [0, 3] }),
+    { damage: 70, fireRate: 0.8, magSize: 6, reloadTime: 3, range: 50, spread: 1, projectileSpeed: 22, splashRadius: 3.5, gravityScale: 1, fuseTime: 1.5, knockback: 6, headshotMultiplier: 1 },
+    { damage: [35, 90], pellets: [1, 1], fireRate: [0.5, 1.5], magSize: [2, 8], reloadTime: [2.5, 4], range: [25, 60], spread: [0, 3], projectileSpeed: [12, 35], splashRadius: [2.5, 5], gravityScale: [0.6, 1.5], fuseTime: [0, 3], headshotMultiplier: [1, 1] }),
   flamethrower: tpl('flamethrower', ['stream'], 'Short-range cone of fire; burns (DoT).',
-    { damage: 4, fireRate: 15, magSize: 150, reloadTime: 3, range: 7, spread: 18, dotDamage: 10, dotDuration: 2 },
-    { damage: [2, 8], pellets: [1, 1], fireRate: [10, 20], magSize: [60, 300], reloadTime: [2, 4], range: [4, 10], spread: [10, 30], dotDamage: [0, 25], dotDuration: [1, 4] }),
+    { damage: 4, fireRate: 15, magSize: 150, reloadTime: 3, range: 7, spread: 18, dotDamage: 10, dotDuration: 2, headshotMultiplier: 1 },
+    { damage: [2, 8], pellets: [1, 1], fireRate: [10, 20], magSize: [60, 300], reloadTime: [2, 4], range: [4, 10], spread: [10, 30], dotDamage: [0, 25], dotDuration: [1, 4], headshotMultiplier: [1, 1] }),
   bubble_gun: tpl('bubble_gun', ['stream', 'projectile'], 'Silly bubbles that slow and push targets, low damage.',
-    { damage: 2, fireRate: 10, magSize: 100, reloadTime: 2, range: 10, spread: 12, slowPercent: 40, knockback: 3 },
-    { damage: [1, 8], pellets: [1, 4], fireRate: [4, 15], magSize: [20, 200], reloadTime: [1.5, 3.5], range: [6, 12], spread: [4, 25], projectileSpeed: [0, 15], splashRadius: [0, 1.5], slowPercent: [15, 60], knockback: [0, 8] }),
+    { damage: 2, fireRate: 10, magSize: 100, reloadTime: 2, range: 10, spread: 12, slowPercent: 40, knockback: 3, headshotMultiplier: 1 },
+    { damage: [1, 8], pellets: [1, 4], fireRate: [4, 15], magSize: [20, 200], reloadTime: [1.5, 3.5], range: [6, 12], spread: [4, 25], projectileSpeed: [0, 15], splashRadius: [0, 1.5], slowPercent: [15, 60], knockback: [0, 8], headshotMultiplier: [1, 1] }),
   blowgun: tpl('blowgun', ['projectile'], 'Quiet poison darts: small hit, heavy poison DoT.',
-    { damage: 15, fireRate: 1.2, magSize: 1, reloadTime: 1, range: 40, spread: 0.3, projectileSpeed: 45, gravityScale: 0.3, dotDamage: 40, dotDuration: 4 },
-    { damage: [5, 30], pellets: [1, 1], fireRate: [0.8, 2], magSize: [1, 5], reloadTime: [0.8, 2], range: [25, 60], spread: [0, 1.5], projectileSpeed: [30, 70], gravityScale: [0.1, 0.6], dotDamage: [10, 60], dotDuration: [2, 6], splashRadius: [0, 0] }),
+    { damage: 15, fireRate: 1.2, magSize: 1, reloadTime: 1, range: 40, spread: 0.3, projectileSpeed: 45, gravityScale: 0.3, dotDamage: 40, dotDuration: 4, headshotMultiplier: 1.5 },
+    { damage: [5, 30], pellets: [1, 1], fireRate: [0.8, 2], magSize: [1, 5], reloadTime: [0.8, 2], range: [25, 60], spread: [0, 1.5], projectileSpeed: [30, 70], gravityScale: [0.1, 0.6], dotDamage: [10, 60], dotDuration: [2, 6], splashRadius: [0, 0], headshotMultiplier: [1, 2] }),
   crossbow: tpl('crossbow', ['projectile'], 'Heavy bolts with slight drop and a draw (charge) time.',
-    { damage: 75, fireRate: 0.7, magSize: 1, reloadTime: 1.5, range: 80, spread: 0.2, projectileSpeed: 80, gravityScale: 0.25, chargeTime: 0.5, knockback: 5 },
-    { damage: [40, 95], pellets: [1, 3], fireRate: [0.4, 1], magSize: [1, 5], reloadTime: [1, 2.5], range: [50, 120], spread: [0, 1], projectileSpeed: [50, 110], gravityScale: [0.1, 0.5], chargeTime: [0, 1.2], knockback: [0, 6], splashRadius: [0, 0] }),
+    { damage: 75, fireRate: 0.7, magSize: 1, reloadTime: 1.5, range: 80, spread: 0.2, projectileSpeed: 80, gravityScale: 0.25, chargeTime: 0.5, knockback: 5, headshotMultiplier: 2 },
+    { damage: [40, 95], pellets: [1, 3], fireRate: [0.4, 1], magSize: [1, 5], reloadTime: [1, 2.5], range: [50, 120], spread: [0, 1], projectileSpeed: [50, 110], gravityScale: [0.1, 0.5], chargeTime: [0, 1.2], knockback: [0, 6], splashRadius: [0, 0], headshotMultiplier: [1.5, 2.5] }),
   melee: tpl('melee', ['melee'], 'Close-range swing (<= 3 m). Highest DPS, no ammo.',
-    { damage: 45, fireRate: 1.5, magSize: 1, reloadTime: 0, range: 2.5, spread: 70, knockback: 5 },
-    { damage: [20, 80], pellets: [1, 1], fireRate: [0.5, 2.5], magSize: [1, 1], reloadTime: [0, 0], range: [1.5, 3], spread: [20, 140], knockback: [0, 12] }),
+    { damage: 45, fireRate: 1.5, magSize: 1, reloadTime: 0, range: 2.5, spread: 70, knockback: 5, headshotMultiplier: 1 },
+    { damage: [20, 80], pellets: [1, 1], fireRate: [0.5, 2.5], magSize: [1, 1], reloadTime: [0, 0], range: [1.5, 3], spread: [20, 140], knockback: [0, 12], headshotMultiplier: [1, 1.5] }),
   weird: tpl('weird', ['projectile', 'hitscan', 'arc', 'stream', 'melee'], 'Anything goes; balance budget still applies.',
-    { damage: 15, pellets: 3, fireRate: 1.5, magSize: 5, reloadTime: 2.5, range: 40, spread: 6, projectileSpeed: 25, gravityScale: 0.5, splashRadius: 1.5, knockback: 10, slowPercent: 20 },
-    {}),
+    { damage: 15, pellets: 3, fireRate: 1.5, magSize: 5, reloadTime: 2.5, range: 40, spread: 6, projectileSpeed: 25, gravityScale: 0.5, splashRadius: 1.5, knockback: 10, slowPercent: 20, headshotMultiplier: 1.5 },
+    { headshotMultiplier: [1, 2.5] }),
 };
 
 // ---------------------------------------------------------------------------
@@ -365,6 +370,7 @@ export function boundsFor(cls: WeaponClass, mode: FireMode): StatBounds {
       set('chargeTime', 0, 0);
       set('splashRadius', 0, 0);
       set('pellets', 1, 1);
+      set('headshotMultiplier', 1, 1);
       b.range = [Math.min(b.range[0], STREAM_MAX_RANGE), Math.min(b.range[1], STREAM_MAX_RANGE)];
       break;
     case 'melee':
@@ -392,7 +398,9 @@ export function boundsFor(cls: WeaponClass, mode: FireMode): StatBounds {
  * 2. Fill missing stats from the class template and clamp to class + mode bounds.
  * 3. Per-shot damage (direct + DoT) capped at 95 so nothing one-shots from 100 HP.
  * 4. Shots doing more than 60 are limited to 0.8 shots/s.
- * 5. Sustained effective DPS must fit the budget (55; melee 80; streams up to 70 at short range).
+ * 5. Headshot multiplier in [1, 3] (class bounds; 1 for streams and splash weapons). Head damage
+ *    per shot is capped at MAX_HEADSHOT_DAMAGE (150) by `zoneDamage`; body shots stay <= 95.
+ * 6. Sustained effective DPS must fit the budget (55; melee 80; streams up to 70 at short range).
  *    Over-budget weapons scale damage and fire rate down proportionally.
  */
 export function clampWeapon(input: RawWeapon | Weapon | unknown): Weapon {
@@ -422,6 +430,8 @@ export function clampWeapon(input: RawWeapon | Weapon | unknown): Weapon {
   v.fuseTime = roundTo(v.fuseTime, 0.05);
   v.knockback = floorTo(v.knockback, 0.5);
   v.slowPercent = Math.floor(v.slowPercent);
+  // Explosives: splash already rewards near misses, so no headshot bonus.
+  v.headshotMultiplier = v.splashRadius > 0 ? 1 : roundTo(v.headshotMultiplier, 0.05);
   if (v.dotDamage > 0) v.dotDuration = clamp(Math.max(v.dotDuration, 0.5), 0.5, b.dotDuration[1] || 8);
   else v.dotDuration = 0;
 

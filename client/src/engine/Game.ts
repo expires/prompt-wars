@@ -7,7 +7,10 @@ import { createTestMap } from '../map/testMap';
 import { findGroundSpawns, loadMap } from '../map/loadMap';
 import type { GameMap, Vec3 } from '../map/types';
 import { getSpawnPoints, pickRandomSpawn, type SpawnPoint } from '../map/spawns';
-import { PlayerController, EYE_HEIGHT } from '../player/PlayerController';
+import { PlayerController } from '../player/PlayerController';
+import { CameraRig } from '../player/CameraRig';
+import { Sfx } from '../audio/Sfx';
+import { settings } from '../settings';
 import { TargetDummies } from '../player/TargetDummies';
 import { TargetRegistry } from '../weapons/targets';
 import { WeaponSystem } from '../weapons/WeaponSystem';
@@ -66,6 +69,14 @@ export class Game {
   dummies?: TargetDummies;
   spawnEditor!: SpawnEditor;
   readonly targets = new TargetRegistry();
+  readonly rig = new CameraRig();
+  readonly sfx = new Sfx();
+  /** 0..1 ADS blend */
+  ads = 0;
+  /** test hook / scripted override for ADS (null = right mouse) */
+  forceAds: boolean | null = null;
+  private adsToggled = false;
+  private lastCrouchSent = false;
 
   hp = MAX_HP;
   alive = true;
@@ -103,6 +114,13 @@ export class Game {
     const spawn = pickRandomSpawn(this.spawnPoints());
     this.player = new PlayerController(this.physics, this.input, new THREE.Vector3(...spawn.pos));
     this.player.yaw = spawn.yaw;
+    this.player.onJump = () => this.sfx.jump();
+    this.player.onLand = (v) => {
+      this.rig.land(v);
+      this.sfx.land(v);
+    };
+    this.rig.onStep = (speed) => this.sfx.footstep(speed, this.player.crouched);
+    this.sfx.setListener(this.rc.camera);
     this.lastSpawn.set(...spawn.pos);
 
     this.net = opts.net ?? new OfflineNetClient({ bots: opts.bots ?? 0, botCenter: [0, 0, 0] });
@@ -115,7 +133,7 @@ export class Game {
           ? [[0, 0, -8], [4, 0, -10], [-6, 0, -12], [16, 3, -22], [-20, 2, 12], [10, 0, 18]]
           : this.map.spawns.slice(0, 3).map((s) => [s[0] + 2, s[1], s[2] + 2] as Vec3);
       this.dummies = new TargetDummies(this.physics, this.rc.scene, this.targets, dummyPos);
-      this.dummies.onKilled = (d) => this.hud.addKill('You', this.weapons.weapon.name, d.id);
+      this.dummies.onKilled = (d) => this.hud.addKill('You', this.weapons.weapon.name, d.id, this.lastHitHead);
     }
 
     // ---- weapons ----
@@ -128,10 +146,23 @@ export class Game {
       this.targets,
       this.player.collider,
       {
-        onHit: (_t, _dmg, killed) => this.hud.hitMarker(killed),
+        onHit: (_t, _dmg, killed, zone) => {
+          const head = zone === 1;
+          this.lastHitHead = head;
+          this.hud.hitMarker(killed, head);
+          if (head) this.sfx.headshotDing();
+          else this.sfx.hitTick();
+          if (killed) this.sfx.killChime();
+        },
         onAmmoChanged: (a, m, r) => this.hud.setAmmo(a, m, r),
         onShot: (o, d) => this.net.fire([o.x, o.y, o.z], [d.x, d.y, d.z]),
-        onReload: () => this.net.reload?.(),
+        onFire: (w) => this.sfx.gunshot(w.class),
+        onRecoil: (p, y) => this.rig.kick(p, y),
+        onExplosion: (pos) => this.sfx.explosion(pos),
+        onReload: () => {
+          this.sfx.reload();
+          this.net.reload?.();
+        },
       },
     );
 
@@ -145,7 +176,14 @@ export class Game {
       const victim = e.victimId === this.net.localId ? 'You' : e.victimName;
       this.killLog.push(`${killer} [${e.weaponName}] ${victim}`);
       if (e.victimId === this.net.localId) this.hud.setDeathMessage(`Killed by ${e.killerName} [${e.weaponName}]`);
-      this.hud.addKill(killer, e.weaponName, victim);
+      this.hud.addKill(killer, e.weaponName, victim, !!e.headshot);
+    });
+    // server-confirmed kills by us: kill chime (the optimistic hitmarker never knows about kills online)
+    this.net.onHitConfirmed?.((e) => {
+      if (e.killed) {
+        this.hud.hitMarker(true, e.headshot);
+        this.sfx.killChime();
+      }
     });
 
     if (online) {
@@ -157,12 +195,9 @@ export class Game {
       });
       this.net.onShot?.((e) => {
         const w = this.net.getWeapon?.(e.weaponId) ?? PRESET_WEAPONS.pistol;
-        this.weapons.playRemoteShot(
-          w,
-          new THREE.Vector3(...e.origin),
-          new THREE.Vector3(...e.dir),
-          this.remotes.colliderOf(e.shooterId),
-        );
+        const origin = new THREE.Vector3(...e.origin);
+        this.weapons.playRemoteShot(w, origin, new THREE.Vector3(...e.dir), this.remotes.collidersOf(e.shooterId));
+        this.sfx.gunshot(w.class, origin);
       });
       const me = this.net.getLocal?.();
       if (me) {
@@ -253,7 +288,8 @@ export class Game {
 
   sendTransformNow() {
     const f = this.player.feet;
-    this.net.sendTransform([f.x, f.y, f.z], this.player.yaw, this.player.pitch, true);
+    this.lastCrouchSent = this.player.crouched;
+    this.net.sendTransform([f.x, f.y, f.z], this.player.yaw, this.player.pitch, this.player.crouched, true);
   }
 
   /** wait for the server's respawn timer, then call respawn (retrying on clock skew) */
@@ -368,17 +404,50 @@ export class Game {
     if (this.hp <= 0) this.die(reason);
   }
 
-  /** point the camera from the eye toward a world position */
+  /** point the camera from the eye toward a world position (clears recoil punch / head bob offsets) */
   lookAt(target: THREE.Vector3) {
-    const eye = this.player.feet.clone();
-    eye.y += EYE_HEIGHT;
+    const eye = this.player.eye();
     const d = target.clone().sub(eye);
     if (d.lengthSq() < 1e-6) return;
     d.normalize();
     this.player.yaw = Math.atan2(-d.x, -d.z);
     this.player.pitch = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1));
+    this.rig.resetPunch();
     this.player.updateCamera(this.rc.camera, 1);
     this.rc.camera.updateMatrixWorld();
+  }
+
+  private lastHitHead = false;
+
+  /** crosshair gap from the current spread; ADS hides the lines (scoped weapons show the scope) */
+  private updateCrosshair() {
+    const cam = this.rc.camera;
+    const spread = this.weapons.currentSpread();
+    const half = (cam.fov * Math.PI) / 360;
+    const px = (Math.tan((spread * Math.PI) / 180) / Math.tan(half)) * (window.innerHeight / 2);
+    this.hud.setCrosshairGap(3 + px);
+    const mode = this.weapons.fireMode;
+    const scoped = this.weapons.viewmodel.hideWhenAimed && this.ads > 0.95;
+    this.hud.showScope(scoped && this.alive);
+    this.hud.setCrosshairVisible(this.ads < 0.5 && mode !== 'melee', !scoped && mode !== 'melee');
+  }
+
+  /** ADS state for this frame: hold / toggle right mouse, cancelled by sprint, reload, melee, death */
+  private updateAds(dt: number, canAct: boolean) {
+    const input = this.input;
+    const h = this.weapons.handling;
+    if (settings.current.adsToggle) {
+      if (input.wasRightClicked()) this.adsToggled = !this.adsToggled;
+    } else this.adsToggled = false;
+    const wanted = this.forceAds ?? (settings.current.adsToggle ? this.adsToggled : input.rightDown);
+    const allowed = h.canAds && (canAct || this.forceAds !== null) && !this.weapons.reloading;
+    const target = wanted && allowed && !(this.player.sprinting && this.forceAds === null);
+    if (!allowed) this.adsToggled = false;
+    this.player.aiming = target;
+    // ADS in ~0.15 s (scoped weapons a little slower), out a bit faster
+    const inTime = this.weapons.weapon.class === 'sniper' ? 0.22 : 0.15;
+    const rate = target ? 1 / inTime : 1 / 0.12;
+    this.ads = target ? Math.min(1, this.ads + dt * rate) : Math.max(0, this.ads - dt * rate);
   }
 
   private frame = (now: number) => {
@@ -402,25 +471,47 @@ export class Game {
     player.speedScale = me && (me.slowPercent ?? 0) > 0 && Date.now() < (me.slowUntil ?? 0) ? 1 - (me.slowPercent ?? 0) / 100 : 1;
 
     // look every frame, simulate at a fixed rate
-    const md = input.locked ? player.look() : (input.consumeMouse(), { dx: 0, dy: 0 });
-    player.inputEnabled = this.alive && input.locked;
+    const canAct = this.alive && input.locked;
+    player.inputEnabled = canAct;
+    this.updateAds(dt, canAct);
+    // shooting cancels sprint (you can't fire mid-sprint; the shot goes out as the sprint ends)
+    if (canAct && input.mouseDown && player.sprinting) player.blockSprint();
+    const md = input.locked ? player.frameInput(dt, this.rig.fovScale) : (input.consumeMouse(), { dx: 0, dy: 0 });
     this.acc += dt;
     while (this.acc >= FIXED_DT) {
       player.fixedUpdate(FIXED_DT);
       this.physics.world.step();
       this.acc -= FIXED_DT;
     }
-    player.updateCamera(this.rc.camera, this.acc / FIXED_DT);
-    this.rc.camera.updateMatrixWorld();
+    const cam = this.rc.camera;
+    player.updateCamera(cam, this.acc / FIXED_DT, dt);
+    const speed = player.horizontalSpeed();
+    const adsZoom = this.weapons.handling.adsZoom;
+    const feel = { speed, grounded: player.grounded, sprinting: player.sprinting, crouched: player.crouched, ads: this.ads, adsZoom };
+    this.rig.update(dt, feel);
+    this.rig.apply(cam, feel);
+    cam.updateMatrixWorld();
 
     if (this.alive && player.feet.y < this.map.killY) {
       if (online) this.player.teleport(this.lastSpawn.clone());
       else this.damageLocal(MAX_HP, 'Fell out of the world');
     }
 
+    // camera-space strafe velocity (viewmodel inertia)
+    const strafe = player.velocity.x * Math.cos(player.yaw) - player.velocity.z * Math.sin(player.yaw);
     this.weapons.viewmodel.addSway(md.dx, md.dy);
-    this.weapons.viewmodel.update(dt, player.horizontalSpeed(), player.grounded);
-    this.weapons.update(dt, input, this.alive && input.locked);
+    this.weapons.viewmodel.update(dt, {
+      speed,
+      grounded: player.grounded,
+      ads: this.ads,
+      sprinting: player.sprinting,
+      crouched: player.crouched,
+      strafe,
+      dip: this.rig.dipOffset,
+    });
+    this.weapons.moveState = { speed, grounded: player.grounded, crouched: player.crouched, ads: this.ads };
+    this.weapons.update(dt, input, canAct);
+    this.updateCrosshair();
     this.dummies?.update(dt, this.rc.camera);
     this.remotes.update(dt);
     this.hud.update(dt);
@@ -430,8 +521,12 @@ export class Game {
       this.netAcc = 0;
       if (this.alive) {
         const f = player.feet;
-        this.net.sendTransform([f.x, f.y, f.z], player.yaw, player.pitch);
+        this.lastCrouchSent = player.crouched;
+        this.net.sendTransform([f.x, f.y, f.z], player.yaw, player.pitch, player.crouched);
       }
+    } else if (this.alive && player.crouched !== this.lastCrouchSent) {
+      // crouch changes go out immediately (hitboxes)
+      this.sendTransformNow();
     }
 
     if (online) {
@@ -454,7 +549,9 @@ export class Game {
       const f = player.feet;
       this.hud.setDebug(
         `fps ${this.fps.toFixed(0)}\npos ${f.x.toFixed(2)} ${f.y.toFixed(2)} ${f.z.toFixed(2)}\n` +
-          `vel ${player.horizontalSpeed().toFixed(2)} vy ${player.velocity.y.toFixed(2)}\ngrounded ${player.grounded}\n` +
+          `vel ${player.horizontalSpeed().toFixed(2)} vy ${player.velocity.y.toFixed(2)}\ngrounded ${player.grounded}` +
+          `  crouch ${player.crouched}  sprint ${player.sprinting}\n` +
+          `spread ${this.weapons.currentSpread().toFixed(2)}°  bloom ${this.weapons.bloom.toFixed(2)}  ads ${this.ads.toFixed(2)}  fov ${cam.fov.toFixed(1)}\n` +
           `map ${this.map.id}  weapon ${this.weapons.weapon.name} (${this.weapons.fireMode})`,
       );
     } else this.hud.setDebug(null);
@@ -463,6 +560,7 @@ export class Game {
     input.endFrame();
   };
 }
+
 
 function createTestMapOr(game: Game, loaded: GameMap | null): GameMap {
   return loaded ?? createTestMap(game.physics, game.rc.scene);

@@ -4,6 +4,7 @@ import { DbConnection } from '../module_bindings';
 import type { Weapon } from '../weapons/types';
 import type {
   GenerateWeaponResult,
+  HitConfirmEvent,
   HitInfo,
   KillEvent,
   LocalHitEvent,
@@ -33,6 +34,7 @@ interface PlayerRow {
   respawnAt: { toMillis(): bigint };
   slowPercent: number;
   slowUntil: { toMillis(): bigint };
+  crouching: boolean;
 }
 
 interface WeaponRow {
@@ -76,13 +78,14 @@ export class SpacetimeNetClient implements NetClient {
   private readonly identities = new Map<string, Identity>();
   private readonly weapons = new Map<string, Weapon>();
   private seq = (Date.now() & 0x3fffffff) >>> 0;
-  private lastSent?: { pos: Vec3; yaw: number; pitch: number; t: number };
+  private lastSent?: { pos: Vec3; yaw: number; pitch: number; crouching: boolean; t: number };
 
   private playersCbs: Listener<NetPlayer[]>[] = [];
   private localCbs: Listener<NetPlayer>[] = [];
   private killCbs: Listener<KillEvent>[] = [];
   private shotCbs: Listener<ShotEvent>[] = [];
   private localHitCbs: Listener<LocalHitEvent>[] = [];
+  private confirmCbs: Listener<HitConfirmEvent>[] = [];
   private weaponCbs: Listener<void>[] = [];
   private emitScheduled = false;
 
@@ -194,8 +197,13 @@ export class SpacetimeNetClient implements NetClient {
           dot: e.dot,
           knock: [e.knockX, e.knockY, e.knockZ],
           slowPercent: e.slowPercent,
+          headshot: e.headshot,
         };
         this.localHitCbs.forEach((cb) => cb(ev));
+      }
+      if (shooterId === this.localId && targetId !== this.localId && !e.dot) {
+        const ev: HitConfirmEvent = { targetId, damage: e.damage, killed: e.killed, headshot: e.headshot };
+        this.confirmCbs.forEach((cb) => cb(ev));
       }
       if (e.killed) {
         const kill: KillEvent = {
@@ -205,6 +213,7 @@ export class SpacetimeNetClient implements NetClient {
           victimName: this.playerName(e.target),
           weaponName: this.weapons.get(weaponId)?.name ?? `#${weaponId}`,
           at: Date.now(),
+          headshot: e.headshot,
         };
         this.killCbs.forEach((cb) => cb(kill));
       }
@@ -245,6 +254,7 @@ export class SpacetimeNetClient implements NetClient {
       respawnAt: ms(r.respawnAt),
       slowPercent: r.slowPercent,
       slowUntil: ms(r.slowUntil),
+      crouching: !!r.crouching,
     };
   }
 
@@ -290,20 +300,21 @@ export class SpacetimeNetClient implements NetClient {
     p?.catch((err) => console.warn(`[net] ${name} failed:`, err?.message ?? err));
   }
 
-  sendTransform(pos: Vec3, yaw: number, pitch: number, force = false) {
+  sendTransform(pos: Vec3, yaw: number, pitch: number, crouching: boolean, force = false) {
     if (!this.conn || !this.connected) return;
     const now = performance.now();
     const l = this.lastSent;
     if (
       !force &&
       l &&
+      l.crouching === crouching &&
       now - l.t < 1000 &&
       Math.abs(l.pos[0] - pos[0]) + Math.abs(l.pos[1] - pos[1]) + Math.abs(l.pos[2] - pos[2]) < 0.005 &&
       Math.abs(l.yaw - yaw) + Math.abs(l.pitch - pitch) < 0.002
     )
       return;
-    this.lastSent = { pos: [...pos] as Vec3, yaw, pitch, t: now };
-    this.call('updateTransform', this.conn.reducers.updateTransform({ x: pos[0], y: pos[1], z: pos[2], yaw, pitch }));
+    this.lastSent = { pos: [...pos] as Vec3, yaw, pitch, crouching, t: now };
+    this.call('updateTransform', this.conn.reducers.updateTransform({ x: pos[0], y: pos[1], z: pos[2], yaw, pitch, crouching }));
   }
 
   fire(origin: Vec3, dir: Vec3): number {
@@ -329,6 +340,7 @@ export class SpacetimeNetClient implements NetClient {
         ix: info.point[0],
         iy: info.point[1],
         iz: info.point[2],
+        zone: Math.max(0, Math.min(255, Math.round(info.zone ?? 0))),
       }),
     );
   }
@@ -396,6 +408,11 @@ export class SpacetimeNetClient implements NetClient {
   onLocalHit(cb: Listener<LocalHitEvent>) {
     this.localHitCbs.push(cb);
     return () => (this.localHitCbs = this.localHitCbs.filter((c) => c !== cb));
+  }
+
+  onHitConfirmed(cb: Listener<HitConfirmEvent>) {
+    this.confirmCbs.push(cb);
+    return () => (this.confirmCbs = this.confirmCbs.filter((c) => c !== cb));
   }
 
   onWeaponsChanged(cb: Listener<void>) {
