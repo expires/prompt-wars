@@ -25,3 +25,10 @@ main { padding: 16px; }
 .viewer-head { display: flex; justify-content: space-between; padding: 8px 12px; background: var(--ink); color: #fff; }
 #viewer-canvas { flex: 1; width: 100%; min-height: 0; }
 #viewer-info { margin: 0; padding: 8px 12px; max-height: 140px; overflow: auto; background: #f4f2ee; font-size: 11px; }
+#tfilters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#tfilters[hidden] { display: none; }
+#tcount, #tpage { color: #bbb; }
+.card .warn { color: #d62828; font-weight: 600; font-size: 11px; }
+.card .melee { color: #2a7a4a; font-size: 10px; }
+.card .parts { color: var(--muted); font-size: 10px; word-break: break-all; }
+#filters[hidden] { display: none; }

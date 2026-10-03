@@ -9,7 +9,9 @@
     ".": "./src/index.ts",
     "./recipes": "./src/recipes.ts",
     "./assemble": "./src/assemble.ts",
-    "./catalog.json": "./catalog.json"
+    "./catalog.json": "./catalog.json",
+    "./templates": "./src/templates/index.ts",
+    "./templates.json": "./templates.json"
   },
   "scripts": {
     "gen:catalog": "tsx scripts/gen-catalog.ts",
@@ -17,7 +19,11 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "shots": "tsx scripts/screenshots.ts",
-    "stats": "tsx scripts/count.ts"
+    "stats": "tsx scripts/count.ts",
+    "gen:templates": "tsx scripts/gen-templates.ts",
+    "gen": "tsx scripts/gen-catalog.ts && tsx scripts/gen-templates.ts",
+    "shots:templates": "tsx scripts/template-shots.ts",
+    "check:obj": "tsx scripts/check-obj.ts"
   },
   "dependencies": {
     "three": "^0.186.1"

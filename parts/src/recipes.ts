@@ -5,7 +5,7 @@
  */
 import type { Recipe } from './types';
 
-export const RECIPES: Recipe[] = [
+const RAW: Recipe[] = [
   // ---------------- pistols ----------------
   {
     name: 'Service Pistol',
@@ -606,6 +606,9 @@ export const RECIPES: Recipe[] = [
     ],
   },
 ];
+
+/** All hand-made recipes are curated. */
+export const RECIPES: Recipe[] = RAW.map((r) => ({ ...r, curated: true }));
 
 export function getRecipe(name: string): Recipe | undefined {
   return RECIPES.find((r) => r.name === name);

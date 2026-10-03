@@ -5,6 +5,7 @@ import { RECIPES } from '../src/recipes';
 import { assembleWeapon, DEFAULT_AXIS } from '../src/assemble';
 import { countTris } from '../src/lib/kit';
 import { CATEGORIES, WEAPON_CLASSES, type PartDef, type Recipe } from '../src/types';
+import { allTemplates, searchTemplates, randomTemplate, templateToRecipe, THEMES, type Template } from '../src/templates';
 
 /* ---------------- shared offscreen renderer ---------------- */
 const THUMB_W = 320;
@@ -87,7 +88,7 @@ clsSel.value = params.get('cls') ?? '';
 q.value = params.get('q') ?? '';
 showSockets.checked = params.get('sockets') === '1';
 
-let tab = params.get('tab') === 'recipes' ? 'recipes' : 'parts';
+let tab = ['recipes', 'templates'].includes(params.get('tab') ?? '') ? params.get('tab')! : 'parts';
 const partsEl = $('parts');
 const recipesEl = $('recipes');
 const countEl = $('count');
@@ -150,7 +151,14 @@ function pumpThumbs() {
     pending.delete(c);
     const def = getPart(c.dataset.part!);
     if (!def) continue;
-    const obj = def.build({});
+    let obj: THREE.Object3D;
+    try {
+      obj = def.build({});
+    } catch (e) {
+      console.warn('build failed', def.id, e);
+      c.dataset.done = '1';
+      continue;
+    }
     const tris = countTris(obj);
     const holder = new THREE.Group();
     holder.add(obj);
@@ -194,16 +202,135 @@ function renderRecipes() {
   });
 }
 
+/* ---------------- templates grid (search + filters + pages, lazy static thumbs) ---------------- */
+const templatesEl = $('templates');
+const tq = $<HTMLInputElement>('tq');
+const tcls = $<HTMLSelectElement>('tcls');
+const ttheme = $<HTMLSelectElement>('ttheme');
+const tkind = $<HTMLSelectElement>('tkind');
+const PAGE = Number(params.get('pageSize') ?? 48);
+let tPage = Number(params.get('page') ?? 0);
+for (const c of WEAPON_CLASSES) tcls.add(new Option(c, c));
+for (const t of THEMES) ttheme.add(new Option(t.label, t.id));
+tq.value = params.get('tq') ?? '';
+tcls.value = params.get('tcls') ?? '';
+ttheme.value = params.get('ttheme') ?? '';
+tkind.value = params.get('tkind') ?? '';
+const tPending = new Set<HTMLCanvasElement>();
+const tById = new Map<string, Template>();
+const tio = new IntersectionObserver(
+  (entries) => {
+    for (const e of entries) {
+      const c = e.target as HTMLCanvasElement;
+      if (e.isIntersecting && !c.dataset.done) tPending.add(c);
+      else if (!e.isIntersecting) tPending.delete(c);
+    }
+  },
+  { rootMargin: '300px' },
+);
+
+function templateList(): Template[] {
+  const q = tq.value.trim();
+  const kind = tkind.value;
+  const opts = { class: tcls.value || undefined, theme: ttheme.value || undefined, melee: kind === 'melee' ? true : kind === 'ranged' ? false : undefined };
+  let list = q ? searchTemplates(q, { ...opts, limit: 480 }) : allTemplates().filter((t) => (!opts.class || t.class === opts.class) && (!opts.theme || t.theme === opts.theme) && (opts.melee === undefined || !!t.melee === opts.melee));
+  if (kind === 'everyday') list = list.filter((t) => t.tags.includes('everyday'));
+  if (kind === 'curated') list = list.filter((t) => t.curated);
+  return list;
+}
+
+function templateCard(t: Template, big = false): HTMLElement {
+  const card = document.createElement('div');
+  card.className = 'card';
+  const cv = document.createElement('canvas');
+  cv.width = THUMB_W * (big ? 2 : 1.25);
+  cv.height = THUMB_H * (big ? 2 : 1.25);
+  cv.dataset.template = t.id;
+  tById.set(t.id, t);
+  card.appendChild(cv);
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const m = t.melee ? `<div class="melee">melee: ${t.melee.swing} · reach ${t.melee.reach}m · ${t.melee.weight}</div>` : '';
+  meta.innerHTML = `<span class="tris"></span><div class="id">${t.name}${t.curated ? ' ★' : ''}</div><div class="cls">${t.class} · ${t.theme} · ${t.fireMode}</div>${m}<div class="desc">${t.desc}</div><div class="parts">${t.parts.map((p) => p.partId).join(' + ')}</div><div class="warn"></div>`;
+  card.appendChild(meta);
+  card.onclick = () => openViewer({ recipe: templateToRecipe(t), template: t });
+  return card;
+}
+
+function renderTemplates() {
+  tio.disconnect();
+  tPending.clear();
+  templatesEl.innerHTML = '';
+  const list = templateList();
+  const pages = Math.max(1, Math.ceil(list.length / PAGE));
+  tPage = Math.min(Math.max(tPage, 0), pages - 1);
+  $('tpage').textContent = `page ${tPage + 1}/${pages}`;
+  $('tcount').textContent = `${list.length} / ${allTemplates().length} templates`;
+  const frag = document.createDocumentFragment();
+  for (const t of list.slice(tPage * PAGE, tPage * PAGE + PAGE)) {
+    const card = templateCard(t);
+    frag.appendChild(card);
+    const cv = card.querySelector('canvas')!;
+    tio.observe(cv);
+    if (params.get('eager')) tPending.add(cv);
+  }
+  templatesEl.appendChild(frag);
+}
+
+function pumpTemplateThumbs() {
+  const start = performance.now();
+  for (const c of tPending) {
+    if (performance.now() - start > 14) break;
+    tPending.delete(c);
+    const t = tById.get(c.dataset.template!);
+    if (!t) continue;
+    let g: THREE.Group;
+    try {
+      g = assembleWeapon(templateToRecipe(t));
+    } catch (e) {
+      console.warn('assemble failed', t.id, e);
+      continue;
+    }
+    renderer.setSize(c.width, c.height);
+    camera.aspect = c.width / c.height;
+    drawThumb(g, c);
+    renderer.setSize(THUMB_W, THUMB_H);
+    camera.aspect = THUMB_W / THUMB_H;
+    c.dataset.done = '1';
+    const card = c.parentElement!;
+    card.querySelector('.tris')!.textContent = `${countTris(g)}△`;
+    const miss = [...g.userData.missing, ...g.userData.unplaced];
+    if (miss.length) card.querySelector('.warn')!.textContent = `missing/unplaced: ${miss.join(', ')}`;
+  }
+  (window as any).__thumbsPending = tPending.size;
+}
+
+for (const el of [tcls, ttheme, tkind]) el.addEventListener('change', () => ((tPage = 0), renderTemplates()));
+let tqTimer = 0;
+tq.addEventListener('input', () => {
+  clearTimeout(tqTimer);
+  tqTimer = window.setTimeout(() => ((tPage = 0), renderTemplates()), 200);
+});
+$('tprev').onclick = () => ((tPage -= 1), renderTemplates());
+$('tnext').onclick = () => ((tPage += 1), renderTemplates());
+$('trandom').onclick = () => {
+  const t = randomTemplate(tcls.value || undefined);
+  openViewer({ recipe: templateToRecipe(t), template: t });
+};
+
 function setTab(t: string) {
   tab = t;
-  document.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
+  document.querySelectorAll<HTMLButtonElement>('.tab[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   partsEl.hidden = t !== 'parts';
   recipesEl.hidden = t !== 'recipes';
-  $('filters').style.visibility = t === 'parts' ? 'visible' : 'hidden';
+  templatesEl.hidden = t !== 'templates';
+  $('filters').hidden = t !== 'parts';
+  $('tfilters').hidden = t !== 'templates';
   if (t === 'parts') renderParts();
-  else renderRecipes();
+  else if (t === 'recipes') renderRecipes();
+  else renderTemplates();
 }
-document.querySelectorAll<HTMLButtonElement>('.tab').forEach((b) => (b.onclick = () => setTab(b.dataset.tab!)));
+document.querySelectorAll<HTMLButtonElement>('.tab[data-tab]').forEach((b) => (b.onclick = () => setTab(b.dataset.tab!)));
 for (const el of [catSel, clsSel, showSockets]) el.addEventListener('change', renderParts);
 q.addEventListener('input', renderParts);
 
@@ -222,7 +349,7 @@ const vCam = new THREE.PerspectiveCamera(35, 1, 0.001, 100);
 const controls = new OrbitControls(vCam, vCanvas);
 let vObj: THREE.Object3D | null = null;
 
-function openViewer(o: { part?: PartDef; recipe?: Recipe }) {
+function openViewer(o: { part?: PartDef; recipe?: Recipe; template?: Template }) {
   if (vObj) vScene.remove(vObj);
   const g = new THREE.Group();
   if (o.part) {
@@ -233,7 +360,7 @@ function openViewer(o: { part?: PartDef; recipe?: Recipe }) {
   } else if (o.recipe) {
     g.add(assembleWeapon(o.recipe));
     $('viewer-title').textContent = o.recipe.name;
-    $('viewer-info').textContent = JSON.stringify(o.recipe, null, 1);
+    $('viewer-info').textContent = JSON.stringify(o.template ?? o.recipe, null, 1);
   }
   vObj = g;
   vScene.add(g);
@@ -257,6 +384,7 @@ function loop() {
   requestAnimationFrame(loop);
   const t = (performance.now() - t0) / 1000;
   if (tab === 'parts') pumpThumbs();
+  else if (tab === 'templates') pumpTemplateThumbs();
   else {
     for (const c of visibleRecipes) {
       const g = recipeObjs.get(c.dataset.recipe!);
@@ -280,6 +408,10 @@ if (params.get('view')) {
   const p = getPart(params.get('view')!);
   const r = RECIPES.find((x) => x.name === params.get('view'));
   if (p || r) openViewer({ part: p, recipe: r });
+}
+if (params.get('random') !== null) {
+  const t = randomTemplate(tcls.value || undefined, params.get('random') || undefined);
+  openViewer({ recipe: templateToRecipe(t), template: t });
 }
 loop();
 (window as any).__ready = true;
