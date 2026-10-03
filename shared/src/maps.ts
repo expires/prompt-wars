@@ -54,7 +54,7 @@ export const MAPS: Record<string, MapDef> = {
   },
 };
 
-export const ACTIVE_MAP_ID = 'tauron-arena';
+export const ACTIVE_MAP_ID = 'tauron-remake';
 
 export function activeMap(): MapDef {
   const def = MAPS[ACTIVE_MAP_ID];

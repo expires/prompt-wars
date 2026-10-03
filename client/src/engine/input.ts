@@ -90,9 +90,27 @@ export class Input {
     return false;
   }
 
-  requestLock() {
-    const p = this.element.requestPointerLock() as unknown as Promise<void> | undefined;
-    p?.catch?.(() => {});
+  /** resolves true once the pointer is locked, false if the browser refused */
+  requestLock(): Promise<boolean> {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        document.removeEventListener('pointerlockerror', onErr);
+        resolve(ok);
+      };
+      const onErr = () => finish(false);
+      document.addEventListener('pointerlockerror', onErr);
+      try {
+        const p = this.element.requestPointerLock() as unknown as Promise<void> | undefined;
+        if (p?.then) p.then(() => finish(true), () => finish(false));
+      } catch {
+        finish(false);
+      }
+      // older browsers: no promise — judge by pointerLockElement shortly after
+      setTimeout(() => finish(document.pointerLockElement === this.element), 400);
+    });
   }
 
   exitLock() {

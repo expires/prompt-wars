@@ -233,11 +233,21 @@ export class GameFlow {
   private lockAndPlay() {
     this.syncHud();
     if (this.game.opts.e2e) return;
-    this.game.input.requestLock();
-    // no pointer lock (gesture expired / denied): offer the pause menu's RESUME button
-    setTimeout(() => {
-      if (this.game.alive && !this.game.input.locked && !this.game.input.padPlaying && !this.blocking) this.openPause();
-    }, 700);
+    void this.tryLock();
+  }
+
+  /**
+   * Lock the pointer. Chrome refuses a re-lock for ~1s after the user pressed Esc to leave it,
+   * so retry once after that cooldown (the Esc/click gesture is still active) before falling
+   * back to the pause menu's RESUME button.
+   */
+  private async tryLock() {
+    const input = this.game.input;
+    if (await input.requestLock()) return;
+    await new Promise((r) => setTimeout(r, 1100));
+    if (input.locked || this.pause.visible || this.blocking || !this.game.alive) return;
+    if (await input.requestLock()) return;
+    if (this.game.alive && !input.locked && !input.padPlaying && !this.blocking) this.openPause();
   }
 
   // ------------------------------------------------------------------ pause

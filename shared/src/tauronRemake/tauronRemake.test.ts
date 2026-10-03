@@ -237,13 +237,10 @@ describe('tauron-remake geometry', () => {
 });
 
 describe('tauron-remake spawns', () => {
-  it('has ~24 spawns over floor, tier A, tier C and the concourse', () => {
+  it('spawns everyone on the central event floor', () => {
     const S = TAURON_REMAKE_SPAWNS;
-    expect(S.length).toBe(24);
-    expect(S.filter((s) => s.y < 2).length).toBe(8);
-    expect(S.filter((s) => s.y > 2 && s.y < A_TOP - 0.2).length).toBe(6);
-    expect(S.filter((s) => Math.abs(s.y - LEVEL_B - 0.05) < 0.01).length).toBe(6);
-    expect(S.filter((s) => s.y > C_WALK_Y && s.y < C_TOP + 1).length).toBe(4);
+    expect(S.length).toBe(8);
+    expect(S.every((s) => s.y < 2 && Math.hypot(s.x, s.z) < 36)).toBe(true);
   });
 
   it('every spawn stands on a walkable surface, not inside geometry', () => {

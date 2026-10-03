@@ -37,6 +37,11 @@ const JUMP_SPEED = Math.sqrt(2 * -GRAVITY * JUMP_HEIGHT); // ~6.6 m/s
 const COYOTE_TIME = 0.1;
 /** a jump pressed this long before landing still fires on touchdown */
 const JUMP_BUFFER = 0.1;
+/** extra jumps allowed while airborne (double jump) */
+const AIR_JUMPS = 1;
+const AIR_JUMP_SPEED = Math.sqrt(2 * -GRAVITY * (JUMP_HEIGHT * 0.85));
+/** min time after any jump before an air jump can fire (stops one press double-firing) */
+const AIR_JUMP_DELAY = 0.15;
 /** eye height smoothing rate (1/s) for crouch transitions */
 const EYE_LERP_RATE = 14;
 
@@ -93,6 +98,7 @@ export class PlayerController {
   private jumpBuffer = 0;
   private airTime = 0;
   private jumpedAt = -1;
+  private airJumpsLeft = AIR_JUMPS;
   private sprintBlock = 0;
   private time = 0;
   private readonly prevFeet = new THREE.Vector3();
@@ -245,7 +251,22 @@ export class PlayerController {
       this.jumpedAt = this.time;
       jumped = true;
       this.onJump?.();
+    } else if (
+      this.inputEnabled &&
+      this.jumpBuffer > 0 &&
+      !this.grounded &&
+      this.airJumpsLeft > 0 &&
+      this.time - this.jumpedAt > AIR_JUMP_DELAY
+    ) {
+      // double jump: resets vertical speed so it works on the way down too
+      this.velocity.y = AIR_JUMP_SPEED;
+      this.airJumpsLeft--;
+      this.jumpBuffer = 0;
+      this.jumpedAt = this.time;
+      jumped = true;
+      this.onJump?.();
     }
+    if (this.grounded && !jumped) this.airJumpsLeft = AIR_JUMPS;
 
     // ---- horizontal: friction + accelerate (ground), capped accelerate (air) ----
     if (this.grounded && !jumped) {
