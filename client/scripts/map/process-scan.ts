@@ -3,15 +3,16 @@
  * Offline map pipeline: raw venue scan (Polycam / Scaniverse / Matterport export) in,
  * game-ready GLBs out for the loader in client/src/map/loadMap.ts:
  *
- *   <out>/<id>.glb            normalized visual mesh
- *   <out>/<id>_collision.glb  merged + welded POSITION/indices only, small islands removed
- *   <out>/<id>.meta.json      { id, source, up, scale, bbox, visualTris, collisionTris, createdAt }
+ *   <out>/<id>.glb            normalized visual mesh, simplified + webp textures + unlit + meshopt
+ *   <out>/<id>_collision.glb  merged + welded POSITION/indices only, small islands removed, simplified
+ *   <out>/<id>.meta.json      { id, source, up, scale, bbox, visualTrisBefore, visualTris,
+ *                               collisionTris, textures, unlit, meshopt, createdAt }
  *
  *   node client/scripts/map/process-scan.ts <in.glb|in.gltf> --name <id> [--up y|z] [--scale <n>] [--out <dir>]
  *
  * Runs on Node 26 with native type stripping: erasable syntax only, `.ts` import specifiers.
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -36,11 +37,15 @@ import {
 	translationMatrix,
 } from './lib.ts';
 import type { Bounds, Mat4, UpAxis, Vec3 } from './lib.ts';
+import { optimizeCollision, optimizeVisual } from './optimize.ts';
 
 /** glTF TRIANGLES primitive mode. */
 const TRIANGLES_MODE = 4;
 
 const DEFAULT_OUT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public/maps');
+const DEFAULT_VISUAL_TRIS = 400000;
+const DEFAULT_COLLISION_TRIS = 80000;
+const DEFAULT_MAX_TEXTURE = 2048;
 
 const USAGE = `Usage: node client/scripts/map/process-scan.ts <in.glb|in.gltf> --name <id> [options]
 
@@ -50,7 +55,11 @@ Options:
   --scale <n>              Uniform scale applied to the scan (default: 1)
   --out <dir>              Output directory (default: client/public/maps)
   --min-island-tris <n>    Drop collision islands smaller than n triangles (default: 50)
-  --collision-ratio <n>    Target collision triangle ratio, 0..1 (default: 1.0)
+  --visual-tris <n>        Visual triangle budget for meshoptimizer simplify (default: 400000)
+  --collision-tris <n>     Collision triangle budget for meshoptimizer simplify (default: 80000)
+  --max-texture <n>        Long-edge pixel budget for every texture (default: 2048)
+  --unlit / --no-unlit     Mark materials unlit; scan lighting is baked in (default: unlit)
+  --meshopt / --no-meshopt Apply EXT_meshopt_compression to the visual GLB (default: meshopt)
   --help                   Print this message`;
 
 type CliOptions = {
@@ -60,7 +69,11 @@ type CliOptions = {
 	scale: number;
 	outDir: string;
 	minIslandTris: number;
-	collisionRatio: number;
+	visualTris: number;
+	collisionTris: number;
+	maxTexture: number;
+	unlit: boolean;
+	meshopt: boolean;
 };
 
 type GeometryChunk = { positions: Float32Array; indices: Uint32Array };
@@ -85,17 +98,29 @@ function parseNumber(raw: string | undefined, fallback: number, flag: string): n
 	return value;
 }
 
+/** Positive-integer budget flag (`--visual-tris`, `--max-texture`, ...). */
+function parseBudget(raw: string | undefined, fallback: number, flag: string): number {
+	const value = Math.round(parseNumber(raw, fallback, flag));
+	if (!(value >= 1)) fail(`${flag} must be at least 1, got ${raw}`);
+	return value;
+}
+
 function parseCliArgs(argv: string[]): CliOptions {
 	const { values, positionals } = parseArgs({
 		args: argv,
 		allowPositionals: true,
+		allowNegative: true,
 		options: {
 			name: { type: 'string' },
 			up: { type: 'string' },
 			scale: { type: 'string' },
 			out: { type: 'string' },
 			'min-island-tris': { type: 'string' },
-			'collision-ratio': { type: 'string' },
+			'visual-tris': { type: 'string' },
+			'collision-tris': { type: 'string' },
+			'max-texture': { type: 'string' },
+			unlit: { type: 'boolean' },
+			meshopt: { type: 'boolean' },
 			help: { type: 'boolean', short: 'h' },
 		},
 	});
@@ -122,11 +147,6 @@ function parseCliArgs(argv: string[]): CliOptions {
 	const minIslandTris = parseNumber(values['min-island-tris'], 50, '--min-island-tris');
 	if (!(minIslandTris >= 1)) fail(`--min-island-tris must be at least 1, got ${minIslandTris}`);
 
-	const collisionRatio = parseNumber(values['collision-ratio'], 1, '--collision-ratio');
-	if (!(collisionRatio > 0 && collisionRatio <= 1)) {
-		fail(`--collision-ratio must be within (0, 1], got ${collisionRatio}`);
-	}
-
 	return {
 		input,
 		name,
@@ -134,7 +154,11 @@ function parseCliArgs(argv: string[]): CliOptions {
 		scale,
 		outDir: values.out ? path.resolve(values.out) : DEFAULT_OUT_DIR,
 		minIslandTris: Math.round(minIslandTris),
-		collisionRatio,
+		visualTris: parseBudget(values['visual-tris'], DEFAULT_VISUAL_TRIS, '--visual-tris'),
+		collisionTris: parseBudget(values['collision-tris'], DEFAULT_COLLISION_TRIS, '--collision-tris'),
+		maxTexture: parseBudget(values['max-texture'], DEFAULT_MAX_TEXTURE, '--max-texture'),
+		unlit: values.unlit ?? true,
+		meshopt: values.meshopt ?? true,
 	};
 }
 
@@ -282,10 +306,9 @@ function setAccessorBounds(accessor: Accessor, array: ArrayLike<number>): void {
 /**
  * Builds the collision mesh: every visual primitive merged into a single POSITION + indices
  * primitive (no materials, textures, normals or UVs), welded, then stripped of disconnected
- * islands smaller than `minIslandTris`. The visual mesh is not simplified in this card.
- *
- * TODO(T-002): run meshoptimizer `simplify` (ratio = --collision-ratio) at the end of this
- * function once `meshoptimizer` is a dependency of @gltf-transform/functions here.
+ * islands smaller than `minIslandTris`. Triangle-budget simplification happens afterwards in
+ * `optimizeCollision` (meshoptimizer, `lockBorder: false`), where the visual chain is applied
+ * to the visual document.
  */
 function buildCollisionDocument(
 	scene: Scene,
@@ -347,6 +370,12 @@ function round(value: number): number {
 	return Math.round(value * 1000) / 1000;
 }
 
+/** File size in megabytes, used to report before/after scan weight. */
+async function fileSizeMB(filePath: string): Promise<number> {
+	const info = await stat(filePath);
+	return info.size / (1024 * 1024);
+}
+
 async function main(): Promise<void> {
 	const options = parseCliArgs(process.argv.slice(2));
 	const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
@@ -376,8 +405,16 @@ async function main(): Promise<void> {
 	bakeNodeTransforms(scene);
 
 	const bounds = measureBounds(scene);
-	const visualTriangles = countSceneTriangles(scene);
+
+	// 3. Build the collision mesh from the normalized scan, then run both optimize chains.
 	const collision = buildCollisionDocument(scene, options.minIslandTris);
+	const visual = await optimizeVisual(document, {
+		visualTris: options.visualTris,
+		maxTexture: options.maxTexture,
+		unlit: options.unlit,
+		meshopt: options.meshopt,
+	});
+	const collisionOptimized = await optimizeCollision(collision.document, options.collisionTris);
 
 	await mkdir(options.outDir, { recursive: true });
 	const visualPath = path.join(options.outDir, `${options.name}.glb`);
@@ -396,31 +433,42 @@ async function main(): Promise<void> {
 			min: [round(bounds.min[0]), round(bounds.min[1]), round(bounds.min[2])],
 			max: [round(bounds.max[0]), round(bounds.max[1]), round(bounds.max[2])],
 		},
-		visualTris: visualTriangles,
-		collisionTris: collision.result.triangleCount,
+		visualTrisBefore: visual.trianglesBefore,
+		visualTris: visual.trianglesAfter,
+		collisionTris: collisionOptimized.trianglesAfter,
+		textures: visual.textures,
+		unlit: options.unlit,
+		meshopt: options.meshopt,
 		createdAt: new Date().toISOString(),
 	};
 	await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`, 'utf8');
 
-	if (options.collisionRatio < 1) {
-		console.warn(
-			`process-scan: --collision-ratio ${options.collisionRatio} ignored; meshoptimizer simplify is a TODO in buildCollisionDocument.`,
-		);
-	}
-
+	const sourceMB = await fileSizeMB(options.input);
+	const visualMB = await fileSizeMB(visualPath);
+	const collisionMB = await fileSizeMB(collisionPath);
 	const size = boundsSize(bounds);
+
 	console.log(`Map pipeline complete: ${options.name}`);
 	console.log(`  source      ${options.input}`);
 	console.log(`  out         ${options.outDir}`);
 	console.log(`  up / scale  ${options.up} / ${options.scale}`);
 	console.log(
-		`  tris        visual ${visualTriangles} (source ${sourceTriangles}) -> collision ${collision.result.triangleCount}`,
+		`  tris        visual ${visual.trianglesAfter} (source ${sourceTriangles}, before ${visual.trianglesBefore}, budget ${options.visualTris})`,
+	);
+	console.log(
+		`  collision   ${collisionOptimized.trianglesAfter} (before ${collisionOptimized.trianglesBefore}, budget ${options.collisionTris})`,
 	);
 	console.log(
 		`  islands     ${collision.result.keptIslands}/${collision.result.islandCount} kept, ${collision.result.removedTriangles} tris removed (< ${options.minIslandTris} tris)`,
 	);
 	console.log(
+		`  textures    ${visual.textures} <= ${options.maxTexture}px webp, unlit ${options.unlit}, meshopt ${options.meshopt}`,
+	);
+	console.log(
 		`  bbox (m)    ${size[0].toFixed(2)} x ${size[1].toFixed(2)} x ${size[2].toFixed(2)} (min.y = 0, XZ centred)`,
+	);
+	console.log(
+		`  size (MB)   source ${sourceMB.toFixed(1)} -> visual ${visualMB.toFixed(1)} + collision ${collisionMB.toFixed(1)}`,
 	);
 	console.log(
 		`  wrote       ${path.basename(visualPath)}, ${path.basename(collisionPath)}, ${path.basename(metaPath)}`,

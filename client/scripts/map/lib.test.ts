@@ -14,6 +14,7 @@ import {
 	multiply,
 	recenterOffset,
 	scaleMatrix,
+	simplifyRatio,
 	translationMatrix,
 } from './lib.ts';
 import type { Mat4, Vec3 } from './lib.ts';
@@ -87,6 +88,26 @@ test('countTriangles handles indexed, non-indexed and non-triangle modes', () =>
 	assert.equal(countTriangles(null, 12), 4);
 	assert.equal(countTriangles(undefined, 3), 1);
 	assert.equal(countTriangles(new Uint32Array([0, 1, 1, 2]), 4, 1), 0);
+});
+
+test('simplifyRatio returns 1 when the mesh already fits the budget', () => {
+	assert.equal(simplifyRatio(1_000, 400_000), 1);
+	assert.equal(simplifyRatio(400_000, 400_000), 1);
+});
+
+test('simplifyRatio scales the current triangle count down to the budget', () => {
+	assert.equal(simplifyRatio(1_000_000, 400_000), 0.4);
+	assert.equal(simplifyRatio(200_000, 80_000), 0.4);
+	assert.equal(simplifyRatio(3, 1), 1 / 3);
+});
+
+test('simplifyRatio stays within (0, 1] for degenerate inputs', () => {
+	assert.equal(simplifyRatio(0, 400_000), 1);
+	assert.equal(simplifyRatio(1_000_000, 0), 1);
+	assert.equal(simplifyRatio(1_000_000, -5), 1);
+
+	const tiny = simplifyRatio(1e12, 1);
+	assert.ok(tiny > 0 && tiny <= 1, `ratio ${tiny} out of range`);
 });
 
 test('filterIslands removes small disconnected islands', () => {

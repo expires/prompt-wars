@@ -12,16 +12,18 @@
  */
 import type { Document } from '@gltf-transform/core';
 import { KHRMaterialsUnlit } from '@gltf-transform/extensions';
-import {
-	dedup,
-	meshopt,
-	textureCompress,
-	weld,
-} from '@gltf-transform/functions';
-import { simplify } from 'meshoptimizer';
+import { dedup, meshopt, simplify, textureCompress, weld } from '@gltf-transform/functions';
+import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import sharp from 'sharp';
 
 import { simplifyRatio } from './lib.ts';
+
+/** glTF TRIANGLES primitive mode. */
+const TRIANGLES_MODE = 4;
+/** Vertex-merge distance, in metres, applied before simplification. */
+const WELD_TOLERANCE = 0.0001;
+/** Relative error meshoptimizer may introduce while collapsing edges. */
+const SIMPLIFY_ERROR = 0.01;
 
 export type VisualOptimizeOptions = {
 	/** Triangle budget for the visual mesh. */
@@ -52,7 +54,7 @@ function triangleCount(document: Document): number {
 	let total = 0;
 	for (const mesh of document.getRoot().listMeshes()) {
 		for (const primitive of mesh.listPrimitives()) {
-			if (primitive.getMode() !== 4) continue;
+			if (primitive.getMode() !== TRIANGLES_MODE) continue;
 			const position = primitive.getAttribute('POSITION');
 			if (!position) continue;
 			const indices = primitive.getIndices();
@@ -63,24 +65,28 @@ function triangleCount(document: Document): number {
 }
 
 /**
- * Merges duplicate vertices/primitives, then collapses geometry toward `visualTris` with
- * meshoptimizer. `simplifyRatio` clamps the ratio to (0, 1] so a small scan is left alone.
+ * Merges duplicate vertices/primitives, then collapses geometry toward `budget` triangles
+ * with meshoptimizer's simplifier. `simplifyRatio` clamps the ratio to (0, 1] so a scan that
+ * already fits the budget is left alone.
  */
 async function simplifyDocument(
 	document: Document,
 	budget: number,
 	lockBorder: boolean,
 ): Promise<{ before: number; after: number }> {
-	await dedup({ overwrite: true })(document);
-	await weld({ tolerance: 0.0001 })(document);
+	await dedup()(document);
+	await weld({ tolerance: WELD_TOLERANCE })(document);
 
 	const before = triangleCount(document);
 	const ratio = simplifyRatio(before, budget);
 
 	if (ratio < 1) {
-		await meshopt({
-			simplify: { ratio, error: 0.01, lockBorder },
-			reorder: true,
+		await MeshoptSimplifier.ready;
+		await simplify({
+			simplifier: MeshoptSimplifier,
+			ratio,
+			error: SIMPLIFY_ERROR,
+			lockBorder,
 		})(document);
 	}
 
@@ -88,9 +94,9 @@ async function simplifyDocument(
 }
 
 /**
- * Visual chain: dedup -> weld -> meshoptimizer simplify toward `visualTris` -> textures
- * resized to `maxTexture` on the long edge and re-encoded as webp -> unlit materials ->
- * optional meshopt compression.
+ * Visual chain: dedup -> weld -> meshoptimizer simplify toward `visualTris` (border vertices
+ * locked, so texture seams survive) -> textures resized to `maxTexture` on the long edge and
+ * re-encoded as webp -> unlit materials -> optional meshopt compression.
  */
 export async function optimizeVisual(
 	document: Document,
@@ -101,7 +107,7 @@ export async function optimizeVisual(
 	await textureCompress({
 		encoder: sharp,
 		targetFormat: 'webp',
-		size: [options.maxTexture, options.maxTexture],
+		resize: [options.maxTexture, options.maxTexture],
 		resizeFilter: 'lanczos3',
 	})(document);
 
@@ -113,10 +119,8 @@ export async function optimizeVisual(
 	}
 
 	if (options.meshopt) {
-		await meshopt({ encoder: meshopt })(document);
-		if (!document.getRoot().listExtensionsUsed().includes(EXTENSION_PLACEHOLDER)) {
-			// no-op; the extension is registered by the encoder above
-		}
+		await MeshoptEncoder.ready;
+		await meshopt({ encoder: MeshoptEncoder })(document);
 	}
 
 	return {

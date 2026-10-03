@@ -118,6 +118,19 @@ export function countTriangles(
 }
 
 /**
+ * Simplification ratio that takes `current` triangles down to `budget`, clamped to (0, 1].
+ *
+ * `budget / current` is positive whenever both inputs are, so `min(1, ...)` is the only clamp
+ * needed: a scan already at or under budget simply keeps ratio 1 and skips simplification.
+ * A degenerate count or budget also returns 1, so callers never hand meshoptimizer a NaN or
+ * a zero ratio.
+ */
+export function simplifyRatio(current: number, budget: number): number {
+	if (!(current > 0) || !(budget > 0)) return 1;
+	return Math.min(1, budget / current);
+}
+
+/**
  * Drops triangles belonging to connected components ("islands") smaller than
  * `minIslandTriangles`. Components are vertex-connected, which for a welded mesh matches
  * edge-connected surfaces. `minIslandTriangles <= 1` keeps everything.
