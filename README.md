@@ -78,7 +78,9 @@ On init / every connect (`seedWorld`, idempotent): 14 preset weapons (one per cl
 parts get their class's first recipe) and the 8 TEST MAP spawn points (`TEST_MAP_SPAWN_POINTS` in
 `@ai-gaem/shared`, also used by the client's test map; the old placeholder ring is migrated
 automatically). It also deletes any leftover `tick_timer` rows (the old always-on 4 Hz tick).
-New players spawn with the preset pistol; respawning without "keep loadout" rolls a random preset.
+New players start **forging**: `alive = false`, no weapon, `needsLoadout = true`; `respawn` is refused
+until they `register_design` (or `equip_weapon` a preset). Respawning without "keep loadout" still rolls
+a random preset. See "Forge" below.
 
 ### Tables and cost
 
@@ -153,6 +155,27 @@ victim's hitbox anywhere along previous -> current pose within the last 250 ms, 
 0.3 m + victim speed x 0.25 s. A claimed head hit must be within the head sphere (crouch-aware,
 +-0.3 m vertical, 0.5 m horizontal + the speed term), otherwise it counts as a body hit; an impact
 that isn't on the body at all is rejected.
+
+### Forge (LLM-designed weapons)
+
+Weapons are designed from scratch by an LLM in the **Forge DSL** (`shared/src/forge/`): a JSON
+`ForgeDesign` = name, class, fireMode, balanced `stats`, `palette`, `fx` hints and up to 24
+`components` (parent / anchor / transform, built from primitive `shapes` or catalog parts).
+`sanitizeDesign()` makes any input legal (limits, sizes, triangle budget, floating parts, balance via
+`clampWeapon`); `applyEdit()` / `mergeReprompt()` implement lock / reject / replace / reprompt;
+`buildDesign()` (`@ai-gaem/shared/forge/build`, THREE) renders it.
+
+- Forge service `forge/` (Node 22, plain `node:http`): `POST /api/forge/generate` streams NDJSON
+  events (`start`, `meta`, `component`..., `stats`, `done`, `error`, `end`, each tagged with `variant`)
+  from the Anthropic API (`FORGE_MODEL`, default `claude-haiku-4-5-20251001`), or from a template-based
+  mock without `ANTHROPIC_API_KEY`. Rate limit 20 generations / 10 min per IP and per identity.
+  `pnpm --filter @ai-gaem/forge dev | test | integration | samples`; deploy with `./scripts/deploy-forge.sh`
+  (systemd `ai-gaem-forge` on 127.0.0.1:8787, env `/etc/ai-gaem-forge.env`, Caddy `/api/forge/*`).
+- SpacetimeDB: `register_design(designJson, prompt)` re-sanitizes and stores the design in
+  `weapon.design` (`weapon.json` stays the balanced Weapon), equipping it while dead.
+  `request_redeploy()` (Esc menu) kills you without kill credit (a death only if damaged) so you can
+  switch loadout; respawn after 3 s.
+- Client SDK (not wired in yet): `client/src/forge/forgeClient.ts` (`streamForge`, `ForgeSession`).
 
 ## Client
 

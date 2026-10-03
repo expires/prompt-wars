@@ -1,0 +1,119 @@
+{
+  "prompt": "mock: a medieval flail",
+  "model": "mock",
+  "timing": {
+    "meta": 114,
+    "firstComponent": 193,
+    "lastComponent": 290,
+    "done": 357
+  },
+  "warnings": [],
+  "design": {
+    "v": 1,
+    "name": "Siege Flail Classic",
+    "class": "melee",
+    "fireMode": "melee",
+    "stats": {
+      "damage": 66.1,
+      "pellets": 1,
+      "fireRate": 0.8,
+      "magSize": 1,
+      "reloadTime": 0,
+      "range": 1.5,
+      "spread": 70,
+      "projectileSpeed": 0,
+      "splashRadius": 0,
+      "gravityScale": 0,
+      "fuseTime": 0,
+      "dotDamage": 0,
+      "dotDuration": 0,
+      "knockback": 5,
+      "slowPercent": 0,
+      "chargeTime": 0,
+      "headshotMultiplier": 1,
+      "melee": {
+        "swing": "spin",
+        "reach": 0.3,
+        "weight": "heavy"
+      }
+    },
+    "palette": {
+      "primary": "#c2b656",
+      "secondary": "#a3b575",
+      "accent": "#859cef",
+      "glow": "#9dcffb"
+    },
+    "fx": {
+      "muzzleFlashColor": "#9dcffb",
+      "projectileColor": "#859cef",
+      "trail": "spark"
+    },
+    "components": [
+      {
+        "id": "core-0",
+        "label": "twin chained spiked balls",
+        "role": "core",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1.0002,
+            1.0002,
+            1.0002
+          ]
+        },
+        "catalogPart": {
+          "partId": "core-flail-double"
+        }
+      },
+      {
+        "id": "fx-0",
+        "label": "wrapped grip tape",
+        "role": "deco",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "core-0",
+        "shapes": [
+          {
+            "type": "capsule",
+            "r": 0.02,
+            "h": 0.1,
+            "seg": 6,
+            "rot": [
+              90,
+              0,
+              0
+            ],
+            "material": {
+              "color": "secondary",
+              "roughness": 1
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

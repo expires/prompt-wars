@@ -59,6 +59,9 @@ import {
   type PoseSample,
   type SweptPose,
   type Weapon,
+  FORGE_LIMITS,
+  designToWeapon,
+  sanitizeDesign,
 } from '@ai-gaem/shared';
 import { PART_CATALOG, PART_RECIPES } from './catalog.generated';
 
@@ -113,6 +116,11 @@ const player = table(
     crouching: t.bool().default(false),
     /** player_pose key while online (0 = none). Assigned on connect, reused by others when offline. */
     slot: t.u32().default(0),
+    /**
+     * Forging: true for a new player until they have a weapon (register_design / equip_weapon /
+     * generate_weapon while dead). Such players stay dead (alive = false) and can't respawn.
+     */
+    needsLoadout: t.bool().default(false),
   },
 );
 
@@ -180,6 +188,12 @@ const weapon = table(
     prompt: t.string(),
     isPreset: t.bool(),
     createdAt: t.timestamp(),
+    /**
+     * Forge design JSON (@ai-gaem/shared `ForgeDesign`, sanitized; '' for legacy / preset weapons).
+     * When set, clients render the design instead of `json.parts`; `json` stays the balanced
+     * Weapon used for all gameplay (its stats always equal the design's).
+     */
+    design: t.string().default(''),
   },
 );
 
@@ -357,7 +371,7 @@ function requirePlayer(ctx: Ctx): PlayerRow {
   return p;
 }
 
-function insertWeapon(ctx: Ctx, owner: Identity, w: Weapon, prompt: string, isPreset: boolean): WeaponRow {
+function insertWeapon(ctx: Ctx, owner: Identity, w: Weapon, prompt: string, isPreset: boolean, design = ''): WeaponRow {
   return ctx.db.weapon.insert({
     id: 0n,
     ownerIdentity: owner,
@@ -368,6 +382,7 @@ function insertWeapon(ctx: Ctx, owner: Identity, w: Weapon, prompt: string, isPr
     prompt: prompt.slice(0, 300),
     isPreset,
     createdAt: ctx.timestamp,
+    design,
   });
 }
 
@@ -686,9 +701,18 @@ export const onConnect = spacetimedb.clientConnected(ctx => {
     dotWeaponId: 0n,
     crouching: false,
     slot: c.slot,
+    needsLoadout: true,
   };
-  // New players start with the preset pistol (later respawns without keepLoadout roll a random preset).
-  ctx.db.player.insert(spawnPlayer(ctx, base, starterPresetId(ctx)));
+  // New players start dead with no weapon ("forging"): they respawn once they have registered a
+  // design (register_design) or equipped a preset. The pose row parks them at a spawn point.
+  const sp = pickSpawn(ctx, ctx.sender);
+  ctx.db.player.insert({ ...base, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw });
+  if (!ctx.db.playerPose.slot.find(c.slot)) {
+    ctx.db.playerPose.insert({
+      slot: c.slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+      vx: 0, vy: 0, vz: 0, flags: POSE_FLAG_GROUNDED | POSE_FLAG_TELEPORT, sendT: 0,
+    });
+  }
 });
 
 export const onDisconnect = spacetimedb.clientDisconnected(ctx => {
@@ -974,6 +998,9 @@ export const report_hit = spacetimedb.reducer(
 export const respawn = spacetimedb.reducer({ keepLoadout: t.bool() }, (ctx, { keepLoadout }) => {
   const p = requirePlayer(ctx);
   if (p.alive) return;
+  if (p.needsLoadout || !ctx.db.weapon.id.find(p.weaponId)) {
+    throw new SenderError('forge a weapon first (register_design or equip_weapon)');
+  }
   if (micros(ctx.timestamp) < micros(p.respawnAt)) throw new SenderError('respawn not ready');
   const keep = keepLoadout && !!ctx.db.weapon.id.find(p.weaponId);
   ctx.db.player.identity.update(spawnPlayer(ctx, p, keep ? p.weaponId : randomPresetId(ctx)));
@@ -986,7 +1013,57 @@ export const equip_weapon = spacetimedb.reducer({ weaponId: t.u64() }, (ctx, { w
   const w = ctx.db.weapon.id.find(weaponId);
   if (!w) throw new SenderError('unknown weapon');
   if (!w.isPreset && !w.ownerIdentity.isEqual(ctx.sender)) throw new SenderError('not your weapon');
-  ctx.db.player.identity.update({ ...p, weaponId });
+  ctx.db.player.identity.update({ ...p, weaponId, needsLoadout: false });
+});
+
+/**
+ * Store a Forge design (JSON of @ai-gaem/shared `ForgeDesign`, e.g. from the forge service).
+ * Always re-sanitized here (sizes, triangle budget, unknown catalog parts, balance via clampWeapon).
+ * The new weapon is equipped when the caller is dead (incl. new "forging" players and after
+ * request_redeploy); otherwise it is only added to their library (equip_weapon later).
+ * Clients find it by owner (`weapon.ownerIdentity`) or, when equipped, via `player.weaponId`.
+ */
+export const register_design = spacetimedb.reducer(
+  { designJson: t.string(), prompt: t.string() },
+  (ctx, { designJson, prompt }) => {
+    if (designJson.length > FORGE_LIMITS.maxDesignJson) throw new SenderError('design json too large');
+    const p = requirePlayer(ctx);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(designJson);
+    } catch {
+      throw new SenderError('invalid json');
+    }
+    const { design } = sanitizeDesign(raw, { knownPartIds: KNOWN_PART_IDS });
+    if (design.components.length === 0) throw new SenderError('design has no usable components');
+    // locked flags are editor state, not part of the stored weapon
+    for (const c of design.components) delete c.locked;
+    const w = designToWeapon(design);
+    const row = insertWeapon(ctx, ctx.sender, w, prompt, false, JSON.stringify(design));
+    if (!p.alive) ctx.db.player.identity.update({ ...p, weaponId: row.id, needsLoadout: false });
+  },
+);
+
+/**
+ * Esc menu "redeploy": die on the spot (no killer credit) so the loadout can be changed, then
+ * respawn after RESPAWN_DELAY_SECONDS. Free at full HP; when already damaged it counts as a death
+ * (so it can't be used to deny a kill).
+ */
+export const request_redeploy = spacetimedb.reducer(ctx => {
+  const p = requirePlayer(ctx);
+  if (!p.alive) return;
+  const damaged = p.hp < MAX_HP;
+  ctx.db.player.identity.update({
+    ...p,
+    alive: false,
+    deaths: damaged ? p.deaths + 1 : p.deaths,
+    respawnAt: addSeconds(ctx.timestamp, RESPAWN_DELAY_SECONDS),
+    slowPercent: 0,
+    slowUntil: EPOCH,
+  });
+  deleteDotTimer(ctx, p.identity);
+  const c = ctx.db.playerCombat.identity.find(p.identity);
+  if (c && c.dotDps > 0) ctx.db.playerCombat.identity.update({ ...c, dotDps: 0 });
 });
 
 /** Store a weapon from raw JSON (e.g. produced by an external generator). Always re-balanced. */
@@ -1185,7 +1262,7 @@ export const generate_weapon = spacetimedb.procedure(
     const weaponId = ctx.withTx(tx => {
       const row = insertWeapon(tx, ctx.sender, w, cleanPrompt, false);
       const p = tx.db.player.identity.find(ctx.sender);
-      if (p && !p.alive) tx.db.player.identity.update({ ...p, weaponId: row.id });
+      if (p && !p.alive) tx.db.player.identity.update({ ...p, weaponId: row.id, needsLoadout: false });
       return row.id;
     });
     return { ok: true, weaponId, message };

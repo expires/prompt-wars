@@ -1,0 +1,254 @@
+{
+  "prompt": "mock: a pirate blunderbuss",
+  "model": "mock",
+  "timing": {
+    "meta": 86,
+    "firstComponent": 162,
+    "lastComponent": 727,
+    "done": 790
+  },
+  "warnings": [],
+  "design": {
+    "v": 1,
+    "name": "Pirate Blunderbuss Deluxe",
+    "class": "shotgun",
+    "fireMode": "hitscan",
+    "stats": {
+      "damage": 10.9,
+      "pellets": 8,
+      "fireRate": 0.5,
+      "magSize": 4,
+      "reloadTime": 2.5,
+      "range": 10.9,
+      "spread": 9.1,
+      "projectileSpeed": 0,
+      "splashRadius": 0,
+      "gravityScale": 0,
+      "fuseTime": 0,
+      "dotDamage": 0,
+      "dotDuration": 0,
+      "knockback": 4,
+      "slowPercent": 0,
+      "chargeTime": 0,
+      "headshotMultiplier": 1
+    },
+    "palette": {
+      "primary": "#d760c5",
+      "secondary": "#ac7388",
+      "accent": "#85efa4",
+      "glow": "#a8fb9d"
+    },
+    "fx": {
+      "muzzleFlashColor": "#a8fb9d",
+      "projectileColor": "#85efa4",
+      "trail": "smoke"
+    },
+    "components": [
+      {
+        "id": "core-0",
+        "label": "brass and wood steampunk receiver with gear",
+        "role": "core",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            0.9395,
+            0.9395,
+            0.9395
+          ]
+        },
+        "catalogPart": {
+          "partId": "core-shotgun-steampunk",
+          "color": "#4a2e18",
+          "accent": "#c99a2e"
+        }
+      },
+      {
+        "id": "barrel-1",
+        "label": "medium thick flared blunderbuss bell barrel",
+        "role": "barrel",
+        "transform": {
+          "pos": [
+            0,
+            0.0152,
+            -0.1785
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            0.9395,
+            0.9395,
+            0.9395
+          ]
+        },
+        "catalogPart": {
+          "partId": "barrel-bell-medium-thick-4",
+          "color": "#c99a2e"
+        }
+      },
+      {
+        "id": "stock-2",
+        "label": "classic curved wooden rifle stock",
+        "role": "stock",
+        "transform": {
+          "pos": [
+            0,
+            0.0091,
+            0.1785
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            0.9395,
+            0.9395,
+            0.9395
+          ]
+        },
+        "catalogPart": {
+          "partId": "stock-wood-classic-3"
+        }
+      },
+      {
+        "id": "grip-3",
+        "label": "rounded birdshead pocket grip",
+        "role": "grip",
+        "transform": {
+          "pos": [
+            0,
+            -0.0423,
+            0.0785
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            0.9395,
+            0.9395,
+            0.9395
+          ]
+        },
+        "catalogPart": {
+          "partId": "grip-birdshead-2",
+          "color": "#6e4424"
+        }
+      },
+      {
+        "id": "mag-4",
+        "label": "rack of tiny cannonballs on the side",
+        "role": "mag",
+        "transform": {
+          "pos": [
+            0.0282,
+            0,
+            -0.0714
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            0.9395,
+            0.9395,
+            0.9395
+          ]
+        },
+        "catalogPart": {
+          "partId": "mag-cannonball-rack"
+        }
+      },
+      {
+        "id": "deco-5",
+        "label": "rectangular banner flag on pole",
+        "role": "deco",
+        "transform": {
+          "pos": [
+            0.0188,
+            -0.0003,
+            0.3476
+          ],
+          "rot": [
+            0,
+            0,
+            -90
+          ],
+          "scale": [
+            0.9395,
+            0.9395,
+            0.9395
+          ]
+        },
+        "catalogPart": {
+          "partId": "deco-flag-banner",
+          "accent": "#111111"
+        }
+      },
+      {
+        "id": "fx-0",
+        "label": "brass coil wrap",
+        "role": "deco",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "core-0",
+        "shapes": [
+          {
+            "type": "torus",
+            "r": 0.05,
+            "tube": 0.006,
+            "seg": 12,
+            "material": {
+              "color": "accent",
+              "metalness": 0.8
+            }
+          },
+          {
+            "type": "torus",
+            "r": 0.05,
+            "tube": 0.006,
+            "seg": 12,
+            "pos": [
+              0,
+              0,
+              0.03
+            ],
+            "material": {
+              "color": "accent",
+              "metalness": 0.8
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

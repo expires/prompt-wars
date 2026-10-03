@@ -328,7 +328,9 @@ export function normalizeClass(v: unknown): WeaponClass {
   if (typeof v === 'string') {
     const k = v.trim().toLowerCase().replace(/[\s-]+/g, '_');
     if (isWeaponClass(k)) return k;
-    const alias = CLASS_ALIASES[k] ?? CLASS_ALIASES[k.replace(/_/g, '')];
+    // own properties only: '__proto__' / 'constructor' must not resolve to Object.prototype members
+    const own = (key: string) => (Object.prototype.hasOwnProperty.call(CLASS_ALIASES, key) ? CLASS_ALIASES[key] : undefined);
+    const alias = own(k) ?? own(k.replace(/_/g, ''));
     if (alias) return alias;
   }
   return 'weird';

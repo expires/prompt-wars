@@ -7,3 +7,4 @@ export * from './maps';
 export * from './hitcheck';
 export * from './melee';
 export * from './templates';
+export * from './forge';

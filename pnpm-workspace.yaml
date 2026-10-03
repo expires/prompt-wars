@@ -3,5 +3,9 @@ packages:
   - shared
   - server
   - parts
+  - forge
 allowBuilds:
   esbuild: true
+  sharp: false
+minimumReleaseAgeExclude:
+  - '@zip.js/zip.js@2.23.0'

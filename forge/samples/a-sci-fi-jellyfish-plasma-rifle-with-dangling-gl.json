@@ -1,0 +1,1094 @@
+{
+  "prompt": "a sci-fi jellyfish plasma rifle with dangling glowing tentacles",
+  "model": "claude-haiku-4-5-20251001",
+  "timing": {
+    "meta": 1885,
+    "firstComponent": 3640,
+    "lastComponent": 23295,
+    "done": 23923
+  },
+  "warnings": [
+    "\"bell-shaped plasma bell\" was floating 0.04 m away; snapped on",
+    "\"holo targeting projector\" was floating 0.06 m away; snapped on"
+  ],
+  "design": {
+    "v": 1,
+    "name": "Jellyfish Plasma Rifle",
+    "class": "rifle",
+    "fireMode": "hitscan",
+    "stats": {
+      "damage": 12.2,
+      "pellets": 1,
+      "fireRate": 7.65,
+      "magSize": 24,
+      "reloadTime": 2.2,
+      "range": 75,
+      "spread": 1.1,
+      "projectileSpeed": 0,
+      "splashRadius": 0,
+      "gravityScale": 0,
+      "fuseTime": 0,
+      "dotDamage": 0,
+      "dotDuration": 0,
+      "knockback": 0,
+      "slowPercent": 0,
+      "chargeTime": 0,
+      "headshotMultiplier": 2.1
+    },
+    "palette": {
+      "primary": "#1a0f2e",
+      "secondary": "#6b4ce6",
+      "accent": "#00d9ff",
+      "glow": "#00ffff"
+    },
+    "fx": {
+      "muzzleFlashColor": "#00ffff",
+      "trail": "glow",
+      "trailColor": "#00ffff"
+    },
+    "components": [
+      {
+        "id": "core",
+        "label": "sci-fi plasma core",
+        "role": "core",
+        "transform": {
+          "pos": [
+            0,
+            0.1,
+            0.08
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "shapes": [
+          {
+            "type": "box",
+            "size": [
+              0.048,
+              0.12,
+              0.18
+            ],
+            "material": {
+              "color": "primary",
+              "metalness": 0.8,
+              "roughness": 0.2
+            }
+          },
+          {
+            "type": "box",
+            "size": [
+              0.052,
+              0.015,
+              0.18
+            ],
+            "pos": [
+              0,
+              0.07,
+              0
+            ],
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.6
+            }
+          },
+          {
+            "type": "box",
+            "size": [
+              0.052,
+              0.015,
+              0.18
+            ],
+            "pos": [
+              0,
+              -0.07,
+              0
+            ],
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.6
+            }
+          }
+        ]
+      },
+      {
+        "id": "bell",
+        "label": "bell-shaped plasma bell",
+        "role": "barrel",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "core",
+        "attach": "front",
+        "shapes": [
+          {
+            "type": "lathe",
+            "points": [
+              [
+                0.022,
+                0
+              ],
+              [
+                0.038,
+                0
+              ],
+              [
+                0.042,
+                0.06
+              ],
+              [
+                0.048,
+                0.12
+              ],
+              [
+                0.051,
+                0.22
+              ],
+              [
+                0.045,
+                0.28
+              ],
+              [
+                0.035,
+                0.3
+              ]
+            ],
+            "seg": 12,
+            "rot": [
+              -90,
+              0,
+              0
+            ],
+            "material": {
+              "color": "secondary",
+              "metalness": 0.6,
+              "roughness": 0.25,
+              "emissive": "glow",
+              "emissiveIntensity": 0.4
+            }
+          }
+        ]
+      },
+      {
+        "id": "muzzle",
+        "label": "4-prong energy emitter",
+        "role": "muzzle",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            -0.01
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "bell",
+        "attach": "front",
+        "shapes": [
+          {
+            "type": "cone",
+            "r": 0.008,
+            "h": 0.04,
+            "seg": 5,
+            "pos": [
+              0.016,
+              0,
+              0
+            ],
+            "rot": [
+              -90,
+              0,
+              0
+            ],
+            "material": {
+              "color": "glow",
+              "emissive": "glow",
+              "emissiveIntensity": 0.8
+            }
+          },
+          {
+            "type": "cone",
+            "r": 0.008,
+            "h": 0.04,
+            "seg": 5,
+            "pos": [
+              -0.016,
+              0,
+              0
+            ],
+            "rot": [
+              -90,
+              0,
+              0
+            ],
+            "material": {
+              "color": "glow",
+              "emissive": "glow",
+              "emissiveIntensity": 0.8
+            }
+          },
+          {
+            "type": "cone",
+            "r": 0.008,
+            "h": 0.04,
+            "seg": 5,
+            "pos": [
+              0,
+              0.016,
+              0
+            ],
+            "rot": [
+              -90,
+              0,
+              0
+            ],
+            "material": {
+              "color": "glow",
+              "emissive": "glow",
+              "emissiveIntensity": 0.8
+            }
+          },
+          {
+            "type": "cone",
+            "r": 0.008,
+            "h": 0.04,
+            "seg": 5,
+            "pos": [
+              0,
+              -0.016,
+              0
+            ],
+            "rot": [
+              -90,
+              0,
+              0
+            ],
+            "material": {
+              "color": "glow",
+              "emissive": "glow",
+              "emissiveIntensity": 0.8
+            }
+          },
+          {
+            "type": "sphere",
+            "r": 0.012,
+            "wseg": 8,
+            "hseg": 6,
+            "material": {
+              "color": "accent",
+              "emissive": "glow",
+              "emissiveIntensity": 1
+            }
+          }
+        ]
+      },
+      {
+        "id": "tent1",
+        "label": "glowing plasma tentacle",
+        "role": "deco",
+        "transform": {
+          "pos": [
+            0,
+            0.02,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "bell",
+        "attach": "left",
+        "shapes": [
+          {
+            "type": "tube",
+            "path": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                -0.08,
+                0.06,
+                -0.15
+              ],
+              [
+                -0.14,
+                0.15,
+                -0.28
+              ],
+              [
+                -0.16,
+                0.28,
+                -0.35
+              ]
+            ],
+            "r": 0.008,
+            "seg": 6,
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.5
+            }
+          },
+          {
+            "type": "sphere",
+            "r": 0.006,
+            "wseg": 6,
+            "hseg": 4,
+            "pos": [
+              -0.16,
+              0.28,
+              -0.35
+            ],
+            "material": {
+              "color": "accent",
+              "emissive": "glow",
+              "emissiveIntensity": 0.7
+            }
+          }
+        ]
+      },
+      {
+        "id": "tent2",
+        "label": "glowing plasma tentacle",
+        "role": "deco",
+        "transform": {
+          "pos": [
+            0,
+            0.02,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "bell",
+        "attach": "right",
+        "shapes": [
+          {
+            "type": "tube",
+            "path": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0.08,
+                0.06,
+                -0.15
+              ],
+              [
+                0.14,
+                0.15,
+                -0.28
+              ],
+              [
+                0.16,
+                0.28,
+                -0.35
+              ]
+            ],
+            "r": 0.008,
+            "seg": 6,
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.5
+            }
+          },
+          {
+            "type": "sphere",
+            "r": 0.006,
+            "wseg": 6,
+            "hseg": 4,
+            "pos": [
+              0.16,
+              0.28,
+              -0.35
+            ],
+            "material": {
+              "color": "accent",
+              "emissive": "glow",
+              "emissiveIntensity": 0.7
+            }
+          }
+        ]
+      },
+      {
+        "id": "tent3",
+        "label": "glowing plasma tentacle",
+        "role": "deco",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "bell",
+        "attach": "top",
+        "shapes": [
+          {
+            "type": "tube",
+            "path": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0.04,
+                0.12,
+                -0.12
+              ],
+              [
+                0.06,
+                0.22,
+                -0.28
+              ],
+              [
+                0.05,
+                0.35,
+                -0.4
+              ]
+            ],
+            "r": 0.008,
+            "seg": 6,
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.5
+            }
+          },
+          {
+            "type": "sphere",
+            "r": 0.006,
+            "wseg": 6,
+            "hseg": 4,
+            "pos": [
+              0.05,
+              0.35,
+              -0.4
+            ],
+            "material": {
+              "color": "accent",
+              "emissive": "glow",
+              "emissiveIntensity": 0.7
+            }
+          }
+        ]
+      },
+      {
+        "id": "tent4",
+        "label": "glowing plasma tentacle",
+        "role": "deco",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "bell",
+        "attach": "top",
+        "shapes": [
+          {
+            "type": "tube",
+            "path": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                -0.04,
+                0.12,
+                -0.12
+              ],
+              [
+                -0.06,
+                0.22,
+                -0.28
+              ],
+              [
+                -0.05,
+                0.35,
+                -0.4
+              ]
+            ],
+            "r": 0.008,
+            "seg": 6,
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.5
+            }
+          },
+          {
+            "type": "sphere",
+            "r": 0.006,
+            "wseg": 6,
+            "hseg": 4,
+            "pos": [
+              -0.05,
+              0.35,
+              -0.4
+            ],
+            "material": {
+              "color": "accent",
+              "emissive": "glow",
+              "emissiveIntensity": 0.7
+            }
+          }
+        ]
+      },
+      {
+        "id": "tent5",
+        "label": "glowing plasma tentacle",
+        "role": "deco",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "bell",
+        "attach": "bottom",
+        "shapes": [
+          {
+            "type": "tube",
+            "path": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0.045,
+                -0.1,
+                -0.14
+              ],
+              [
+                0.065,
+                -0.2,
+                -0.3
+              ],
+              [
+                0.055,
+                -0.32,
+                -0.42
+              ]
+            ],
+            "r": 0.008,
+            "seg": 6,
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.5
+            }
+          },
+          {
+            "type": "sphere",
+            "r": 0.006,
+            "wseg": 6,
+            "hseg": 4,
+            "pos": [
+              0.055,
+              -0.32,
+              -0.42
+            ],
+            "material": {
+              "color": "accent",
+              "emissive": "glow",
+              "emissiveIntensity": 0.7
+            }
+          }
+        ]
+      },
+      {
+        "id": "tent6",
+        "label": "glowing plasma tentacle",
+        "role": "deco",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "bell",
+        "attach": "bottom",
+        "shapes": [
+          {
+            "type": "tube",
+            "path": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                -0.045,
+                -0.1,
+                -0.14
+              ],
+              [
+                -0.065,
+                -0.2,
+                -0.3
+              ],
+              [
+                -0.055,
+                -0.32,
+                -0.42
+              ]
+            ],
+            "r": 0.008,
+            "seg": 6,
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.5
+            }
+          },
+          {
+            "type": "sphere",
+            "r": 0.006,
+            "wseg": 6,
+            "hseg": 4,
+            "pos": [
+              -0.055,
+              -0.32,
+              -0.42
+            ],
+            "material": {
+              "color": "accent",
+              "emissive": "glow",
+              "emissiveIntensity": 0.7
+            }
+          }
+        ]
+      },
+      {
+        "id": "mag",
+        "label": "glowing energy cell",
+        "role": "mag",
+        "transform": {
+          "pos": [
+            0,
+            -0.062,
+            0.02
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "core",
+        "attach": "bottom",
+        "shapes": [
+          {
+            "type": "box",
+            "size": [
+              0.035,
+              0.11,
+              0.065
+            ],
+            "material": {
+              "color": "accent",
+              "roughness": 0.1,
+              "emissive": "glow",
+              "emissiveIntensity": 0.6,
+              "opacity": 0.5
+            }
+          },
+          {
+            "type": "box",
+            "size": [
+              0.041,
+              0.008,
+              0.071
+            ],
+            "pos": [
+              0,
+              -0.062,
+              0
+            ],
+            "material": {
+              "color": "secondary",
+              "metalness": 0.8,
+              "roughness": 0.2
+            }
+          },
+          {
+            "type": "sphere",
+            "r": 0.018,
+            "wseg": 8,
+            "hseg": 5,
+            "pos": [
+              0,
+              -0.04,
+              0
+            ],
+            "scale": [
+              0.7,
+              1,
+              1
+            ],
+            "material": {
+              "color": "glow",
+              "emissive": "glow",
+              "emissiveIntensity": 0.7
+            }
+          }
+        ]
+      },
+      {
+        "id": "grip",
+        "label": "angular plasma grip",
+        "role": "grip",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            -0.01
+          ],
+          "rot": [
+            0,
+            0,
+            10
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "core",
+        "attach": "bottom",
+        "shapes": [
+          {
+            "type": "extrude",
+            "outline": [
+              [
+                0.03,
+                0
+              ],
+              [
+                -0.04,
+                0
+              ],
+              [
+                -0.055,
+                -0.08
+              ],
+              [
+                -0.05,
+                -0.14
+              ],
+              [
+                -0.02,
+                -0.15
+              ],
+              [
+                0,
+                -0.125
+              ],
+              [
+                0.015,
+                -0.05
+              ]
+            ],
+            "depth": 0.045,
+            "rot": [
+              0,
+              90,
+              0
+            ],
+            "material": {
+              "color": "primary",
+              "metalness": 0.7,
+              "roughness": 0.3
+            },
+            "bevel": 0.003
+          },
+          {
+            "type": "box",
+            "size": [
+              0.008,
+              0.025,
+              0.012
+            ],
+            "pos": [
+              0.012,
+              0.008,
+              -0.06
+            ],
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.4
+            }
+          }
+        ]
+      },
+      {
+        "id": "stock",
+        "label": "sci-fi triangular stock",
+        "role": "stock",
+        "transform": {
+          "pos": [
+            0,
+            0,
+            0.04
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "core",
+        "attach": "back",
+        "shapes": [
+          {
+            "type": "extrude",
+            "outline": [
+              [
+                0,
+                0.06
+              ],
+              [
+                0.06,
+                0.02
+              ],
+              [
+                0.06,
+                -0.06
+              ],
+              [
+                0,
+                -0.1
+              ],
+              [
+                -0.06,
+                -0.06
+              ],
+              [
+                -0.06,
+                0.02
+              ]
+            ],
+            "depth": 0.08,
+            "rot": [
+              0,
+              90,
+              0
+            ],
+            "material": {
+              "color": "primary",
+              "metalness": 0.7,
+              "roughness": 0.3
+            },
+            "bevel": 0.002
+          },
+          {
+            "type": "box",
+            "size": [
+              0.052,
+              0.01,
+              0.08
+            ],
+            "pos": [
+              0,
+              0.075,
+              0
+            ],
+            "material": {
+              "color": "secondary",
+              "emissive": "glow",
+              "emissiveIntensity": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "id": "sight",
+        "label": "holo targeting projector",
+        "role": "sight",
+        "transform": {
+          "pos": [
+            0,
+            0.0075,
+            0.02
+          ],
+          "rot": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "parent": "core",
+        "attach": "top",
+        "shapes": [
+          {
+            "type": "box",
+            "size": [
+              0.022,
+              0.015,
+              0.04
+            ],
+            "material": {
+              "color": "primary",
+              "metalness": 0.8,
+              "roughness": 0.2
+            }
+          },
+          {
+            "type": "sphere",
+            "r": 0.016,
+            "wseg": 8,
+            "hseg": 6,
+            "pos": [
+              0,
+              0.01,
+              0.04
+            ],
+            "material": {
+              "color": "glow",
+              "emissive": "glow",
+              "emissiveIntensity": 0.9
+            }
+          },
+          {
+            "type": "cylinder",
+            "rTop": 0.018,
+            "rBottom": 0.018,
+            "h": 0.006,
+            "seg": 12,
+            "pos": [
+              0,
+              0.016,
+              0.045
+            ],
+            "rot": [
+              90,
+              0,
+              0
+            ],
+            "material": {
+              "color": "accent",
+              "emissive": "glow",
+              "emissiveIntensity": 0.6,
+              "opacity": 0.4
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
