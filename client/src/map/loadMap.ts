@@ -1,10 +1,15 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import type { PhysicsContext } from '../engine/physics';
 import { buildTrimeshColliders } from './collider';
-import type { GameMap, Vec3 } from './types';
+import type { GameMap, MapMeta, Vec3 } from './types';
 
 const loader = new GLTFLoader();
+loader.setMeshoptDecoder(MeshoptDecoder);
+
+/** Above this visual triangle count, meshes stop casting shadows (big venue scans). */
+const SHADOW_TRIANGLE_BUDGET = 150_000;
 
 async function tryLoad(url: string): Promise<THREE.Group | null> {
   try {
@@ -25,9 +30,47 @@ async function tryLoad(url: string): Promise<THREE.Group | null> {
   }
 }
 
+/** `map.glb` -> `map.meta.json` */
+export function metaUrlFor(url: string) {
+  return url.replace(/(\.glb|\.gltf)(\?.*)?$/i, '.meta.json$2');
+}
+
+async function tryLoadMeta(url: string): Promise<MapMeta | undefined> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return undefined;
+    const buf = await res.arrayBuffer();
+    // Same index.html sniffing as tryLoad: the SPA fallback returns HTML with a 200
+    const head = new TextDecoder().decode(new Uint8Array(buf, 0, Math.min(16, buf.byteLength)));
+    if (!head.trimStart().startsWith('{')) return undefined;
+    const parsed = JSON.parse(new TextDecoder().decode(buf));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    return parsed as MapMeta;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `map.glb` -> `map_collision.glb` */
 export function collisionUrlFor(url: string) {
   return url.replace(/(\.glb|\.gltf)(\?.*)?$/i, '_collision$1$2');
+}
+
+function countVisualTriangles(root: THREE.Object3D): number {
+  let tris = 0;
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const geo = m.geometry as THREE.BufferGeometry | undefined;
+    if (!geo) return;
+    const index = geo.getIndex();
+    if (index) tris += index.count / 3;
+    else {
+      const pos = geo.getAttribute('position');
+      if (pos) tris += pos.count / 3;
+    }
+  });
+  return Math.round(tris);
 }
 
 /**
@@ -42,18 +85,33 @@ export async function loadMap(
 ): Promise<GameMap> {
   const visual = await tryLoad(url);
   if (!visual) throw new Error(`Map not found: ${url}`);
+
+  const triangles = countVisualTriangles(visual);
+  const castShadow = triangles <= SHADOW_TRIANGLE_BUDGET;
   visual.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (m.isMesh) {
-      m.castShadow = true;
-      m.receiveShadow = true;
+    if (!m.isMesh) return;
+    m.castShadow = castShadow;
+    m.receiveShadow = true;
+    // Unlit scans (KHR_materials_unlit -> MeshBasicMaterial) must keep their
+    // baked texture in sRGB and stay frustum-culled like any other mesh.
+    const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+    const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
+    for (const one of mats) {
+      const basic = one as THREE.MeshBasicMaterial;
+      if (basic.isMeshBasicMaterial && basic.map) basic.map.colorSpace = THREE.SRGBColorSpace;
     }
+    m.frustumCulled = true;
   });
   scene.add(visual);
 
   const collisionScene = await tryLoad(opts.collisionUrl ?? collisionUrlFor(url));
   const colliders = buildTrimeshColliders(collisionScene ?? visual, physics);
-  console.info(`[map] ${url}: ${colliders.length} colliders from ${collisionScene ? 'collision GLB' : 'visual mesh'}`);
+  console.info(
+    `[map] ${url}: ${colliders.length} colliders from ${collisionScene ? 'collision GLB' : 'visual mesh'}, ${triangles} visual triangles`,
+  );
+
+  const meta = await tryLoadMeta(metaUrlFor(url));
 
   const bb = new THREE.Box3().setFromObject(visual);
   const center = bb.getCenter(new THREE.Vector3());
@@ -65,6 +123,7 @@ export async function loadMap(
     colliders,
     spawns,
     killY: bb.min.y - 20,
+    meta,
     dispose() {
       scene.remove(visual);
       colliders.forEach((c) => physics.world.removeCollider(c, false));
