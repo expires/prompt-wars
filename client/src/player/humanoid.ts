@@ -69,6 +69,7 @@ export class Humanoid {
 
   constructor(color: THREE.ColorRepresentation = 0x3a7bd5) {
     this.bodyMat = new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.7 });
+    this.baseColor.set(color);
     this.limbMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(0.6), flatShading: true });
     const skin = new THREE.MeshStandardMaterial({ color: 0xe0b89a, flatShading: true });
     const visor = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8, roughness: 0.2 });
@@ -121,8 +122,48 @@ export class Humanoid {
   }
 
   setColor(color: THREE.ColorRepresentation) {
-    this.bodyMat.color.set(color);
-    this.limbMat.color.set(color).multiplyScalar(0.6);
+    this.baseColor.set(color);
+    this.applyColors();
+  }
+
+  private readonly baseColor = new THREE.Color();
+  private tint: THREE.Color | null = null;
+  private tintK = 0;
+
+  private applyColors() {
+    this.bodyMat.color.copy(this.baseColor);
+    if (this.tint) this.bodyMat.color.lerp(this.tint, 0.75);
+    this.limbMat.color.copy(this.bodyMat.color).multiplyScalar(0.6);
+  }
+
+  /** elemental status look (burning orange / chilled blue ...): body recoloured + glow; null clears it */
+  setStatusTint(color: THREE.ColorRepresentation | null, intensity = 0.5) {
+    if (color === null) {
+      if (!this.tint) return;
+      this.tint = null;
+      this.tintK = 0;
+      for (const m of [this.bodyMat, this.limbMat]) {
+        m.emissive.setRGB(0, 0, 0);
+        m.emissiveIntensity = 0;
+      }
+      this.applyColors();
+      return;
+    }
+    const c = new THREE.Color(color);
+    if (!this.tint || !this.tint.equals(c)) {
+      this.tint = c;
+      this.applyColors();
+    }
+    this.tintK = intensity;
+    for (const m of [this.bodyMat, this.limbMat]) {
+      m.emissive.copy(c);
+      m.emissiveIntensity = intensity;
+    }
+  }
+
+  /** current status glow intensity (tests) */
+  get statusTint(): number {
+    return this.tint ? Math.max(0.01, this.tintK) : 0;
   }
 
   /** aim pitch in radians (positive = up) */

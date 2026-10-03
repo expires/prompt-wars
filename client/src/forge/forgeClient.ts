@@ -20,6 +20,8 @@ import {
   type ForgeDesign,
   type ForgeEvent,
   type ForgeGenerateRequest,
+  type ProjectileDesign,
+  projectileRejectKey,
 } from '@ai-gaem/shared';
 
 export type ForgeErrorKind = 'rate' | 'http' | 'network' | 'timeout' | 'stream' | 'aborted';
@@ -151,6 +153,7 @@ export interface ForgeDraft {
   fx?: DesignFx;
   stats?: DesignStats;
   components: Component[];
+  projectile?: ProjectileDesign;
   design: ForgeDesign | null;
   warnings: string[];
   error: string | null;
@@ -216,6 +219,7 @@ export class ForgeSession {
           variants,
           previous: prev ?? undefined,
           locked: prev?.components.filter((c) => c.locked),
+          lockedProjectile: prev?.projectile?.locked ? prev.projectile : undefined,
           rejected: this.state.rejected,
           playerIdentity: this.opts.playerIdentity,
         },
@@ -235,9 +239,10 @@ export class ForgeSession {
           const d = draft(ev.variant);
           if (ev.type === 'meta') Object.assign(d, { name: ev.name, class: ev.class, fireMode: ev.fireMode, palette: ev.palette, fx: ev.fx });
           else if (ev.type === 'component') d.components = [...d.components, ev.component];
+          else if (ev.type === 'projectile') d.projectile = ev.projectile;
           else if (ev.type === 'stats') d.stats = ev.stats;
           else if (ev.type === 'done')
-            Object.assign(d, { design: ev.design, warnings: ev.warnings, components: ev.design.components, stats: ev.design.stats, name: ev.design.name, class: ev.design.class });
+            Object.assign(d, { design: ev.design, warnings: ev.warnings, components: ev.design.components, projectile: ev.design.projectile, stats: ev.design.stats, name: ev.design.name, class: ev.design.class });
           else if (ev.type === 'error') d.error = ev.message;
           drafts[ev.variant] = { ...d };
           this.set({ drafts: [...drafts] });
@@ -272,7 +277,7 @@ export class ForgeSession {
   edit(e: DesignEditInput): string[] {
     if (!this.state.design) return ['no design'];
     const r = applyEdit(this.state.design, e);
-    const rejected = [...this.state.rejected, ...r.removed.map((c) => c.label)].slice(-32);
+    const rejected = [...this.state.rejected, ...r.removed.map((c) => c.label), ...(r.removedProjectile ? [projectileRejectKey(r.removedProjectile.label)] : [])].slice(-32);
     this.set({ design: r.design, rejected });
     return r.warnings;
   }

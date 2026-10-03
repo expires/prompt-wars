@@ -23,6 +23,11 @@ export interface NetPlayer {
   /** movement slow (percent, 0-60) active until slowUntil (ms since epoch) */
   slowPercent?: number;
   slowUntil?: number;
+  /** element code of the active slow (2 = ice: chilled, 4 = shock), 0 / undefined = plain */
+  slowElement?: number;
+  /** damage-over-time active until (ms since epoch) and its element code (1 = fire: burning, 3 = poison) */
+  dotUntil?: number;
+  dotElement?: number;
   /** crouched (lower hitboxes, crouched model) */
   crouching?: boolean;
   /** new player who hasn't picked / forged a weapon yet (can't deploy) */
@@ -39,6 +44,8 @@ export interface KillEvent {
   at: number;
   /** the killing blow was a headshot */
   headshot?: boolean;
+  /** element code of the killing blow (burn / poison ticks included), 0 = none */
+  element?: number;
 }
 
 /** A shot fired by a remote player (for tracers / projectiles / muzzle flashes). */
@@ -64,6 +71,8 @@ export interface LocalHitEvent {
   headshot: boolean;
   /** melee hit reduced by our block */
   blocked?: boolean;
+  /** element code of the hit, 0 = none */
+  element?: number;
 }
 
 /**
@@ -134,6 +143,8 @@ export interface HitConfirmEvent {
   point?: Vec3;
   /** melee hit reduced by the target's block */
   blocked?: boolean;
+  /** element code of the hit, 0 = none */
+  element?: number;
 }
 
 export interface GenerateWeaponResult {

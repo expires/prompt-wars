@@ -4,6 +4,8 @@ import './card.css';
 import { esc } from './dom';
 import { flavorFor, pipsHtml, rarityOf, type Rarity, TIER_LABELS, type Tier } from './rarity';
 import type { Weapon } from '../weapons/types';
+import { icon } from './icons';
+import { moveSpeedLabel, weaponMoveMultiplier } from '@ai-gaem/shared';
 
 export interface WeaponCardData {
   name: string;
@@ -13,6 +15,10 @@ export interface WeaponCardData {
   forgedBy?: string;
   /** compact stat line, e.g. "24 DMG · 450 RPM · 30 MAG" */
   stats?: string;
+  /** carry weight label ("+8%" / "−12%") */
+  move?: string;
+  /** fire / ice / poison / shock */
+  element?: string | null;
 }
 
 export function classLabel(cls: string): string {
@@ -26,7 +32,16 @@ export function cardDataFor(w: Weapon, forgedBy?: string): WeaponCardData {
     w.fireMode === 'melee'
       ? `${dmg} DMG · ${Math.round(w.fireRate * 60)} SWINGS/MIN · ${w.range.toFixed(1)} M REACH`
       : `${dmg} DMG · ${Math.round(w.fireRate * 60)} RPM · ${w.magSize} MAG`;
-  return { name: w.name, cls: w.class, rarity: r, flavor: flavorFor(w.name, w.class), forgedBy, stats };
+  return {
+    name: w.name,
+    cls: w.class,
+    rarity: r,
+    flavor: flavorFor(w.name, w.class),
+    forgedBy,
+    stats,
+    move: moveSpeedLabel(weaponMoveMultiplier(w)),
+    element: w.element ?? null,
+  };
 }
 
 export function weaponCardHtml(d: WeaponCardData, opts: { compact?: boolean; testid?: string } = {}): string {
@@ -39,6 +54,7 @@ export function weaponCardHtml(d: WeaponCardData, opts: { compact?: boolean; tes
     <div class="wcard-body">
       <h3 class="wcard-name" data-role="name">${esc(d.name)}</h3>
       ${d.stats ? `<div class="wcard-stats">${esc(d.stats)}</div>` : ''}
+      ${d.move || d.element ? `<div class="wcard-traits">${d.element ? `<span class="wcard-el wcard-el--${esc(d.element)}" data-testid="card-element">${icon(d.element, 'ui-icon')}${esc(d.element)}</span>` : ''}${d.move && d.move !== '±0%' ? `<span class="wcard-move ${d.move.startsWith('+') ? 'is-fast' : 'is-slow'}" data-testid="card-move">Move speed ${esc(d.move)}</span>` : ''}</div>` : ''}
       ${d.flavor ? `<p class="wcard-flavor">“${esc(d.flavor)}”</p>` : ''}
       ${d.forgedBy ? `<div class="wcard-by">Forged by <b>${esc(d.forgedBy)}</b></div>` : ''}
     </div>

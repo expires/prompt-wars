@@ -12,6 +12,7 @@
 
 import type { FireMode, WeaponClass } from '../weapon';
 import type { MeleeMeta } from '../melee';
+import type { Element } from '../elements';
 
 export const FORGE_DSL_VERSION = 1;
 
@@ -146,6 +147,35 @@ export interface DesignFx {
   trailColor?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Projectile (optional, cosmetic): the model of what the weapon fires / throws, built from the
+// same primitives as components. Frame: centred on the origin, flight direction = -Z.
+// Absent -> clients fall back to fx.projectileShape (a built-in preset made of the same shapes).
+// ---------------------------------------------------------------------------
+
+/** Editor / edit-op id of the projectile (not a legal component id, so it never collides). */
+export const PROJECTILE_ID = '@projectile';
+export const PROJECTILE_IMPACTS = ['puff', 'spark', 'splash', 'shatter', 'burst', 'splat'] as const;
+export type ProjectileImpact = (typeof PROJECTILE_IMPACTS)[number];
+export const SPIN_AXES = ['x', 'y', 'z'] as const;
+export type SpinAxis = (typeof SPIN_AXES)[number];
+
+export interface ProjectileDesign {
+  /** what it is, e.g. "soap bubble", "finned rocket" */
+  label: string;
+  /** primitives in the projectile frame (same vocabulary as component shapes) */
+  shapes: Shape[];
+  /** revolutions / s around a projectile axis (z = roll around the flight direction) */
+  spin?: { axis: SpinAxis; rate: number };
+  /** 0 - 1: squash / stretch + sway in flight (bubbles, blobs) */
+  wobble?: number;
+  trail?: Trail;
+  trailColor?: string;
+  impact?: ProjectileImpact;
+  /** editor: kept verbatim by reprompts */
+  locked?: boolean;
+}
+
 /** Stats: the numeric Weapon fields (always balanced by clampWeapon) + melee meta. */
 export interface DesignStats {
   damage: number;
@@ -166,6 +196,10 @@ export interface DesignStats {
   chargeTime: number;
   headshotMultiplier: number;
   melee?: MeleeMeta;
+  /** fire | ice | poison | shock | null (none); inferred from the name / class when missing */
+  element?: Element | null;
+  /** carry-weight movement multiplier (derived from class + model size by sanitizeDesign) */
+  moveSpeedMult?: number;
 }
 
 export interface ForgeDesign {
@@ -177,6 +211,8 @@ export interface ForgeDesign {
   palette: DesignPalette;
   fx: DesignFx;
   components: Component[];
+  /** projectile / thrown-object model (projectile and arc fire modes only) */
+  projectile?: ProjectileDesign;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +242,13 @@ export const FORGE_LIMITS = {
   catalogPartHalfSize: 0.15,
   maxNameLength: 40,
   maxLabelLength: 48,
+  /** projectile model */
+  maxProjectileShapes: 8,
+  projectileMinSize: 0.05,
+  projectileMaxSize: 1.2,
+  projectileMaxTris: 600,
+  /** revolutions / s */
+  maxProjectileSpin: 6,
   /** register_design / service payload limit */
   maxDesignJson: 48_000,
 } as const;

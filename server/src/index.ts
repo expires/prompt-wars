@@ -62,6 +62,10 @@ import {
   FORGE_LIMITS,
   designToWeapon,
   sanitizeDesign,
+  elementCode,
+  elementFromCode,
+  slowDurationFor,
+  stackedSlow,
 } from '@ai-gaem/shared';
 import { PART_CATALOG, PART_RECIPES } from './catalog.generated';
 
@@ -106,7 +110,10 @@ const player = table(
     slowUntil: t.timestamp(),
     /** legacy (now player_combat) */
     dotDps: t.f32(),
-    /** legacy (now player_combat) */
+    /**
+     * Public end of the active damage-over-time effect (burning / poisoned visuals; the DoT itself
+     * lives in player_combat). Its element is `dotElement`.
+     */
     dotUntil: t.timestamp(),
     /** legacy (now player_combat) */
     dotSource: t.identity(),
@@ -121,11 +128,15 @@ const player = table(
      * generate_weapon while dead). Such players stay dead (alive = false) and can't respawn.
      */
     needsLoadout: t.bool().default(false),
+    /** element code (@ai-gaem/shared ELEMENT_CODE, 0 = none) of the DoT active until dotUntil (fire = burning) */
+    dotElement: t.u8().default(0),
+    /** element code of the slow active until slowUntil (ice = chilled, shock = shocked) */
+    slowElement: t.u8().default(0),
   },
 );
 
 /**
- * Hot, small, public: one row per online player, updated by update_transform (~20 Hz while
+ * Hot, small, public: one row per online player, updated by update_transform (~30 Hz while
  * moving, nothing while idle). sendT = sender's clock (ms, wraps) for jitter-free interpolation.
  */
 const playerPose = table(
@@ -268,6 +279,8 @@ const hitEvent = table(
     headshot: t.bool().default(false),
     /** melee hit reduced by the target's block */
     blocked: t.bool().default(false),
+    /** element code of the hit (weapon element; DoT ticks: the DoT's element), 0 = none */
+    element: t.u8().default(0),
   },
 );
 
@@ -468,6 +481,9 @@ function spawnPlayer(ctx: Ctx, p: PlayerRow, weaponId: bigint): PlayerRow {
     respawnAt: EPOCH,
     slowPercent: 0,
     slowUntil: EPOCH,
+    slowElement: 0,
+    dotUntil: EPOCH,
+    dotElement: 0,
   };
   const c = ctx.db.playerCombat.identity.find(p.identity);
   if (c) {
@@ -511,6 +527,8 @@ function applyDamage(
     slow?: number;
     headshot?: boolean;
     blocked?: boolean;
+    /** element code (hit_event.element) */
+    element?: number;
     /** extra fields to write in the same player row update (e.g. slow) */
     patch?: Partial<PlayerRow>;
   } = {},
@@ -527,6 +545,9 @@ function applyDamage(
       respawnAt: addSeconds(ctx.timestamp, RESPAWN_DELAY_SECONDS),
       slowPercent: 0,
       slowUntil: EPOCH,
+      slowElement: 0,
+      dotUntil: EPOCH,
+      dotElement: 0,
     };
     deleteDotTimer(ctx, target.identity);
   }
@@ -553,6 +574,7 @@ function applyDamage(
     slowPercent: opts.slow ?? 0,
     headshot: !!opts.headshot,
     blocked: !!opts.blocked,
+    element: opts.element ?? 0,
   });
   return next;
 }
@@ -702,6 +724,8 @@ export const onConnect = spacetimedb.clientConnected(ctx => {
     crouching: false,
     slot: c.slot,
     needsLoadout: true,
+    dotElement: 0,
+    slowElement: 0,
   };
   // New players start dead with no weapon ("forging"): they respawn once they have registered a
   // design (register_design) or equipped a preset. The pose row parks them at a spawn point.
@@ -745,7 +769,7 @@ export const set_name = spacetimedb.reducer({ name: t.string() }, (ctx, { name }
 
 /**
  * Client-authoritative movement: position, look, velocity (m/s), POSE_FLAG_* flags and the
- * sender's clock (ms) for interpolation. Sent ~20 Hz while moving, immediately on discrete
+ * sender's clock (ms) for interpolation. Sent ~30 Hz while moving, immediately on discrete
  * changes (jump / land / crouch / stop), nothing while idle. Ignored while dead.
  */
 export const update_transform = spacetimedb.reducer(
@@ -857,9 +881,31 @@ function applyHit(ctx: Ctx, s: ShotCtx, slot: number, zone: number, impact: [num
     const len = Math.max(0.001, dist(pose.x, pose.y, pose.z, c[0], c[1], c[2]));
     knock = [((pose.x - c[0]) / len) * knockSpeed, ((pose.y - c[1]) / len) * knockSpeed + knockSpeed * 0.3, ((pose.z - c[2]) / len) * knockSpeed];
   }
-  // Slow rides along in the same row update (refresh, don't stack); the client lets it expire.
-  const patch: Partial<PlayerRow> = w.slowPercent > 0 ? { slowPercent: w.slowPercent, slowUntil: addSeconds(ctx.timestamp, SLOW_DURATION) } : {};
-  const v = applyDamage(ctx, victim, damage, ctx.sender, s.weaponId, { at: impact, knock, slow: w.slowPercent, headshot, blocked, patch });
+  // Elemental / slow / DoT state rides along in the same player row update; the client lets it
+  // expire. Slows refresh (ice stacks up to 60 %, shock is brief); DoTs refresh, never stack.
+  const element = w.element ?? null;
+  const code = elementCode(element);
+  const now = ctx.timestamp;
+  const patch: Partial<PlayerRow> = {};
+  let slow = 0;
+  if (w.slowPercent > 0) {
+    const activeLeft = micros(victim.slowUntil) - micros(now);
+    const active = activeLeft > 0n && victim.slowPercent > 0 ? { percent: victim.slowPercent, element: elementFromCode(victim.slowElement) } : null;
+    const dur = slowDurationFor(element);
+    slow = stackedSlow(element, w.slowPercent, active);
+    // a brief shock never shortens a stronger, longer slow already running
+    const keep = active && active.percent >= slow && Number(activeLeft) / 1e6 > dur;
+    if (!keep) {
+      patch.slowPercent = slow;
+      patch.slowUntil = addSeconds(now, element === 'ice' || element === 'shock' ? dur : SLOW_DURATION);
+      patch.slowElement = element === 'ice' || element === 'shock' ? code : 0;
+    } else slow = active.percent;
+  }
+  if (w.dotDamage > 0) {
+    patch.dotUntil = addSeconds(now, w.dotDuration);
+    patch.dotElement = element === 'fire' || element === 'poison' ? code : 0;
+  }
+  const v = applyDamage(ctx, victim, damage, ctx.sender, s.weaponId, { at: impact, knock, slow, headshot, blocked, patch, element: code });
   if (v.alive && w.dotDamage > 0) {
     ctx.db.playerCombat.identity.update({
       ...vc,
@@ -1038,6 +1084,7 @@ export const register_design = spacetimedb.reducer(
     if (design.components.length === 0) throw new SenderError('design has no usable components');
     // locked flags are editor state, not part of the stored weapon
     for (const c of design.components) delete c.locked;
+    if (design.projectile) delete design.projectile.locked;
     const w = designToWeapon(design);
     const row = insertWeapon(ctx, ctx.sender, w, prompt, false, JSON.stringify(design));
     if (!p.alive) ctx.db.player.identity.update({ ...p, weaponId: row.id, needsLoadout: false });
@@ -1060,6 +1107,9 @@ export const request_redeploy = spacetimedb.reducer(ctx => {
     respawnAt: addSeconds(ctx.timestamp, RESPAWN_DELAY_SECONDS),
     slowPercent: 0,
     slowUntil: EPOCH,
+    slowElement: 0,
+    dotUntil: EPOCH,
+    dotElement: 0,
   });
   deleteDotTimer(ctx, p.identity);
   const c = ctx.db.playerCombat.identity.find(p.identity);
@@ -1139,7 +1189,7 @@ export const dot_tick = spacetimedb.reducer({ onSchedule: dotTimer }, { timer: d
   if (c && p && p.alive && c.dotDps > 0 && seconds > 0) {
     const pose = ctx.db.playerPose.slot.find(c.slot);
     const at: [number, number, number] = pose ? [pose.x, pose.y + 1, pose.z] : [p.x, p.y, p.z];
-    applyDamage(ctx, p, c.dotDps * seconds, c.dotSource, c.dotWeaponId, { dot: true, at });
+    applyDamage(ctx, p, c.dotDps * seconds, c.dotSource, c.dotWeaponId, { dot: true, at, element: p.dotElement });
   }
   const alive = ctx.db.player.identity.find(timer.target)?.alive ?? false;
   if (!c || !alive || c.dotDps <= 0 || now >= micros(c.dotUntil)) {

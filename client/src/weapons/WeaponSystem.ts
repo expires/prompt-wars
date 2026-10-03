@@ -11,10 +11,16 @@ import { resolveFireMode, type FireMode, type Weapon } from './types';
 import { effectiveSpread, weaponHandling, type Handling, type MoveState } from './handling';
 import { buildWeaponModel } from './buildWeaponModel';
 import { THROW_TIME } from './throwAnim';
+import { projectileLookOf, type ProjectileLook } from './projectileLook';
 import { WALK_SPEED } from '../player/PlayerController';
+import { elementParticle, shotColor } from './elementFx';
+import type { Element } from '@ai-gaem/shared';
 
 const ARC_GRAVITY = 12;
 const DEG = Math.PI / 180;
+const FWD = new THREE.Vector3(0, 0, -1);
+const qSpin = new THREE.Quaternion();
+const UP = new THREE.Vector3(0, 1, 0);
 
 interface Projectile {
   pos: THREE.Vector3;
@@ -22,8 +28,14 @@ interface Projectile {
   gravity: number;
   ttl: number;
   mesh: THREE.Object3D;
-  /** thrown objects tumble in flight */
+  /** thrown objects without a designed spin tumble in flight (rad / s) */
   spin: number;
+  /** look (generated / preset model, spin, wobble, trail, impact) */
+  look: ProjectileLook;
+  /** seconds in flight */
+  age: number;
+  /** mesh scale at spawn (wobble modulates around it) */
+  baseScale: number;
   /** visual offset from logical pos (starts at muzzle, decays to 0) */
   visOffset: THREE.Vector3;
   damage: number;
@@ -32,6 +44,8 @@ interface Projectile {
   seq: number;
   /** remote player's shot: visuals only, never deals damage */
   visualOnly: boolean;
+  /** element of the weapon (trail particles) */
+  element: Element | null;
 }
 
 export interface WeaponEvents {
@@ -78,7 +92,6 @@ export class WeaponSystem {
   readonly viewmodel: Viewmodel;
   private readonly tmpA = new THREE.Vector3();
   private readonly tmpB = new THREE.Vector3();
-  private readonly projGeo = new THREE.SphereGeometry(0.08, 8, 6);
   handling!: Handling;
   /** current spread bloom (degrees) */
   bloom = 0;
@@ -374,7 +387,7 @@ export class WeaponSystem {
     const dir = this.aimDir(spread, this.tmpA);
     const hit = this.raycast(eye, dir, w.range);
     const end = hit ? hit.point : eye.clone().addScaledVector(dir, w.range);
-    this.effects.tracer(muzzle, end, w.colors?.accent ?? 0xffe9a0);
+    this.effects.tracer(muzzle, end, shotColor(w, 0xffe9a0));
     if (!hit) return;
     const th = this.targets.hitFromCollider(hit.collider);
     const target = th?.target;
@@ -409,14 +422,19 @@ export class WeaponSystem {
     dir.normalize();
     const speed = w.projectileSpeed > 0 ? w.projectileSpeed : 30;
     const thrown = w.class === 'throwable';
+    const look = projectileLookOf(w);
     let mesh: THREE.Object3D;
-    if (thrown) mesh = this.thrownMesh(w);
-    else {
-      const sphere = new THREE.Mesh(this.projGeo, new THREE.MeshBasicMaterial({ color: w.colors?.accent ?? 0xffaa33 }));
-      sphere.scale.setScalar(arc ? 1 : 1.3);
-      mesh = sphere;
+    let tumble = 0;
+    if (thrown && !look.generated) {
+      // throwable without a generated projectile: a throw-sized copy of the held model
+      mesh = this.thrownMesh(w);
+      tumble = 9;
+    } else {
+      mesh = look.make();
+      if (thrown && !look.spin) tumble = 9;
     }
     mesh.position.copy(eye);
+    if (!tumble && look.design) mesh.quaternion.setFromUnitVectors(FWD, dir);
     this.scene.add(mesh);
     this.projectiles.push({
       pos: eye.clone(),
@@ -424,12 +442,16 @@ export class WeaponSystem {
       gravity: arc ? ARC_GRAVITY : 0,
       ttl: Math.max(0.5, (w.range / speed) * (arc ? 3 : 1.2)),
       mesh,
-      spin: thrown ? 9 : 0,
+      spin: tumble,
+      look,
+      age: 0,
+      baseScale: mesh.scale.x,
       visOffset: muzzle.clone().sub(eye),
       damage: w.damage,
       splash: w.splashRadius,
       seq: this.curSeq,
       visualOnly,
+      element: w.element ?? null,
     });
   }
 
@@ -465,20 +487,72 @@ export class WeaponSystem {
           this.effects.explosion(at, p.splash);
           this.events.onExplosion?.(at, p.visualOnly);
           if (!p.visualOnly) this.splash(at, p.splash, p.damage, target, p.seq);
-        } else this.effects.impact(at, hit?.normal);
+        } else this.projectileImpact(at, hit?.normal, p.look);
         this.scene.remove(p.mesh);
-        if (p.mesh instanceof THREE.Mesh) (p.mesh.material as THREE.Material).dispose();
+        // generated / preset / legacy meshes share cached geometry + materials: never dispose those
+        if (p.mesh instanceof THREE.Mesh && !p.mesh.userData.sharedProjectile) (p.mesh.material as THREE.Material).dispose();
         this.projectiles.splice(i, 1);
         continue;
       }
       p.pos.addScaledVector(dir, step);
       p.visOffset.multiplyScalar(Math.exp(-dt * 12));
       p.mesh.position.copy(p.pos).add(p.visOffset);
+      p.age += dt;
+      const look = p.look;
       if (p.spin) {
         p.mesh.rotation.x += p.spin * dt;
         p.mesh.rotation.z += p.spin * 0.7 * dt;
+      } else if (look.design) {
+        // nose (-Z) along the flight direction, then the designed spin around its own axis
+        p.mesh.quaternion.setFromUnitVectors(FWD, dir);
+        if (look.spin) p.mesh.quaternion.multiply(qSpin.setFromAxisAngle(look.spin.axis, look.spin.rate * p.age));
       }
-      if (Math.random() < 0.6 && p.visOffset.lengthSq() < 0.01) this.effects.emit(p.mesh.position, new THREE.Vector3(), 0.3, 0x888888);
+      if (look.wobble > 0) {
+        const k = look.wobble * 0.2 * Math.sin(p.age * 14);
+        const b = p.baseScale;
+        p.mesh.scale.set(b * (1 + k), b * (1 - k), b * (1 + k * 0.5));
+      }
+      if (look.trail !== 'none' && Math.random() < 0.6 && p.visOffset.lengthSq() < 0.01) this.emitTrail(p.mesh.position, look, p.element ? elementParticle(p.element) : look.trailColor);
+    }
+  }
+
+  private emitTrail(pos: THREE.Vector3, look: ProjectileLook, color: number) {
+    const v = this.tmpB;
+    switch (look.trail) {
+      case 'spark':
+      case 'fire':
+        v.set(Math.random() - 0.5, Math.random() * 0.8, Math.random() - 0.5).multiplyScalar(1.5);
+        this.effects.emit(pos, v, look.trail === 'fire' ? 0.35 : 0.2, color);
+        break;
+      case 'bubble':
+        v.set((Math.random() - 0.5) * 0.4, 0.4 + Math.random() * 0.4, (Math.random() - 0.5) * 0.4);
+        this.effects.emit(pos, v, 0.6, color);
+        break;
+      default:
+        this.effects.emit(pos, v.set(0, 0, 0), 0.3, color);
+    }
+  }
+
+  /** impact visuals for a non-splash projectile (designed impact style, else the classic burst) */
+  private projectileImpact(at: THREE.Vector3, normal: THREE.Vector3 | undefined, look: ProjectileLook) {
+    const style = look.impact;
+    if (!style || style === 'spark' || style === 'burst') this.effects.impact(at, normal, style === 'burst' ? 0xffa040 : undefined);
+    if (!style) return;
+    const n = normal ?? UP;
+    const spec: Record<string, [count: number, speed: number, life: number, color: number, up: number]> = {
+      puff: [8, 1.2, 0.5, 0xbbbbbb, 0.6],
+      spark: [6, 5, 0.25, 0xffd080, 0.2],
+      splash: [12, 3, 0.45, look.trailColor || 0xa0e0ff, 1.2],
+      shatter: [10, 4.5, 0.4, look.impactColor, 0.8],
+      burst: [10, 4, 0.35, 0xff8030, 0.5],
+      splat: [10, 2.2, 0.5, look.impactColor, 0.4],
+    };
+    const [count, speed, life, color, up] = spec[style];
+    for (let i = 0; i < count; i++) {
+      const v = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+      v.addScaledVector(n, 0.8).normalize().multiplyScalar(speed * (0.5 + Math.random() * 0.5));
+      v.y += up;
+      this.effects.emit(at, v, life, color);
     }
   }
 
@@ -510,10 +584,9 @@ export class WeaponSystem {
     for (let i = 0; i < 6; i++) {
       const d = this.aimDir(Math.max(3, w.spread), new THREE.Vector3());
       const speed = (w.range / 0.45) * (0.7 + Math.random() * 0.3);
-      const color = isBubble ? 0xa0e0ff : Math.random() < 0.5 ? 0xff7020 : 0xffc040;
-      this.effects.emit(fwdStart, d.multiplyScalar(speed), 0.45, color);
+      this.effects.emit(fwdStart, d.multiplyScalar(speed), 0.45, streamColor(w, isBubble));
     }
-    this.effects.muzzleLight(muzzle, isBubble ? 0x80c0ff : 0xff8030);
+    this.effects.muzzleLight(muzzle, w.element && w.element !== 'fire' ? (shotColor(w, 0xff8030) as number) : isBubble ? 0x80c0ff : 0xff8030);
     // cone damage with line-of-sight
     const c = new THREE.Vector3();
     for (const t of this.targets.all()) {
@@ -542,7 +615,7 @@ export class WeaponSystem {
         const skip = new Set(exclude.map((c) => c.handle));
         const hit = world.castRay(new R.Ray(start, d), w.range, true, R.QueryFilterFlags.EXCLUDE_SENSORS, undefined, undefined, undefined, (c) => !skip.has(c.handle));
         const end = hit ? start.clone().addScaledVector(d, hit.timeOfImpact) : start.clone().addScaledVector(d, w.range);
-        this.effects.tracer(start, end, w.colors?.accent ?? 0xffe9a0);
+        this.effects.tracer(start, end, shotColor(w, 0xffe9a0));
         this.effects.muzzleLight(start);
         if (hit) this.effects.impact(end);
         break;
@@ -558,7 +631,7 @@ export class WeaponSystem {
           v.x += (Math.random() - 0.5) * 3;
           v.y += (Math.random() - 0.5) * 3;
           v.z += (Math.random() - 0.5) * 3;
-          this.effects.emit(start, v, 0.45, isBubble ? 0xa0e0ff : Math.random() < 0.5 ? 0xff7020 : 0xffc040);
+          this.effects.emit(start, v, 0.45, streamColor(w, isBubble));
         }
         break;
       }
@@ -566,4 +639,10 @@ export class WeaponSystem {
         break;
     }
   }
+}
+
+/** stream particle colour: the weapon's element, else bubbles / flames by class */
+function streamColor(w: Weapon, isBubble: boolean): number {
+  if (w.element) return elementParticle(w.element);
+  return isBubble ? 0xa0e0ff : Math.random() < 0.5 ? 0xff7020 : 0xffc040;
 }

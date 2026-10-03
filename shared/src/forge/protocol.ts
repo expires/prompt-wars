@@ -1,7 +1,7 @@
 // Wire protocol of the forge service (POST /api/forge/generate -> NDJSON event stream).
 
 import type { FireMode, WeaponClass } from '../weapon';
-import type { Component, DesignFx, DesignPalette, DesignStats, ForgeDesign } from './types';
+import type { Component, DesignFx, DesignPalette, DesignStats, ForgeDesign, ProjectileDesign } from './types';
 
 export const FORGE_API_PATH = '/api/forge';
 
@@ -11,6 +11,8 @@ export interface ForgeGenerateRequest {
   class?: string;
   /** components to keep verbatim (usually the locked components of `previous`) */
   locked?: Component[];
+  /** projectile to keep verbatim (the locked projectile of `previous`) */
+  lockedProjectile?: ProjectileDesign;
   /** labels / ids the model must not produce again */
   rejected?: string[];
   /** current design being edited (reprompt) */
@@ -30,6 +32,8 @@ export type ForgeEvent =
   | { type: 'start'; variant: -1; variants: number; model: string; mock: boolean }
   | { type: 'meta'; variant: number; name: string; class: WeaponClass; fireMode: FireMode; palette: DesignPalette; fx: DesignFx }
   | { type: 'component'; variant: number; component: Component }
+  /** the projectile model (projectile / arc weapons; at most one per variant) */
+  | { type: 'projectile'; variant: number; projectile: ProjectileDesign }
   | { type: 'stats'; variant: number; stats: DesignStats }
   | { type: 'done'; variant: number; design: ForgeDesign; warnings: string[] }
   | { type: 'error'; variant: number; message: string }

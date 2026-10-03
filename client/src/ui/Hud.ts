@@ -23,6 +23,20 @@ export interface HudWeaponInfo {
   tierLabel: string;
   /** melee weapon: current swing type (SLASH / THRUST / OVERHEAD / BASH …) */
   melee?: { swing: string } | null;
+  /** carry-weight movement label ("+8%", "−12%"); omitted / "±0%" hides it */
+  move?: string;
+  /** weapon element (fire / ice / poison / shock) */
+  element?: string | null;
+}
+
+/** Elemental status effects on the local player (HUD chips + screen vignettes). */
+export interface HudElementStatus {
+  burning: boolean;
+  chilled: boolean;
+  poisoned: boolean;
+  shocked: boolean;
+  /** active slow percent (shown on the chilled / shocked chip) */
+  slowPercent: number;
 }
 
 initUiSettings();
@@ -112,6 +126,15 @@ export class Hud {
   // damage
   private readonly arcs = new DamageArcs();
   private readonly hitFlash = el('div', 'hud-hitflash');
+  /** screen-edge vignettes for elemental status (orange flames / frost) */
+  private readonly burnFx = el('div', 'hud-burn');
+  private readonly chillFx = el('div', 'hud-chill');
+  private readonly poisonFx = el('div', 'hud-poison');
+  /** status chips above the health plate (BURNING / CHILLED −35% ...) */
+  private readonly fxChips = el('div', 'hud-fx');
+  private fxKey = '';
+  private moveEl!: HTMLElement;
+  private elementEl!: HTMLElement;
   private readonly lowHp = el('div', 'hud-lowhp');
   // corners
   private readonly netEl = el('div', 'hud-net');
@@ -162,13 +185,19 @@ export class Hud {
     this.hpFill = health.querySelector('.hud-hpbar__fill')!;
     this.hpTrail = health.querySelector('.hud-hpbar__trail')!;
     this.hpMax = health.querySelector('.hud-health__max')!;
+    this.fxChips.dataset.testid = 'status-effects';
+    health.prepend(this.fxChips);
+    this.burnFx.dataset.testid = 'fx-burning';
+    this.chillFx.dataset.testid = 'fx-chilled';
+    this.burnFx.innerHTML = '<i></i>';
+    this.chillFx.innerHTML = '<i></i>';
 
     // ---- ammo (bottom-right)
     const ammo = el('div', 'hud-ammo');
     ammo.innerHTML =
       `<div class="hud-plate hud-ammo__plate">` +
       `<i class="hud-tick hud-tick--r"></i>` +
-      `<div class="hud-ammo__top"><span class="hud-ammo__rar tier-1"></span><span class="hud-ammo__name" data-testid="weapon-name">—</span></div>` +
+      `<div class="hud-ammo__top"><span class="hud-ammo__el" data-testid="hud-element" hidden></span><span class="hud-ammo__move" data-testid="hud-move" hidden></span><span class="hud-ammo__rar tier-1"></span><span class="hud-ammo__name" data-testid="weapon-name">—</span></div>` +
       `<div class="hud-ammo__main">` +
       `<div class="hud-ammo__state"></div>` +
       `<div class="hud-ammo__count"><span class="hud-ammo__mag ui-num">0</span><i class="hud-ammo__div"></i><span class="hud-ammo__res ui-num">0</span></div>` +
@@ -178,6 +207,8 @@ export class Hud {
       `</div>`;
     this.ammoPlate = ammo.querySelector('.hud-ammo__plate')!;
     this.weaponName = ammo.querySelector('[data-testid=weapon-name]')!;
+    this.moveEl = ammo.querySelector('[data-testid=hud-move]')!;
+    this.elementEl = ammo.querySelector('[data-testid=hud-element]')!;
     this.rarityChip = ammo.querySelector('.hud-ammo__rar')!;
     this.magEl = ammo.querySelector('.hud-ammo__mag')!;
     this.resEl = ammo.querySelector('.hud-ammo__res')!;
@@ -192,7 +223,7 @@ export class Hud {
     topLeft.append(this.netEl, this.debugEl);
 
     this.frame.append(health, ammo, topLeft, this.killfeed.root, this.scoreboard.root, this.spawnEditorEl);
-    this.root.append(this.scope, this.lowHp, this.hitFlash, this.numbersLayer, this.center, this.frame);
+    this.root.append(this.scope, this.lowHp, this.burnFx, this.chillFx, this.poisonFx, this.hitFlash, this.numbersLayer, this.center, this.frame);
     parent.append(this.root, this.toasts.root);
 
     this.setHealth(100);
@@ -275,10 +306,23 @@ export class Hud {
   }
 
   setWeapon(info: HudWeaponInfo) {
-    const key = `${info.name}|${info.tier}|${info.tierLabel}|${info.melee?.swing ?? ''}|${!!info.melee}`;
+    const key = `${info.name}|${info.tier}|${info.tierLabel}|${info.melee?.swing ?? ''}|${!!info.melee}|${info.move ?? ''}|${info.element ?? ''}`;
     if (key === this.weaponKey) return;
     this.weaponKey = key;
     this.setWeaponName(info.name);
+    const move = info.move && info.move !== '±0%' ? info.move : '';
+    this.moveEl.hidden = !move;
+    if (move) {
+      this.moveEl.className = `hud-ammo__move ${move.startsWith('+') ? 'is-fast' : 'is-slow'}`;
+      this.moveEl.innerHTML = `${icon('speed', 'ui-icon')}<span>${esc(move)}</span>`;
+      this.moveEl.title = `Move speed ${move}`;
+    }
+    this.elementEl.hidden = !info.element;
+    if (info.element) {
+      this.elementEl.className = `hud-ammo__el kf-el--${esc(info.element)}`;
+      this.elementEl.innerHTML = icon(info.element, 'ui-icon');
+      this.elementEl.title = info.element;
+    }
     const tier = Math.max(1, Math.min(5, info.tier));
     this.rarityChip.className = `hud-ammo__rar tier-${tier}`;
     this.rarityChip.innerHTML = `<span class="hud-ammo__rar-in">${pipsHtml(tier)}<span>${esc(info.tierLabel)}</span></span>`;
@@ -421,6 +465,25 @@ export class Hud {
     this.hitFlash.classList.remove('is-on');
     void this.hitFlash.offsetWidth;
     this.hitFlash.classList.add('is-on');
+  }
+
+  /** elemental status on the local player: chips above the health plate + screen vignettes */
+  setElementStatus(st: HudElementStatus) {
+    const slow = Math.round(st.slowPercent);
+    const key = `${st.burning}|${st.chilled}|${st.poisoned}|${st.shocked}|${slow}`;
+    if (key === this.fxKey) return;
+    this.fxKey = key;
+    this.burnFx.classList.toggle('is-on', st.burning);
+    this.chillFx.classList.toggle('is-on', st.chilled);
+    this.poisonFx.classList.toggle('is-on', st.poisoned);
+    const chip = (kind: string, label: string, extra = '') =>
+      `<span class="hud-fx__chip hud-fx--${kind}" data-testid="status-${kind}">${icon(kind, 'ui-icon')}<span>${label}</span>${extra ? `<b class="ui-num">${extra}</b>` : ''}</span>`;
+    const chips: string[] = [];
+    if (st.burning) chips.push(chip('fire', 'Burning'));
+    if (st.poisoned) chips.push(chip('poison', 'Poisoned'));
+    if (st.chilled) chips.push(chip('ice', 'Chilled', slow > 0 ? `−${slow}%` : ''));
+    if (st.shocked) chips.push(chip('shock', 'Shocked', slow > 0 ? `−${slow}%` : ''));
+    this.fxChips.innerHTML = chips.join('');
   }
 
   /** attacker direction relative to view forward: 0 = front, +PI/2 = right */

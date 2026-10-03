@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./forge": "./src/forge/index.ts",
     "./forge/build": "./src/forge/build.ts",
+    "./forge/projectile3d": "./src/forge/projectile3d.ts",
     "./forge/examples": "./src/forge/examples.ts",
     "./tauron-remake": "./src/tauronRemake/index.ts"
   },

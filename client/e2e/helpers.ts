@@ -11,9 +11,17 @@ export const SERVER = process.env.E2E_SERVER === 'maincloud' ? 'maincloud' : 'lo
 export const SCREENSHOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), 'screenshots');
 mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
-export function gameUrl(name: string) {
+/**
+ * Combat specs run on the built-in TEST MAP (`?map=testmap`): their lanes / coordinates were laid
+ * out on it, and the server doesn't check walls, so this stays valid whatever the default venue is
+ * (the tauron-remake hackathon floor has desks / a stage exactly where those lanes are).
+ */
+export const E2E_MAP = 'testmap';
+
+export function gameUrl(name: string, map: string | null = E2E_MAP) {
   const p = new URLSearchParams({ e2e: '1', fresh: '1', name });
   if (SERVER === 'local') p.set('server', 'local');
+  if (map) p.set('map', map);
   return `/?${p}`;
 }
 
@@ -28,7 +36,7 @@ export interface Player {
  * Open the game as a new player. New players land on the landing screen (server needsLoadout):
  * by default they quick-pick the pistol preset and deploy; `loadout: 'none'` stops at the landing.
  */
-export async function joinGame(browser: Browser, name: string, opts: { loadout?: string | 'none' } = {}): Promise<Player> {
+export async function joinGame(browser: Browser, name: string, opts: { loadout?: string | 'none'; map?: string | null } = {}): Promise<Player> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
   // count WebSocket frames / bytes in both directions (works for any client version)
@@ -55,7 +63,7 @@ export async function joinGame(browser: Browser, name: string, opts: { loadout?:
     if (m.type() === 'error' || m.type() === 'warning') console.log(`[${name}] ${m.type()}: ${m.text()}`);
   });
   page.on('pageerror', (e) => console.log(`[${name}] pageerror: ${e.message}`));
-  await page.goto(gameUrl(name));
+  await page.goto(gameUrl(name, opts.map === undefined ? E2E_MAP : opts.map));
   await page.waitForFunction(
     () => {
       const w = window as unknown as Win;

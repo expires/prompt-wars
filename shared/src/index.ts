@@ -6,5 +6,6 @@ export * from './net';
 export * from './maps';
 export * from './hitcheck';
 export * from './melee';
+export * from './elements';
 export * from './templates';
 export * from './forge';

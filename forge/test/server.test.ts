@@ -45,7 +45,11 @@ describe('forge service (mock)', () => {
     expect(types.at(-1)).toBe('end');
     expect(types.at(-2)).toBe('done');
     const firstStats = types.indexOf('stats');
-    expect(types.slice(2, firstStats).every(t => t === 'component')).toBe(true);
+    const body = types.slice(2, firstStats);
+    // components, then at most one projectile line (projectile / arc weapons)
+    expect(body.filter(t => t === 'projectile').length).toBeLessThanOrEqual(1);
+    expect(body.filter(t => t !== 'projectile').every(t => t === 'component')).toBe(true);
+    if (body.includes('projectile')) expect(body.at(-1)).toBe('projectile');
     expect(firstStats).toBeGreaterThan(2);
     const done = events.find(e => e.type === 'done') as Extract<ForgeEvent, { type: 'done' }>;
     expect(sanitizeDesign(done.design).design).toEqual(done.design);
@@ -86,7 +90,42 @@ describe('forge service (mock)', () => {
     expect(done.design.components.find(c => c.id === 'frame')).toEqual(prev.components[0]);
   });
 
+  it('streams a generated projectile for projectile weapons and throwables', async () => {
+    server.limiter['hits'].clear();
+    const rocket = await generate({ prompt: 'rocket launcher', class: 'rocket_launcher', seed: 5 });
+    const pev = rocket.events.find(e => e.type === 'projectile') as Extract<ForgeEvent, { type: 'projectile' }>;
+    expect(pev).toBeTruthy();
+    const done = rocket.events.find(e => e.type === 'done') as Extract<ForgeEvent, { type: 'done' }>;
+    expect(done.design.projectile).toEqual(pev.projectile);
+    expect(done.design.projectile!.shapes.length).toBeGreaterThan(1);
+
+    const stool = await generate({ prompt: 'throw a bar stool', seed: 6 });
+    const d2 = (stool.events.find(e => e.type === 'done') as Extract<ForgeEvent, { type: 'done' }>).design;
+    expect(d2.class).toBe('throwable');
+    expect(d2.projectile?.label).toBe('wooden bar stool');
+    expect(d2.components[0].label).toBe('wooden bar stool');
+
+    // hitscan weapons: none
+    const smg = await generate({ prompt: 'smg', class: 'smg', seed: 7 });
+    expect(smg.events.some(e => e.type === 'projectile')).toBe(false);
+  });
+
+  it('keeps a locked projectile verbatim and skips a rejected one', async () => {
+    server.limiter['hits'].clear();
+    const first = await generate({ prompt: 'rocket launcher', class: 'rocket_launcher', seed: 8 });
+    const p0 = (first.events.find(e => e.type === 'done') as Extract<ForgeEvent, { type: 'done' }>).design.projectile!;
+    const lockedProjectile = { ...p0, label: 'my locked rocket', locked: true };
+    const again = await generate({ prompt: 'rocket launcher', class: 'rocket_launcher', seed: 9, lockedProjectile });
+    const d = (again.events.find(e => e.type === 'done') as Extract<ForgeEvent, { type: 'done' }>).design;
+    expect(d.projectile).toEqual(lockedProjectile);
+    const rej = await generate({ prompt: 'rocket launcher', class: 'rocket_launcher', seed: 9, rejected: [`projectile: ${p0.label}`] });
+    const d3 = (rej.events.find(e => e.type === 'done') as Extract<ForgeEvent, { type: 'done' }>).design;
+    expect(d3.projectile).toBeUndefined();
+    expect(rej.events.some(e => e.type === 'projectile')).toBe(false);
+  });
+
   it('validates requests', async () => {
+    server.limiter['hits'].clear();
     expect((await generate({})).status).toBe(400);
     expect((await generate([1, 2])).status).toBe(400);
     const big = await generate({ prompt: 'x', junk: 'y'.repeat(200_000) });

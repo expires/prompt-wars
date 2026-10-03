@@ -22,6 +22,11 @@
   --crit: #ffb020;
   --kill: #ff4655;
   --enemy: var(--kill);
+  /* elemental effects */
+  --el-fire: #ff7a1a;
+  --el-ice: #9ee4ff;
+  --el-poison: #8dff3a;
+  --el-shock: #fff36b;
 
   --t1: #a7adb7;
   --t2: #5bd46a;

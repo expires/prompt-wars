@@ -38,4 +38,6 @@ export default __t.row({
   crouching: __t.bool(),
   slot: __t.u32(),
   needsLoadout: __t.bool().name("needs_loadout"),
+  dotElement: __t.u8().name("dot_element"),
+  slowElement: __t.u8().name("slow_element"),
 });

@@ -10,6 +10,11 @@ const P: Record<string, string> = {
   melee: '<path d="M4 20l5-5M7 17l-3-3M14.5 4.5L20 4l-.5 5.5L10 19l-5-5z"/>',
   crosshair: '<circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
   shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+  fire: '<path d="M12 22c-4 0-7-3-7-7 0-4 3-6 4-10 2 2 3 4 3 6 1-1 2-2 2-4 2 2 5 5 5 8 0 4-3 7-7 7z"/><path d="M12 22c-1.7 0-3-1.3-3-3 0-1.7 1.5-2.5 3-5 1.5 2.5 3 3.3 3 5 0 1.7-1.3 3-3 3z"/>',
+  ice: '<path d="M12 2v20M3.3 7l17.4 10M3.3 17L20.7 7"/><path d="M9 4l3 3 3-3M9 20l3-3 3 3M3 10.5l4-.5-1.5-3.7M21 13.5l-4 .5 1.5 3.7M3 13.5l4 .5-1.5 3.7M21 10.5l-4-.5 1.5-3.7"/>',
+  poison: '<path d="M12 3c3 4 6 7.5 6 11a6 6 0 0 1-12 0c0-3.5 3-7 6-11z"/><path d="M9.5 14h.01M14.5 14h.01M10 17.5h4"/>',
+  shock: '<path d="M13 2L5 14h6l-1 8 8-12h-6z"/>',
+  speed: '<path d="M3 12h7M5 8h6M5 16h6"/><path d="M13 5l7 7-7 7"/>',
   wifi: '<path d="M2 9a15 15 0 0 1 20 0M5 13a10 10 0 0 1 14 0M8.5 16.5a5 5 0 0 1 7 0M12 20h.01"/>',
   // actions
   check: '<path d="M4 12l5 5L20 6"/>',
@@ -54,6 +59,7 @@ const P: Record<string, string> = {
   guard: '<path d="M3 12h18M12 8v8"/>',
   pommel: '<circle cx="12" cy="15" r="5"/><path d="M12 2v8"/>',
   deco: '<path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/>',
+  projectile: '<path d="M14 4h6v6l-9 9-6-6z"/><path d="M5 19l-2 2M8 16l-3 3"/>',
 };
 
 export type IconName = keyof typeof P | string;

@@ -48,6 +48,7 @@ export const HitEvent = __t.object("HitEvent", {
   slowPercent: __t.f32(),
   headshot: __t.bool(),
   blocked: __t.bool(),
+  element: __t.u8(),
 });
 export type HitEvent = __Infer<typeof HitEvent>;
 
@@ -89,6 +90,8 @@ export const Player = __t.object("Player", {
   crouching: __t.bool(),
   slot: __t.u32(),
   needsLoadout: __t.bool(),
+  dotElement: __t.u8(),
+  slowElement: __t.u8(),
 });
 export type Player = __Infer<typeof Player>;
 

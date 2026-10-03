@@ -4,7 +4,9 @@
 
 import * as THREE from 'three';
 import { assembleWeapon, getPart, type Template } from '@ai-gaem/parts';
-import { templateToRawWeapon } from '@ai-gaem/shared';
+import { CLASS_TEMPLATES, inferElementFromText, templateToRawWeapon, type WeaponClass } from '@ai-gaem/shared';
+import { firesProjectiles } from '@ai-gaem/shared/forge';
+import { EXAMPLE_BANANA_LAUNCHER, EXAMPLE_THROWN_FISH } from '@ai-gaem/shared/forge/examples';
 import type { DesignAssembler } from './assembler';
 import type { PromptContext } from './prompt';
 
@@ -80,6 +82,89 @@ function flourishes(coreId: string, rand: () => number, melee: boolean): Record<
   return out;
 }
 
+type Raw = Record<string, unknown>;
+const mat = (color: string, extra: Raw = {}): Raw => ({ color, ...extra });
+
+/** Throwable objects: shapes centred on the origin (held in the hand and thrown as the projectile). */
+const THROW_OBJECTS: { re: RegExp; name: string; label: string; shapes: Raw[] }[] = [
+  {
+    re: /stool|chair|seat/i, name: 'Bar Stool', label: 'wooden bar stool',
+    shapes: [
+      { type: 'cylinder', rTop: 0.17, rBottom: 0.17, h: 0.05, seg: 10, pos: [0, 0.2, 0], material: mat('primary', { roughness: 0.8 }) },
+      { type: 'cylinder', rTop: 0.018, rBottom: 0.022, h: 0.4, seg: 5, pos: [0.11, 0, 0.06], rot: [-8, 0, -8], material: mat('secondary') },
+      { type: 'cylinder', rTop: 0.018, rBottom: 0.022, h: 0.4, seg: 5, pos: [-0.11, 0, 0.06], rot: [-8, 0, 8], material: mat('secondary') },
+      { type: 'cylinder', rTop: 0.018, rBottom: 0.022, h: 0.4, seg: 5, pos: [0, 0, -0.12], rot: [10, 0, 0], material: mat('secondary') },
+      { type: 'torus', r: 0.11, tube: 0.01, seg: 10, pos: [0, -0.05, 0], rot: [90, 0, 0], material: mat('accent', { metalness: 0.7 }) },
+    ],
+  },
+  {
+    re: /bottle|molotov|beer|wine/i, name: 'Bottle Lob', label: 'glass bottle',
+    shapes: [
+      { type: 'lathe', seg: 10, rot: [-90, 0, 0], pos: [0, 0, 0.13], points: [[0, 0], [0.04, 0], [0.042, 0.16], [0.015, 0.22], [0.015, 0.27], [0, 0.27]], material: mat('primary', { opacity: 0.6, roughness: 0.1 }) },
+      { type: 'cylinder', rTop: 0.017, rBottom: 0.017, h: 0.02, seg: 8, pos: [0, 0, -0.135], rot: [90, 0, 0], material: mat('accent') },
+    ],
+  },
+  { re: /fish/i, name: 'Flounder Fling', label: 'slippery fish', shapes: EXAMPLE_THROWN_FISH.projectile.shapes },
+  { re: /banana/i, name: 'Banana Hurl', label: 'ripe banana', shapes: EXAMPLE_BANANA_LAUNCHER.projectile.shapes },
+  {
+    re: /brick|rock|stone/i, name: 'Brick Toss', label: 'red brick',
+    shapes: [{ type: 'box', size: [0.1, 0.065, 0.2], material: mat('primary', { roughness: 1 }) }],
+  },
+];
+
+/** Projectile for a mock design (palette tokens, centred, flight = -Z). */
+function mockProjectile(cls: WeaponClass, prompt: string, rand: () => number): Raw | null {
+  if (cls === 'throwable') {
+    const o = THROW_OBJECTS.find(x => x.re.test(prompt)) ?? THROW_OBJECTS[0];
+    return { label: o.label, shapes: o.shapes, spin: { axis: 'x', rate: 1.5 + rand() }, impact: 'shatter' };
+  }
+  if (/banana/i.test(prompt)) return { ...EXAMPLE_BANANA_LAUNCHER.projectile };
+  if (/fish/i.test(prompt)) return { ...EXAMPLE_THROWN_FISH.projectile };
+  if (cls === 'bubble_gun' || /bubble|soap/i.test(prompt)) {
+    return {
+      label: 'wobbly soap bubble',
+      shapes: [
+        { type: 'sphere', r: 0.12, wseg: 12, hseg: 8, material: mat('glow', { opacity: 0.3, roughness: 0.1, emissive: 'glow', emissiveIntensity: 0.3, flatShading: false }) },
+        { type: 'sphere', r: 0.025, wseg: 6, hseg: 4, pos: [0.05, 0.05, -0.05], material: mat('#ffffff', { opacity: 0.85, emissive: '#ffffff', emissiveIntensity: 0.6 }) },
+      ],
+      wobble: 0.7, trail: 'bubble', impact: 'splash',
+    };
+  }
+  if (cls === 'rocket_launcher' || cls === 'grenade_launcher') {
+    const fins = rand() < 0.5 ? 3 : 4;
+    const shapes: Raw[] = [
+      { type: 'cylinder', rTop: 0.05, rBottom: 0.05, h: 0.32, seg: 8, rot: [90, 0, 0], material: mat('secondary', { metalness: 0.4 }) },
+      { type: 'cone', r: 0.05, h: 0.12, seg: 8, pos: [0, 0, -0.22], rot: [-90, 0, 0], material: mat('accent') },
+      { type: 'cone', r: 0.04, h: 0.12, seg: 6, pos: [0, 0, 0.22], rot: [90, 0, 0], material: mat('#ffb040', { emissive: '#ff7a1a', emissiveIntensity: 2, opacity: 0.85 }) },
+    ];
+    for (let i = 0; i < fins; i++) {
+      const a = (i / fins) * 360;
+      shapes.push({ type: 'extrude', depth: 0.006, rot: [0, 90, a], pos: [0, 0, 0.13], outline: [[0.04, 0.04], [-0.04, 0.04], [-0.04, 0.1], [0.0, 0.1]], material: mat('accent') });
+    }
+    return { label: cls === 'rocket_launcher' ? 'finned rocket' : 'stubby grenade', shapes, spin: { axis: 'z', rate: 2 }, trail: 'smoke', impact: 'burst' };
+  }
+  if (cls === 'crossbow' || cls === 'blowgun') {
+    return {
+      label: cls === 'crossbow' ? 'fletched bolt' : 'feathered dart',
+      shapes: [
+        { type: 'cylinder', rTop: 0.007, rBottom: 0.007, h: 0.34, seg: 5, rot: [90, 0, 0], material: mat('secondary') },
+        { type: 'cone', r: 0.016, h: 0.06, seg: 4, pos: [0, 0, -0.2], rot: [-90, 0, 0], material: mat('#c0c0c0', { metalness: 0.8 }) },
+        { type: 'box', size: [0.05, 0.003, 0.06], pos: [0, 0, 0.14], material: mat('accent') },
+        { type: 'box', size: [0.003, 0.05, 0.06], pos: [0, 0, 0.14], material: mat('accent') },
+      ],
+      trail: 'none', impact: 'spark',
+    };
+  }
+  return {
+    label: 'glowing slug',
+    shapes: [
+      { type: 'capsule', r: 0.03, h: 0.08, seg: 6, rot: [90, 0, 0], material: mat('glow', { emissive: 'glow', emissiveIntensity: 1.5 }) },
+      { type: 'torus', r: 0.035, tube: 0.008, seg: 8, material: mat('accent') },
+    ],
+    spin: { axis: 'z', rate: 3 }, trail: 'glow', impact: 'spark',
+  };
+}
+
 const NAME_BITS = ['Mk II', 'Deluxe', 'Prototype', 'Custom', 'XL', 'Turbo', 'Mini', 'Supreme', 'Classic'];
 
 export async function generateMock(
@@ -97,7 +182,8 @@ export async function generateMock(
     });
   const delay = () => (opts.delayMs > 0 ? sleep(opts.delayMs * (0.6 + rand() * 0.8)) : Promise.resolve());
 
-  const pool = ctx.templates.length ? ctx.templates : [];
+  const throwable = ctx.classHint === 'throwable' || /\b(throw|toss|lob|hurl|chuck|fling|yeet)/i.test(ctx.prompt);
+  const pool = ctx.templates.length && !throwable ? ctx.templates : [];
   const t = pool[Math.min(pool.length - 1, Math.floor(rand() * Math.min(pool.length, 3)))];
   const hue = rand();
   const palette = {
@@ -106,8 +192,13 @@ export async function generateMock(
     accent: hsl(hue + 0.5, 0.7, 0.55),
     glow: hsl(hue + 0.45, 0.9, 0.65),
   };
-  const raw = t ? templateToRawWeapon({ ...t, statHints: t.statHints }) : { class: ctx.classHint ?? 'weird' };
-  const baseName = t?.name ?? 'Mystery Device';
+  const throwObj = throwable ? (THROW_OBJECTS.find(x => x.re.test(ctx.prompt)) ?? THROW_OBJECTS[0]) : null;
+  const raw: Record<string, unknown> = t
+    ? templateToRawWeapon({ ...t, statHints: t.statHints })
+    : throwable
+      ? { ...CLASS_TEMPLATES.throwable.defaults, class: 'throwable', fireMode: 'arc' }
+      : { class: ctx.classHint ?? 'weird' };
+  const baseName = t?.name ?? throwObj?.name ?? 'Mystery Device';
   const bit = NAME_BITS[Math.floor(rand() * NAME_BITS.length)];
   const name = baseName.length + bit.length < 40 ? `${baseName} ${bit}` : baseName;
   await delay();
@@ -115,16 +206,32 @@ export async function generateMock(
 
   const rejected = (label: string) => ctx.rejected.some(r => r && label.toLowerCase().includes(r.toLowerCase()));
   const comps = t ? templateComponents(t, rand, rejected) : [];
+  if (throwObj && !rejected(throwObj.label)) {
+    // held object, hand near its bottom / back
+    comps.push({ t: 'component', id: 'object', label: throwObj.label, role: 'core', transform: { pos: [0, 0.08, -0.12] }, shapes: throwObj.shapes });
+  }
   if (!comps.length) {
     comps.push({ t: 'component', id: 'core', label: 'mystery box', role: 'core', transform: { pos: [0, 0.06, 0] }, shapes: [{ type: 'box', size: [0.06, 0.08, 0.3], material: { color: 'primary' } }] });
   }
-  comps.push(...flourishes(String(comps[0].id), rand, raw.fireMode === 'melee'));
+  if (!throwObj) comps.push(...flourishes(String(comps[0].id), rand, raw.fireMode === 'melee'));
   for (const c of comps) {
     await delay();
     asm.push(c);
   }
+  const cls = (raw.class as WeaponClass) ?? 'weird';
+  const mode = (raw.fireMode as string | undefined) ?? CLASS_TEMPLATES[cls]?.modes[0];
+  if (firesProjectiles(mode)) {
+    const proj = mockProjectile(cls, ctx.prompt, rand);
+    if (proj) {
+      await delay();
+      asm.push({ t: 'projectile', ...proj });
+    }
+  }
   await delay();
   const { parts: _p, name: _n, class: _c, fireMode: _f, ...stats } = raw as Record<string, unknown>;
   for (const k of ['damage', 'fireRate', 'range'] as const) if (typeof stats[k] === 'number') stats[k] = (stats[k] as number) * (0.85 + rand() * 0.3);
+  // the request names an element ("frost cannon", "flaming axe"): the mock honours it like the LLM would
+  const element = inferElementFromText(ctx.prompt);
+  if (element) stats.element = element;
   asm.push({ t: 'stats', ...stats });
 }

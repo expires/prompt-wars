@@ -14,6 +14,15 @@ import {
   type WeaponPart,
 } from './weapon';
 import { effectiveReach, sanitizeMeleeMeta, type MeleeMeta } from './melee';
+import {
+  ELEMENT_EFFECTS,
+  carryMultiplier,
+  clampMoveMult,
+  inferElement,
+  moveBudgetFactor,
+  sanitizeElement,
+  type Element,
+} from './elements';
 
 export const NUMERIC_STATS = [
   'damage',
@@ -203,8 +212,15 @@ export function dpsCapFor(w: Pick<Weapon, 'fireMode' | 'range'>): number {
   return DPS_CAP;
 }
 
-export function utilityMultiplier(w: Pick<Weapon, 'splashRadius' | 'slowPercent' | 'knockback'>): number {
-  return 1 + 0.06 * w.splashRadius + w.slowPercent / 150 + w.knockback / 60;
+/**
+ * Utility (splash, slow, knockback, movement speed) as a DPS multiplier. Slow weighs by element:
+ * shock slows only briefly (x0.5), ice stacks (x1.2). Faster-than-normal movement costs a little.
+ */
+export function utilityMultiplier(
+  w: Pick<Weapon, 'splashRadius' | 'slowPercent' | 'knockback'> & { element?: Element | null; moveSpeedMult?: number },
+): number {
+  const slowWeight = w.element === 'shock' ? 0.5 : w.element === 'ice' ? 1.2 : 1;
+  return (1 + 0.06 * w.splashRadius + (w.slowPercent / 150) * slowWeight + w.knockback / 60) * moveBudgetFactor(w.moveSpeedMult);
 }
 
 export function computeWeaponStats(w: Weapon): WeaponStats {
@@ -423,6 +439,20 @@ export function clampWeapon(input: RawWeapon | Weapon | unknown): Weapon {
     v[k] = clamp(base, b[k][0], b[k][1]);
   }
 
+  // Element: given (null = none) or inferred from the name / class. Elemental weapons without their
+  // own DoT / slow get the element's default effect (still budgeted below).
+  const name = sanitizeName(raw.name, cls);
+  const givenElement = sanitizeElement(raw.element);
+  const element: Element | null = givenElement === undefined ? inferElement(name, cls, v.dotDamage > 0) : givenElement;
+  if ((element === 'fire' || element === 'poison') && v.dotDamage <= 0) {
+    const e = ELEMENT_EFFECTS[element];
+    v.dotDamage = clamp(e.dotDamage, b.dotDamage[0], b.dotDamage[1]);
+    v.dotDuration = clamp(e.dotDuration, b.dotDuration[0], b.dotDuration[1]);
+  }
+  if ((element === 'ice' || element === 'shock') && v.slowPercent <= 0) {
+    v.slowPercent = clamp(ELEMENT_EFFECTS[element].slowPercent, b.slowPercent[0], b.slowPercent[1]);
+  }
+
   // Integers + tidy rounding for non-budget fields.
   v.pellets = Math.round(v.pellets);
   v.magSize = Math.round(v.magSize);
@@ -454,9 +484,15 @@ export function clampWeapon(input: RawWeapon | Weapon | unknown): Weapon {
     v.fireRate = Math.min(v.fireRate, HEAVY_SHOT_MAX_FIRE_RATE);
   }
 
-  const name = sanitizeName(raw.name, cls);
   const parts = sanitizeParts(raw.parts);
   let melee: MeleeMeta | undefined;
+  // Carry weight: derived from class (melee: weight class), magazine and part count; a given value
+  // may only deviate a little. Melee weight is provisional here (final meta is set after the budget).
+  const carry = (weight?: MeleeMeta['weight']) =>
+    clampMoveMult(num(raw.moveSpeedMult), carryMultiplier({ class: cls, fireMode: mode, meleeWeight: weight, magSize: v.magSize, partCount: parts.length }));
+  let moveSpeedMult = carry(
+    mode === 'melee' ? sanitizeMeleeMeta(raw.melee, { name, parts, damage: v.damage, fireRate: v.fireRate, range: v.range }).weight : undefined,
+  );
   const build = (): Weapon => ({
     name,
     class: cls,
@@ -465,6 +501,8 @@ export function clampWeapon(input: RawWeapon | Weapon | unknown): Weapon {
     parts,
     colors: sanitizeColors(raw.colors),
     ...(melee ? { melee } : {}),
+    element,
+    moveSpeedMult,
   });
 
   // (5) DPS budget: first pass splits the reduction between damage and fire rate,
@@ -493,6 +531,14 @@ export function clampWeapon(input: RawWeapon | Weapon | unknown): Weapon {
   if (mode === 'melee') {
     melee = sanitizeMeleeMeta(raw.melee, { name, parts, damage: v.damage, fireRate: v.fireRate, range: v.range });
     v.range = clamp(roundTo(effectiveReach(melee.reach), 0.1), b.range[0], b.range[1]);
+    // the final weight class may move faster than the provisional one: pay for it in damage
+    const final = carry(melee.weight);
+    if (final > moveSpeedMult) {
+      const f = moveBudgetFactor(moveSpeedMult) / moveBudgetFactor(final);
+      v.damage = Math.max(0.1, floorTo(v.damage * f, 0.1));
+      v.dotDamage = floorTo(v.dotDamage * f, 0.1);
+    }
+    moveSpeedMult = final;
   }
   for (const k of NUMERIC_STATS) v[k] = fix(v[k]);
 

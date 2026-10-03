@@ -1,7 +1,7 @@
 import type { LocalPose, NetClient, Vec3 } from './NetClient';
 
-/** send interval while moving and someone else is online (20 Hz) */
-export const MOVE_SEND_MS = 50;
+/** send interval while moving and someone else is online (30 Hz: every 2nd 60 Hz physics step) */
+export const MOVE_SEND_MS = 1000 / 30;
 /** send interval when only the view direction changes (10 Hz) */
 const LOOK_SEND_MS = 100;
 /** send interval while nobody else is online (2 Hz) */
@@ -24,7 +24,7 @@ export interface PoseInput {
  * When to call update_transform. Driven from the fixed physics step with the step's timestamp
  * (uniformly spaced), so remote interpolation sees an even cadence:
  *
- * - 20 Hz while moving, 10 Hz while only looking around, nothing while idle (no heartbeat);
+ * - 30 Hz while moving, 10 Hz while only looking around, nothing while idle (no heartbeat);
  * - immediately on discrete changes: start / stop moving, jump / land, crouch, teleport;
  * - alone on the server: 2 Hz plus the final "stopped" pose only.
  *

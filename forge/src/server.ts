@@ -2,7 +2,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { normalizeClass, type WeaponClass } from '@ai-gaem/shared';
-import { sanitizeComponent, sanitizeDesign, FORGE_LIMITS, type Component, type ForgeDesign, type ForgeEvent } from '@ai-gaem/shared/forge';
+import { sanitizeComponent, sanitizeDesign, sanitizeProjectile, FORGE_LIMITS, type Component, type ForgeDesign, type ForgeEvent, type ProjectileDesign } from '@ai-gaem/shared/forge';
 import { DesignAssembler } from './assembler';
 import { catalogContext, type PromptContext } from './prompt';
 import { generateMock } from './mock';
@@ -91,6 +91,7 @@ export interface ParsedRequest {
   prompt: string;
   cls?: WeaponClass;
   locked: Component[];
+  lockedProjectile?: ProjectileDesign;
   rejected: string[];
   previous?: ForgeDesign;
   variants: number;
@@ -124,10 +125,13 @@ export function parseGenerateRequest(body: unknown): ParsedRequest {
     : [];
   const previous = b.previous ? sanitizeDesign(b.previous).design : undefined;
   if (previous) for (const c of previous.components) if (c.locked && !locked.some(l => l.id === c.id)) locked.push(c);
+  let lockedProjectile = b.lockedProjectile ? sanitizeProjectile(b.lockedProjectile) : undefined;
+  if (!lockedProjectile && previous?.projectile?.locked) lockedProjectile = previous.projectile;
+  if (lockedProjectile) lockedProjectile.locked = true;
   const variants = Math.max(1, Math.min(3, Math.floor(Number(b.variants ?? 1)) || 1));
   const identity = typeof b.playerIdentity === 'string' ? b.playerIdentity.replace(/[^0-9a-fA-F]/g, '').slice(0, 64).toLowerCase() : '';
   const seed = typeof b.seed === 'number' && Number.isFinite(b.seed) ? Math.floor(b.seed) : undefined;
-  return { prompt: prompt || previous!.name, cls, locked, rejected, previous, variants, identity, seed };
+  return { prompt: prompt || previous!.name, cls, locked, lockedProjectile, rejected, previous, variants, identity, seed };
 }
 
 export function createForgeServer(cfg: ForgeConfig = configFromEnv()): Server & { limiter: RateLimiter } {
@@ -223,12 +227,13 @@ async function streamGeneration(req: IncomingMessage, res: ServerResponse, cfg: 
         templates: cat.templates,
         catalogLines: cat.lines,
         locked: r.locked,
+        lockedProjectile: r.lockedProjectile,
         rejected: r.rejected,
         previous: r.previous,
         variant,
         variants: r.variants,
       };
-      const asm = new DesignAssembler({ variant, locked: r.locked, rejected: r.rejected, previous: r.previous, classHint: hint, knownPartIds }, emit);
+      const asm = new DesignAssembler({ variant, locked: r.locked, lockedProjectile: r.lockedProjectile, rejected: r.rejected, previous: r.previous, classHint: hint, knownPartIds }, emit);
       try {
         if (mock) await generateMock({ signal: ac.signal, delayMs: cfg.mockDelayMs, seed: r.seed }, ctx, asm);
         else await generateWithLlm({ apiKey: cfg.apiKey, model: cfg.model, signal: ac.signal }, ctx, asm);

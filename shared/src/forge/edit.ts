@@ -2,7 +2,7 @@
 // reprompt merging (locked components survive verbatim, rejected ones never come back).
 // Every operation re-sanitizes, so the result is always a legal design.
 
-import type { Component, ForgeDesign } from './types';
+import { PROJECTILE_ID, type Component, type ForgeDesign, type ProjectileDesign } from './types';
 import { descendantsOf, sanitizeDesign, type SanitizeOptions } from './sanitize';
 
 export type DesignEdit =
@@ -16,7 +16,7 @@ export type DesignEdit =
   | { op: 'update'; id: string; set: Record<string, unknown> }
   | { op: 'add'; component: unknown }
   /** design-level fields */
-  | { op: 'set'; name?: string; palette?: Record<string, unknown>; fx?: Record<string, unknown>; stats?: Record<string, unknown>; class?: string; fireMode?: string }
+  | { op: 'set'; name?: string; palette?: Record<string, unknown>; fx?: Record<string, unknown>; stats?: Record<string, unknown>; class?: string; fireMode?: string; projectile?: unknown }
   /** merge a freshly generated design over the current one */
   | { op: 'reprompt'; next: unknown; rejected?: string[] };
 
@@ -34,6 +34,21 @@ export interface EditResult {
   warnings: string[];
   /** components removed by a reject (labels feed the next generate request's `rejected`) */
   removed: Component[];
+  /** the projectile, when a reject removed it (feed projectileRejectKey(label) to `rejected`) */
+  removedProjectile?: ProjectileDesign;
+}
+
+const PROJ_PREFIX = 'projectile:';
+
+/** `rejected` entry for a rejected projectile ("projectile: soap bubble"). */
+export function projectileRejectKey(label: string): string {
+  return `${PROJ_PREFIX} ${label}`.slice(0, 48);
+}
+
+/** True when a projectile matches a rejected projectile entry (see projectileRejectKey). */
+export function projectileRejected(p: Pick<ProjectileDesign, 'label'>, rejected: readonly string[]): boolean {
+  const list = rejected.filter(r => r.trim().toLowerCase().startsWith(PROJ_PREFIX)).map(r => r.trim().slice(PROJ_PREFIX.length));
+  return list.length > 0 && matchesRejected({ id: PROJECTILE_ID, label: p.label }, list);
 }
 
 export function normalizeEdit(e: DesignEditInput): DesignEdit {
@@ -94,7 +109,13 @@ export function mergeReprompt(prev: ForgeDesign, next: unknown, rejected: readon
   }
   // locked components the model didn't echo go first (parents before children is fixed by sanitize)
   const missing = locked.filter(c => !usedLocked.has(c.id)).map(clone);
-  const merged = sanitizeDesign({ ...n.design, components: [...missing, ...out] }, opts);
+  let projectile = n.design.projectile;
+  if (prev.projectile?.locked) projectile = clone(prev.projectile);
+  else if (projectile && projectileRejected(projectile, rejected)) {
+    warnings.push(`rejected projectile "${projectile.label}" removed`);
+    projectile = undefined;
+  }
+  const merged = sanitizeDesign({ ...n.design, components: [...missing, ...out], projectile }, opts);
   warnings.push(...merged.warnings);
   return { design: merged.design, warnings, removed: [] };
 }
@@ -104,12 +125,18 @@ export function applyEdit(design: ForgeDesign, input: DesignEditInput, opts: San
   const d = clone(design);
   const warnings: string[] = [];
   let removed: Component[] = [];
+  let removedProjectile: ProjectileDesign | undefined;
   const find = (id: string) => d.components.find(c => c.id === id);
 
   switch (edit.op) {
     case 'lock':
     case 'unlock': {
       for (const id of edit.ids) {
+        if (id === PROJECTILE_ID && d.projectile) {
+          if (edit.op === 'lock') d.projectile.locked = true;
+          else delete d.projectile.locked;
+          continue;
+        }
         const c = find(id);
         if (!c) {
           warnings.push(`no component "${id}"`);
@@ -123,6 +150,13 @@ export function applyEdit(design: ForgeDesign, input: DesignEditInput, opts: San
     case 'reject': {
       const kill = new Set<string>();
       for (const id of edit.ids) {
+        if (id === PROJECTILE_ID) {
+          if (d.projectile) {
+            removedProjectile = d.projectile;
+            delete d.projectile;
+          }
+          continue;
+        }
         const c = find(id);
         if (!c) {
           warnings.push(`no component "${id}"`);
@@ -190,11 +224,15 @@ export function applyEdit(design: ForgeDesign, input: DesignEditInput, opts: San
       if (edit.palette) r.palette = { ...d.palette, ...edit.palette };
       if (edit.fx) r.fx = { ...d.fx, ...edit.fx };
       if (edit.stats) r.stats = { ...d.stats, ...edit.stats };
+      if (edit.projectile === null) delete d.projectile;
+      else if (edit.projectile !== undefined) r.projectile = edit.projectile;
       break;
     }
     case 'reprompt':
       return mergeReprompt(design, edit.next, edit.rejected ?? [], opts);
   }
   const res = sanitizeDesign(d, opts);
-  return { design: res.design, warnings: [...warnings, ...res.warnings], removed };
+  const out: EditResult = { design: res.design, warnings: [...warnings, ...res.warnings], removed };
+  if (removedProjectile) out.removedProjectile = removedProjectile;
+  return out;
 }
