@@ -103,8 +103,9 @@ open "http://localhost:5173/?server=local"
 | `?fresh=1` | ignore the stored token -> new identity |
 
 The auth token lives in `sessionStorage`, so **each browser tab is a separate player** (a reload
-keeps your identity). Multiplayer always uses the procedural TEST MAP; you spawn at the server's
-spawn point.
+keeps your identity). Multiplayer plays the active map — `ACTIVE_MAP_ID` in `shared/src/maps.ts`,
+which defaults to the procedural TEST MAP — and you spawn at one of the server's `spawn_point` rows
+for that map (see [Venue map](#venue-map)).
 
 How it plays: movement is client-authoritative (`update_transform` at 15 Hz); every shot calls
 `fire(seq, origin, dir)` and every local raycast hit on a remote player's capsule calls
@@ -152,9 +153,10 @@ pnpm --filter client typecheck
 
 URL params:
 
-- `?map=/maps/venue.glb` load a GLB map (put files in `client/public/maps/`). Colliders come from
-  `venue_collision.glb` next to it if present, otherwise from the visual mesh (trimesh). Falls back
-  to the procedural test map if the file is missing.
+- `?map=/maps/venue.glb` load a GLB map (put files in `client/public/maps/`, or on the bucket/CDN
+  set by `VITE_MAP_BASE_URL`). Colliders come from `venue_collision.glb` next to it if present,
+  otherwise from the visual mesh (trimesh). Falls back to the procedural test map if the file is
+  missing.
 - `?bots=3` simulated remote players (offline) to exercise `RemotePlayers` interpolation.
 
 ### Controls
@@ -192,3 +194,115 @@ as JSON in the console so they can be pasted into code / the server.
 are assembled with its `assembleWeapon()`; parts from the built-in kit use the legacy socket
 builder; weapons with no known parts (presets, old rows) use a library recipe for their class.
 Melee weapons (blade toward -Z, handle toward +Z) are tilted blade-up in the viewmodel.
+
+## Venue map
+
+The multiplayer map is a GLB derived from a scan of the real venue. This is the whole path from a
+raw capture to spawning players inside the arena.
+
+### Get a scan
+
+- **Phone scan** with Polycam, Scaniverse or Luma, exported as **GLB** or **OBJ**. Capture the
+  whole space in one pass; when it is an OBJ, keep the exported textures next to the `.obj`.
+- **MatterPak** — if the venue has a Matterport tour, the tour owner can export an official
+  **MatterPak OBJ** from that space. Prefer it when it exists: it is already aligned and scaled.
+
+Put the raw files in `scans/` (repo root). That directory is only a staging area for captures — the
+game never loads anything from it directly.
+
+### Process the scan
+
+`client/scripts/map/process-scan.ts` turns a raw capture into the runtime GLB plus a
+`_collision.glb` sibling that `loadMap()` uses for the Rapier trimesh colliders (the visual mesh is
+far too heavy to collide against). Run it straight with Node — it is erasable TypeScript, which
+Node 26 strips natively.
+
+```bash
+# the usual case: a Z-up OBJ exported from a phone scan
+node client/scripts/map/process-scan.ts \
+  --input  scans/tauron-arena.obj \
+  --output client/public/maps/tauron-arena.glb \
+  --up=z
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--input <file>` | raw scan to read (`.obj` or `.glb`) |
+| `--output <file>` | runtime GLB to write; the collision mesh is written next to it |
+| `--up=z` | the input is Z-up; leave it off for Y-up (the default) |
+
+A **MatterPak OBJ** goes through the same command without `--up=z`, since those exports are already
+Y-up. If the processed map comes out lying on its side or floating, re-run with the other up axis
+before digging any deeper.
+
+### Check it offline
+
+```bash
+pnpm dev
+open "http://localhost:5173/?offline=1&map=/maps/tauron-arena.glb"
+```
+
+`?offline=1` selects `OfflineNetClient`, so no server is needed, and `?map=` loads the GLB. Walk the
+space (F3 shows fps, position, grounded) and test the collision mesh by moving around: doorways,
+stairs and edges are where a scan's collider usually hurts. Without `VITE_MAP_BASE_URL` the path is
+resolved against the client origin, i.e. `client/public/maps/`; a missing file falls back to the
+procedural test map. Serving the map from the CDN instead is covered under
+[Deploying](#deploying).
+
+### Bake spawn points
+
+```bash
+open "http://localhost:5173/?offline=1&map=/maps/tauron-arena.glb&bakeSpawns=1"
+```
+
+`?bakeSpawns=1` puts the spawn editor in bake mode: the positions you save are logged ready to
+paste into `shared/src/maps.ts`.
+
+- **F2** toggles the editor
+- **P** saves the current position as a spawn
+- **Backspace** undoes the last one
+- **C** clears them all
+
+Spawns are also kept in `localStorage` (`ai-gaem.spawns.<mapId>`), so a reload does not lose them.
+When you are happy with the set, paste the logged list into the spawn entry for that map in
+`shared/src/maps.ts`.
+
+### Make it the active map
+
+Both the server and the client read the active map from `shared/src/maps.ts` (`ACTIVE_MAP_ID`) via
+`@ai-gaem/shared`.
+
+**1. Add the map and point at it.** Add or update the map's entry in `shared/src/maps.ts` — id,
+GLB path and the baked spawns — then set `ACTIVE_MAP_ID` to that id.
+
+**2. Republish the module** so `seedWorld` reseeds `spawn_point` for the new map:
+
+```bash
+pnpm --filter @ai-gaem/server publish:maincloud
+```
+
+**3. Confirm the reseed:**
+
+```bash
+spacetime sql --server maincloud prompt-wars-63xhe "SELECT * FROM spawn_point"
+```
+
+**4. Restart the client** (`pnpm dev`; the client bundles `@ai-gaem/shared`, so `ACTIVE_MAP_ID` is
+read at build time) and join a multiplayer game: you should spawn on the venue map.
+
+### Deploying
+
+- **Server** — SpacetimeDB **Maincloud**, database `prompt-wars-63xhe`:
+  `pnpm --filter @ai-gaem/server publish:maincloud` (run `pnpm --filter @ai-gaem/server generate`
+  too if tables or reducers changed).
+- **Client** — `pnpm --filter client build` produces a static bundle in `client/dist/`; upload that
+  directory to any static host (S3 / Cloudflare Pages / Netlify / Vercel / nginx). Nothing
+  server-side is needed.
+- **Map files** — put the visual GLB and its `_collision.glb` on a bucket/CDN. Configure CORS so the
+  client origin can `GET` them (`Access-Control-Allow-Origin: https://<client-origin>`,
+  `Access-Control-Allow-Methods: GET`); the browser fetches GLBs with `fetch`, so a missing CORS
+  header shows up as a failed load and the game falls back to the test map.
+- **`VITE_MAP_BASE_URL`** — set it at build time to the bucket root, e.g.
+  `VITE_MAP_BASE_URL=https://cdn.example.com pnpm --filter client build`; `?map=/maps/tauron-arena.glb`
+  then loads `https://cdn.example.com/maps/tauron-arena.glb`. Leave it unset to serve maps from the
+  client origin (`client/public/maps/`).
