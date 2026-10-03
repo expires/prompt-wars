@@ -174,10 +174,10 @@ describe('headshots', () => {
     expect(zoneDamage({ headshotMultiplier: 2 }, 20, 7)).toBe(20); // unknown zone = body
 
     // plausibility: head height standing / crouched, not feet
-    expect(isPlausibleHeadHit([0, 0, 0], false, [0.1, HEAD_CENTER_STANDING, 0])).toBe(true);
-    expect(isPlausibleHeadHit([0, 0, 0], false, [0, 0.3, 0])).toBe(false);
-    expect(isPlausibleHeadHit([0, 0, 0], true, [0, HEAD_CENTER_CROUCHED, 0])).toBe(true);
-    expect(isPlausibleHeadHit([0, 0, 0], true, [0, HEAD_CENTER_STANDING + 0.2, 0])).toBe(false);
-    expect(isPlausibleHeadHit([0, 0, 0], false, [5, HEAD_CENTER_STANDING, 0])).toBe(false);
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: false }, speed: 0 }, [0.1, HEAD_CENTER_STANDING, 0])).toBe(true);
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: false }, speed: 0 }, [0, 0.3, 0])).toBe(false);
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: true }, speed: 0 }, [0, HEAD_CENTER_CROUCHED, 0])).toBe(true);
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: true }, speed: 0 }, [0, HEAD_CENTER_STANDING + 0.2, 0])).toBe(false);
+    expect(isPlausibleHeadHit({ prev: null, cur: { x: 0, y: 0, z: 0, crouching: false }, speed: 0 }, [5, HEAD_CENTER_STANDING, 0])).toBe(false);
   });
 });

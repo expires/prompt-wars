@@ -35,6 +35,14 @@ export interface GameTestHook {
   reportHitRaw(playerId: string, zone: number, point: [number, number, number]): number;
   /** keep the hitmarker visible (screenshots) */
   holdHitmarker(on: boolean): void;
+  /** move in a circle at constant speed (null = stop); the network sends like real movement */
+  setAutoMove(m: { cx: number; cz: number; r: number; speed: number; y: number } | null): void;
+  /** record the rendered position of a remote player every frame for `ms` */
+  traceRemote(playerId: string, ms: number): Promise<{ t: number; x: number; y: number; z: number; d?: unknown }[]>;
+  /** while dead: equip the preset weapon of a class (resolves when the server accepted it) */
+  equipPreset(weaponClass: string): Promise<string>;
+  /** reducer call counters / network stats */
+  netStats(): { rtt: number; sendHz: number; calls: Record<string, number>; interp?: unknown } | null;
 }
 
 function getState(game: Game) {
@@ -52,7 +60,10 @@ function getState(game: Game) {
     fov: ready ? game.rc.camera.fov : 0,
     spread: ready ? game.weapons.currentSpread() : 0,
     hitmarker: ready ? (document.querySelector('[data-testid=hitmarker]')?.className ?? '') : '',
-    serverCrouching: game.me?.crouching ?? false,
+    killConfirm: ready ? game.hud.killConfirmVisible : false,
+    damageNumbers: ready ? game.damageNumbers.snapshot() : [],
+    /** crouch flag of our own pose row as the server has it */
+    serverCrouching: (ready && game.net.getPose?.(game.net.localId)?.crouching) || false,
     ready,
     connected: net?.connected ?? ready,
     authoritative: net?.authoritative ?? false,
@@ -105,10 +116,9 @@ export function installTestHook(game: Game) {
   const hook: GameTestHook = {
     getState: () => getState(game),
     teleport(x, y, z, yaw) {
-      game.player.teleport(new THREE.Vector3(x, y, z), yaw);
+      game.teleportLocal([x, y, z], yaw);
       game.player.updateCamera(game.rc.camera, 1);
       game.rc.camera.updateMatrixWorld();
-      game.sendTransformNow();
     },
     aimAt(playerId) {
       const c = game.remotes.centerOf(playerId);
@@ -153,10 +163,45 @@ export function installTestHook(game: Game) {
       const dir = new THREE.Vector3(...point).sub(eye).normalize();
       const seq = game.net.fire([eye.x, eye.y, eye.z], [dir.x, dir.y, dir.z]);
       game.net.reportHit(playerId, game.weapons.weaponId, { seq, pellets: 1, point, zone });
+      game.net.flushShot?.();
       return seq;
     },
     holdHitmarker(on) {
       game.hud.holdHitmarker = on;
+    },
+    setAutoMove(m) {
+      if (!m) {
+        game.autoMove = null;
+        return;
+      }
+      const f = game.player.feet;
+      game.autoMove = { ...m, a: Math.atan2(f.z - m.cz, f.x - m.cx) };
+    },
+    traceRemote(playerId, ms) {
+      return new Promise((resolve) => {
+        const out: { t: number; x: number; y: number; z: number; d?: unknown }[] = [];
+        const t0 = performance.now();
+        const prev = game.remotes.onFrame;
+        game.remotes.onFrame = (now) => {
+          prev?.(now);
+          const r = game.remotes.get(playerId);
+          if (r) out.push({ t: now, x: r.position.x, y: r.position.y, z: r.position.z, d: game.remotes.debugOf(playerId) });
+          if (now - t0 >= ms) {
+            game.remotes.onFrame = prev;
+            resolve(out);
+          }
+        };
+      });
+    },
+    async equipPreset(cls) {
+      const id = game.net.presetId?.(cls);
+      if (!id || !game.net.equipWeapon) throw new Error(`no preset ${cls}`);
+      await game.net.equipWeapon(id);
+      return id;
+    },
+    netStats() {
+      const st = game.net.stats?.();
+      return st ? { ...st, interp: game.remotes.netStats() } : null;
     },
   };
   (window as unknown as { __game: GameTestHook }).__game = hook;

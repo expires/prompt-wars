@@ -133,25 +133,6 @@ export function zoneDamage(weapon: Pick<Weapon, 'headshotMultiplier'>, bodyDamag
   return Math.min(bodyDamage * mult, Math.max(bodyDamage, MAX_HEADSHOT_DAMAGE));
 }
 
-/**
- * Server-side sanity check for a claimed headshot: is the impact point plausibly at the head of
- * a player whose last known feet position is (fx, fy, fz)? Generous tolerances absorb
- * interpolation delay (remote players are rendered ~100 ms in the past), jumping and the crouch
- * transition, but rule out claiming a head hit at the feet or legs.
- */
-export function isPlausibleHeadHit(
-  feet: readonly [number, number, number],
-  crouching: boolean,
-  impact: readonly [number, number, number],
-): boolean {
-  const centre = crouching ? HEAD_CENTER_CROUCHED : HEAD_CENTER_STANDING;
-  const dy = impact[1] - feet[1];
-  const VERT_TOL = 0.35;
-  if (dy < centre - HEAD_RADIUS - VERT_TOL || dy > centre + HEAD_RADIUS + VERT_TOL) return false;
-  const HORIZ_TOL = 1.5;
-  return Math.hypot(impact[0] - feet[0], impact[2] - feet[2]) <= HORIZ_TOL;
-}
-
 /** Splash damage at `distance` from the impact point, linear falloff to 25% at the edge. */
 export function splashDamageAt(weapon: Pick<Weapon, 'damage' | 'pellets' | 'splashRadius'>, distance: number): number {
   if (weapon.splashRadius <= 0 || distance > weapon.splashRadius) return 0;

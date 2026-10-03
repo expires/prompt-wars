@@ -18,10 +18,10 @@ import { DEFAULT_WEAPONS, generateWeaponStub } from '../weapons/defaultWeapons';
 import type { Weapon } from '../weapons/types';
 import { Hud, esc } from '../ui/Hud';
 import { SpawnEditor } from '../ui/SpawnEditor';
-import { OfflineNetClient, RemotePlayers, type NetClient, type NetPlayer } from '../net';
+import { OfflineNetClient, PoseSender, RemotePlayers, type NetClient, type NetPlayer } from '../net';
+import { DamageNumbers } from '../ui/DamageNumbers';
 
 export const MAX_HP = 100;
-const NET_SEND_HZ = 15;
 
 export interface GameOptions {
   /** GLB url; omitted => procedural test map */
@@ -76,7 +76,10 @@ export class Game {
   /** test hook / scripted override for ADS (null = right mouse) */
   forceAds: boolean | null = null;
   private adsToggled = false;
-  private lastCrouchSent = false;
+  poseSender!: PoseSender;
+  damageNumbers!: DamageNumbers;
+  /** test hook: scripted circular movement (smoothness test) */
+  autoMove: { cx: number; cz: number; r: number; speed: number; y: number; a: number } | null = null;
 
   hp = MAX_HP;
   alive = true;
@@ -85,8 +88,9 @@ export class Game {
   me?: NetPlayer;
   readonly killLog: string[] = [];
   private acc = 0;
+  /** simulation clock (ms) for pose timestamps: advances exactly FIXED_DT per step */
+  private simT: number | null = null;
   private last = performance.now();
-  private netAcc = 0;
   private scoreAcc = 0;
   private showDebug = false;
   private fps = 0;
@@ -125,6 +129,8 @@ export class Game {
 
     this.net = opts.net ?? new OfflineNetClient({ bots: opts.bots ?? 0, botCenter: [0, 0, 0] });
     const online = this.net.authoritative;
+    this.poseSender = new PoseSender(this.net);
+    this.damageNumbers = new DamageNumbers(this.hud.numbersLayer);
 
     // ---- dummies (offline only: the server doesn't know about them) ----
     if (!online) {
@@ -156,6 +162,7 @@ export class Game {
         },
         onAmmoChanged: (a, m, r) => this.hud.setAmmo(a, m, r),
         onShot: (o, d) => this.net.fire([o.x, o.y, o.z], [d.x, d.y, d.z]),
+        onShotEnd: () => this.net.flushShot?.(),
         onFire: (w) => this.sfx.gunshot(w.class),
         onRecoil: (p, y) => this.rig.kick(p, y),
         onExplosion: (pos) => this.sfx.explosion(pos),
@@ -178,10 +185,14 @@ export class Game {
       if (e.victimId === this.net.localId) this.hud.setDeathMessage(`Killed by ${e.killerName} [${e.weaponName}]`);
       this.hud.addKill(killer, e.weaponName, victim, !!e.headshot);
     });
-    // server-confirmed kills by us: kill chime (the optimistic hitmarker never knows about kills online)
+    // server-confirmed damage by us: aggregated damage numbers; kills get the kill X + chime
+    // (the optimistic hitmarker shows on the local raycast and never knows about kills online)
     this.net.onHitConfirmed?.((e) => {
+      const at = e.point ? new THREE.Vector3(...e.point) : (this.remotes.headOf(e.targetId) ?? new THREE.Vector3());
+      this.damageNumbers.add(e.targetId, e.damage, at, { headshot: e.headshot, killed: e.killed });
       if (e.killed) {
         this.hud.hitMarker(true, e.headshot);
+        this.hud.killConfirm(e.headshot);
         this.sfx.killChime();
       }
     });
@@ -264,8 +275,8 @@ export class Game {
       this.die('Killed');
     } else if (me.alive && !this.alive) {
       // server respawned us: move to the server-chosen spawn point
-      this.teleportTo(me.pos, me.yaw);
       this.respawn(false);
+      this.teleportTo(me.pos, me.yaw);
     }
     if (!prev || prev.weaponId !== me.weaponId) this.syncWeapon(true);
   }
@@ -283,13 +294,28 @@ export class Game {
     const v = new THREE.Vector3(...pos);
     this.player.teleport(v, yaw);
     this.lastSpawn.copy(v);
+    this.poseSender.markTeleport();
     this.sendTransformNow();
   }
 
+  /** current pose for the network */
+  private poseInput() {
+    const p = this.player;
+    const f = p.feet;
+    return { pos: [f.x, f.y, f.z] as Vec3, yaw: p.yaw, pitch: p.pitch, crouching: p.crouched, grounded: p.grounded };
+  }
+
+  /** send the pose right away (teleports, test hooks); regular sends happen in the fixed step */
   sendTransformNow() {
-    const f = this.player.feet;
-    this.lastCrouchSent = this.player.crouched;
-    this.net.sendTransform([f.x, f.y, f.z], this.player.yaw, this.player.pitch, this.player.crouched, true);
+    if (!this.alive) return;
+    this.poseSender.forceNext();
+    this.poseSender.step(this.poseInput(), this.simT ?? performance.now(), FIXED_DT);
+  }
+
+  /** test hook teleport: a discontinuity remotes should snap to */
+  teleportLocal(pos: Vec3, yaw?: number) {
+    this.autoMove = null;
+    this.teleportTo(pos, yaw);
   }
 
   /** wait for the server's respawn timer, then call respawn (retrying on clock skew) */
@@ -370,6 +396,7 @@ export class Game {
   die(message = '') {
     if (!this.alive) return;
     this.alive = false;
+    this.poseSender.reset();
     this.hp = 0;
     this.hud.setHealth(0);
     this.player.inputEnabled = false;
@@ -418,6 +445,24 @@ export class Game {
   }
 
   private lastHitHead = false;
+
+  /** F3: network section (RTT, interpolation delay / jitter, send rate, buffered snapshots) */
+  private netDebugText(): string {
+    const st = this.net.stats?.();
+    if (!st) return '';
+    const ip = this.remotes.netStats();
+    const calls = Object.entries(st.calls)
+      .map(([k, v]) => `${k}:${v}`)
+      .join(' ');
+    return (
+      `\n— net —\nrtt ${st.rtt.toFixed(0)} ms   send ${st.sendHz} Hz` +
+      (ip
+        ? `\ninterp ${ip.delay.toFixed(0)} ms (target ${ip.targetDelay.toFixed(0)})  jitter ${ip.jitter.toFixed(0)} ms\n` +
+          `snapshots buffered ${ip.buffered.toFixed(1)}  remote send interval ${ip.interval.toFixed(0)} ms  (${ip.remotes} remote)`
+        : '\nno remote players') +
+      `\ncalls ${calls}`
+    );
+  }
 
   /** crosshair gap from the current spread; ADS hides the lines (scoped weapons show the scope) */
   private updateCrosshair() {
@@ -479,9 +524,26 @@ export class Game {
     const md = input.locked ? player.frameInput(dt, this.rig.fovScale) : (input.consumeMouse(), { dx: 0, dy: 0 });
     this.acc += dt;
     while (this.acc >= FIXED_DT) {
-      player.fixedUpdate(FIXED_DT);
+      const am = this.autoMove;
+      if (am && this.alive) {
+        // scripted constant-speed circle (smoothness test), instead of input-driven movement
+        am.a += (am.speed / am.r) * FIXED_DT;
+        const w = am.speed;
+        player.scriptedStep(
+          new THREE.Vector3(am.cx + Math.cos(am.a) * am.r, am.y, am.cz + Math.sin(am.a) * am.r),
+          new THREE.Vector3(-Math.sin(am.a) * w, 0, Math.cos(am.a) * w),
+        );
+        player.yaw = Math.atan2(Math.sin(am.a), -Math.cos(am.a));
+      } else player.fixedUpdate(FIXED_DT);
       this.physics.world.step();
       this.acc -= FIXED_DT;
+      // network: decided per fixed step, stamped with simulation time (uniform spacing that matches
+      // the positions), re-anchored when it drifts from real time (frames > 100 ms are clamped, so
+      // the simulation then runs slower than real time; receivers estimate our clock offset)
+      const real = now - this.acc * 1000;
+      this.simT = this.simT === null ? real : this.simT + FIXED_DT * 1000;
+      if (Math.abs(this.simT - real) > 60) this.simT = real;
+      if (this.alive) this.poseSender.step(this.poseInput(), this.simT, FIXED_DT);
     }
     const cam = this.rc.camera;
     player.updateCamera(cam, this.acc / FIXED_DT, dt);
@@ -493,8 +555,10 @@ export class Game {
     cam.updateMatrixWorld();
 
     if (this.alive && player.feet.y < this.map.killY) {
-      if (online) this.player.teleport(this.lastSpawn.clone());
-      else this.damageLocal(MAX_HP, 'Fell out of the world');
+      if (online) {
+        this.player.teleport(this.lastSpawn.clone());
+        this.poseSender.markTeleport();
+      } else this.damageLocal(MAX_HP, 'Fell out of the world');
     }
 
     // camera-space strafe velocity (viewmodel inertia)
@@ -513,21 +577,9 @@ export class Game {
     this.weapons.update(dt, input, canAct);
     this.updateCrosshair();
     this.dummies?.update(dt, this.rc.camera);
-    this.remotes.update(dt);
+    this.remotes.update(dt, now);
+    this.damageNumbers.update(dt, cam, (id) => this.remotes.headOf(id));
     this.hud.update(dt);
-
-    this.netAcc += dt;
-    if (this.netAcc >= 1 / NET_SEND_HZ) {
-      this.netAcc = 0;
-      if (this.alive) {
-        const f = player.feet;
-        this.lastCrouchSent = player.crouched;
-        this.net.sendTransform([f.x, f.y, f.z], player.yaw, player.pitch, player.crouched);
-      }
-    } else if (this.alive && player.crouched !== this.lastCrouchSent) {
-      // crouch changes go out immediately (hitboxes)
-      this.sendTransformNow();
-    }
 
     if (online) {
       if (!this.alive && me?.respawnAt) this.hud.setRespawnCountdown((me.respawnAt - Date.now()) / 1000);
@@ -552,7 +604,8 @@ export class Game {
           `vel ${player.horizontalSpeed().toFixed(2)} vy ${player.velocity.y.toFixed(2)}\ngrounded ${player.grounded}` +
           `  crouch ${player.crouched}  sprint ${player.sprinting}\n` +
           `spread ${this.weapons.currentSpread().toFixed(2)}°  bloom ${this.weapons.bloom.toFixed(2)}  ads ${this.ads.toFixed(2)}  fov ${cam.fov.toFixed(1)}\n` +
-          `map ${this.map.id}  weapon ${this.weapons.weapon.name} (${this.weapons.fireMode})`,
+          `map ${this.map.id}  weapon ${this.weapons.weapon.name} (${this.weapons.fireMode})` +
+          this.netDebugText(),
       );
     } else this.hud.setDebug(null);
 

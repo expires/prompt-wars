@@ -1,6 +1,6 @@
 import { zoneDamage } from '@ai-gaem/shared';
 import type { Weapon } from '../weapons/types';
-import type { HitInfo, KillEvent, NetClient, NetPlayer, Vec3 } from './NetClient';
+import type { HitInfo, KillEvent, LocalPose, NetClient, NetPlayer, PoseSnapshot, Vec3 } from './NetClient';
 
 type Listener<T> = (v: T) => void;
 
@@ -14,6 +14,8 @@ export class OfflineNetClient implements NetClient {
   readonly authoritative = false;
   private seq = 0;
   private playersCbs: Listener<NetPlayer[]>[] = [];
+  private poseCbs: ((id: string, s: PoseSnapshot) => void)[] = [];
+  private poses = new Map<string, PoseSnapshot>();
   private killCbs: Listener<KillEvent>[] = [];
   private weapons = new Map<string, Weapon>();
   private bots: (NetPlayer & { cx: number; cz: number; r: number; speed: number; phase: number })[] = [];
@@ -63,8 +65,22 @@ export class OfflineNetClient implements NetClient {
       b.yaw = Math.atan2(Math.sin(a), -Math.cos(a));
       // crouch for ~1.5 s out of every 5 (exercises remote crouch + hitboxes)
       b.crouching = (this.t + b.phase) % 5 < 1.5;
+      const w = b.speed * b.r;
+      const snap: PoseSnapshot = {
+        pos: [...b.pos],
+        vel: [-Math.sin(a) * w, 0, Math.cos(a) * w],
+        yaw: b.yaw,
+        pitch: 0,
+        crouching: !!b.crouching,
+        grounded: true,
+        teleport: false,
+        sendT: Math.round(this.t * 1000),
+        arrival: performance.now(),
+      };
+      this.poses.set(b.id, snap);
+      this.poseCbs.forEach((cb) => cb(b.id, snap));
     }
-    this.emitPlayers();
+    this.emitPlayers(); // roster (hp / alive); movement goes through onPose
   }
 
   private emitPlayers() {
@@ -72,8 +88,17 @@ export class OfflineNetClient implements NetClient {
     this.playersCbs.forEach((cb) => cb(snapshot));
   }
 
-  sendTransform(_pos: Vec3, _yaw: number, _pitch: number, _crouching: boolean) {
+  sendTransform(_pose: LocalPose) {
     // nothing to send offline
+  }
+
+  onPose(cb: (id: string, s: PoseSnapshot) => void) {
+    this.poseCbs.push(cb);
+    return () => (this.poseCbs = this.poseCbs.filter((c) => c !== cb));
+  }
+
+  getPose(id: string) {
+    return this.poses.get(id);
   }
 
   fire(_origin: Vec3, _dir: Vec3) {

@@ -40,6 +40,10 @@ pnpm publish:maincloud                                   # = sync-catalog + spac
 pnpm generate                                            # after any schema/reducer change
 ```
 
+Schema changes are automatic migrations (added tables / columns with defaults, no data wipe); the
+CLI warns that connected clients will be disconnected, and old client builds are incompatible with
+changed reducers, so redeploy the client at the same time.
+
 If the database ever pre-dates the module (init never ran), call `claim_admin` once from your
 logged-in identity: `spacetime call --server maincloud prompt-wars-63xhe claim_admin`.
 
@@ -63,10 +67,29 @@ after the catalog changes**.
 ### World seeding
 
 On init / every connect (`seedWorld`, idempotent): 14 preset weapons (one per class; presets with no
-parts get their class's first recipe), the 8 TEST MAP spawn points (`TEST_MAP_SPAWN_POINTS` in
+parts get their class's first recipe) and the 8 TEST MAP spawn points (`TEST_MAP_SPAWN_POINTS` in
 `@ai-gaem/shared`, also used by the client's test map; the old placeholder ring is migrated
-automatically), and the 4 Hz tick timer. New players spawn with the preset pistol; respawning
-without "keep loadout" rolls a random preset.
+automatically). It also deletes any leftover `tick_timer` rows (the old always-on 4 Hz tick).
+New players spawn with the preset pistol; respawning without "keep loadout" rolls a random preset.
+
+### Tables and cost
+
+SpacetimeDB bills per reducer call and per byte written / broadcast, so the hot paths are kept small:
+
+| Table | Visibility | What |
+| --- | --- | --- |
+| `player` | public | rarely-changing state: name, online, hp, alive, kills, deaths, weaponId, respawnAt, slow, `slot`; `x/y/z/yaw` = spawn / resume point. Some columns are legacy (ammo, reload, dot, crouching...): an automatic migration can't drop columns, they are just no longer written |
+| `player_pose` | public | hot: one ~45-byte row per online player keyed by a u32 `slot` (assigned on connect): position, yaw/pitch, velocity, flags (crouch / grounded / teleport), sender clock `sendT` |
+| `player_combat` | private | ammo, reload, fire-rate token bucket, previous pose + timestamps (lag compensation), DoT. One row per online player |
+| `weapon` | public | presets + generated weapons; clients subscribe to presets and fetch other rows on demand by id |
+| `shot` | private | recent projectile shots (for `report_hit`); expired rows are cleaned up inside `fire` |
+| `dot_timer` | private, scheduled | one row per victim while a damage-over-time effect is active (250 ms ticks, deleted on expiry) |
+| `shot_event`, `hit_event` | public events | remote shot visuals, damage / kills |
+| `tick_timer` | private | legacy, always empty (kept so the auto-migration doesn't have to drop a table) |
+
+There is no always-on scheduled reducer: an idle server does nothing. Slows expire client-side
+from `slowUntil`. Clients subscribe to `player`, `player_pose`, `spawn_point`, the event tables and
+preset weapons only (not `subscribeToAllTables`), with `withConfirmedReads(false)`.
 
 ### Balance
 
@@ -78,9 +101,20 @@ with splash / slow / knockback costing budget. Tests: `pnpm --filter @ai-gaem/sh
 Headshots: every weapon has a `headshotMultiplier` in [1, 3] (class bounds: default 2, sniper 2.5
 (2-3), SMG/LMG 1.75, blowgun 1.5, shotgun 1 (max 1.25); forced to 1 for streams and anything with
 splash). Head damage per shot = min(body * multiplier, 150) (`zoneDamage`), so body shots stay
-<= 95 while a sniper headshot one-taps. The server only honours `zone = head` if the impact point is
-within the target's head height (stored feet position + `crouching`, +-0.35 m vertical / 1.5 m
-horizontal slack for interpolation delay, `isPlausibleHeadHit`); otherwise it's a body hit.
+<= 95 while a sniper headshot one-taps.
+
+Range falloff (`rangeFalloff`, hitscan + streams): full damage to 60% of the weapon's range, then
+linear down to 75% at max range. Fire rate is a token bucket (`spendFireCredit`): credits refill at
+the weapon's rate, a shot costs 1, the bucket holds `max(1.5, 1 + 0.25 s * rate)` so network
+bunching is tolerated while the long-run rate stays exact (1.5, not 2, so heavy weapons can't
+double-tap).
+
+Hit validation (`shared/src/hitcheck.ts`, favor-the-shooter with a cap): the server keeps each
+victim's previous pose and its timestamp; a direct hit is accepted if the impact point is on the
+victim's hitbox anywhere along previous -> current pose within the last 250 ms, with tolerance
+0.3 m + victim speed x 0.25 s. A claimed head hit must be within the head sphere (crouch-aware,
++-0.3 m vertical, 0.5 m horizontal + the speed term), otherwise it counts as a body hit; an impact
+that isn't on the body at all is rejected.
 
 ## Client
 
@@ -113,17 +147,29 @@ The auth token lives in `sessionStorage`, so **each browser tab is a separate pl
 keeps your identity). Multiplayer always uses the procedural TEST MAP; you spawn at the server's
 spawn point.
 
-How it plays: movement is client-authoritative (`update_transform` at 15 Hz); every shot calls
-`fire(seq, origin, dir)` and every local raycast hit on a remote player's hitboxes (head sphere +
-body capsule, lowered while crouched) calls `report_hit(seq, target, pellets, impact, zone)` — the
-server validates cooldown / ammo / range (and head plausibility) against the stored weapon and
-applies damage. `update_transform` also carries `crouching` (sent immediately on change), stored on
-the `player` row; `hit_event.headshot` drives the kill-feed headshot icon. HP, death, kills/deaths, slow and knockback come from the
-`player` row and `hit_event`; other players' shots are drawn from `shot_event`; the kill feed comes
-from `hit_event.killed`. Remote players are interpolated humanoids (100 ms delay) with name tags
-and HP bars, hidden while dead. On death: **Keep loadout** waits for `respawnAt` and calls
-`respawn(true)`; **Generate new weapon** calls the `generate_weapon` procedure with your prompt
-(auto-equipped while dead), shows the result's name and stats, then respawns with it.
+How it plays: movement is client-authoritative. `update_transform(x, y, z, yaw, pitch, vx, vy, vz,
+flags, sendT)` goes out from the fixed physics step: 20 Hz while moving, 10 Hz while only looking
+around, nothing while idle (no heartbeat), immediately on discrete changes (start / stop, jump /
+land, crouch, teleport); 2 Hz (+ the final stop) while nobody else is online (`PoseSender`).
+Hitscan, stream and melee shots are one call each: `fire(seq, origin, dir, hits[])` where `hits`
+lists each remote player the local raycast hit (head sphere + body capsule, lowered while
+crouched): `{slot, zone, ix, iy, iz, pellets}`. Projectile / arc weapons call `fire` and later
+`report_hit(seq, slot, pellets, impact, zone)` when the projectile lands. The server validates fire
+rate / ammo / range / hit position against the stored weapon and the victim's recent poses and
+applies damage. HP, death, kills/deaths, slow and knockback come from the `player` row and
+`hit_event` (aggregated floating damage numbers, kill-confirm X + chime); other players' shots are
+drawn from `shot_event`; the kill feed comes from `hit_event.killed`. Remote players are
+interpolated humanoids with name tags and HP bars, hidden while dead.
+
+Interpolation (`client/src/net/interp.ts`) runs on the *sender's* clock: each pose row is one
+snapshot (only rows that changed), the clock offset is min(arrival - sendT) over ~2 s, the delay
+target is 2 x send interval + p95 jitter (80-200 ms) and playback converges at 0.95-1.05x speed
+instead of jumping; positions use Hermite curves from the sent velocity, extrapolate along it for
+<= 150 ms when the buffer runs dry, and snap on teleports / respawns / jumps > 3 m. F3 shows RTT,
+interpolation delay / target, jitter, send rate, buffered snapshots and per-reducer call counts.
+On death: **Keep loadout** waits for `respawnAt` and calls `respawn(true)`; **Generate new weapon**
+calls the `generate_weapon` procedure with your prompt (auto-equipped while dead), shows the
+result's name and stats, then respawns with it.
 
 ### E2E tests (Playwright)
 
@@ -136,7 +182,7 @@ pnpm e2e:maincloud       # smoke test (a) against Maincloud (publish there first
 Tests live in `client/e2e/` (two browser contexts, headless Chromium with SwiftShader WebGL) and
 drive the game through `window.__game` (`getState()`, `teleport`, `aimAt(id)`, `aimAtHead(id)`,
 `lookAt`, `fireOnce`, `reload`, `setCrouch`, `setAds`, `setPerfectAim`, `reportHitRaw`,
-`holdHitmarker`) instead of mouse look:
+`holdHitmarker`, `setAutoMove`, `traceRemote`, `equipPreset`, `netStats`) instead of mouse look:
 
 - **a** both players see each other; moving A is reflected on B (`@smoke`)
 - **b** A kills B with the pistol: HP drops by exactly the server's per-shot damage, kill feed on
@@ -145,13 +191,21 @@ drive the game through `window.__game` (`getState()`, `teleport`, `aimAt(id)`, `
   (`"a bubble gun that traps people"`) returns a new bubble gun whose stats are clampWeapon-stable,
   with a multi-mesh viewmodel built from library parts, also visible in B's hand on A's screen
 - **d** firing 10 shots in 450 ms (local cooldown bypassed) only lands what the server's fire-rate
-  check allows
+  token bucket allows
 - **e** headshots: a client-raycast head hit does `damage * headshotMultiplier`, a body hit plain
-  damage, a forged head hit at the feet (`reportHitRaw`) is downgraded to body damage; the headshot
-  kill shows the kill-feed headshot icon on both screens (gold hitmarker screenshot)
-- **f** crouch: B's crouch replicates (server row + A renders B crouched, head hitbox lowered);
-  forged standing-height head hit on a crouched B = body damage, a real crouched headshot counts;
-  standing up replicates; ADS zooms the FOV and tightens spread (screenshot)
+  damage (and a floating damage number), a forged head hit at the feet (`reportHitRaw`) is
+  downgraded to body damage; the headshot kill shows the kill-confirm X and the kill-feed headshot
+  icon on both screens (gold hitmarker screenshot)
+- **f** crouch: B's crouch replicates (pose row + A renders B crouched, head hitbox lowered);
+  a forged standing-height head hit on a crouched B is rejected, a forged one at the knees is body
+  damage, a real crouched headshot counts; standing up replicates; ADS zooms the FOV and tightens
+  spread (screenshot)
+- **g** netcode: idle clients send nothing; A walks a circle at 4.5 m/s and B's rendered position is
+  sampled every frame for 3 s: no holds, no rushes, per-frame speed within +-30% of the mean
+  (measured ~+-4%); 20 `update_transform`/s while moving; reducer call rates are logged; F3
+  overlay screenshot
+- **h** blowgun (projectile -> `report_hit`) direct hit + damage over time from the per-victim
+  `dot_timer` (exact total, timer row gone afterwards, no `tick_timer`)
 
 Screenshots of every step go to `client/e2e/screenshots/` (`maincloud-*` for the smoke run). The
 Playwright config uses Playwright's Chromium if installed (`npx playwright install chromium`),
@@ -189,7 +243,7 @@ URL params:
 | 1-6 | debug (offline only): swap sample weapon (rifle, shotgun, rocket, grenade arc, flamethrower stream, sword) |
 | K | debug (offline only): kill yourself (death screen) |
 | F2 | spawn editor: **P** save current position as spawn, **Backspace** undo, **Delete** clear |
-| F3 | debug overlay (fps, position, grounded) |
+| F3 | debug overlay (fps, position, grounded; net: RTT, interp delay, jitter, send Hz, buffered snapshots, reducer calls) |
 | Esc | release mouse; the pause screen has a **Settings** panel (sensitivity, ADS sensitivity, FOV, key-turn speed, volume, toggle crouch / aim, invert Y, head bob; saved in `localStorage` `ai-gaem.settings`) |
 
 Feel: spread per weapon class (`src/weapons/handling.ts`): base spread x ADS / crouch / movement /

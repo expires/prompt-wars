@@ -57,7 +57,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
 .killfeed .entry i { color: var(--hud-dim); font-style: normal; padding: 0 6px; }
 .killfeed .entry .hs { color: var(--hud-gold); display: inline-block; vertical-align: -3px; margin-right: 6px; }
 @keyframes kf-in { from { transform: translateX(20px); opacity: 0; } }
-.debug { left: 20px; top: 20px; font-size: 11px; color: var(--hud-dim); white-space: pre; }
+.debug { left: 20px; top: 110px; font-size: 11px; color: var(--hud-dim); white-space: pre; }
 .damage-vignette { position: absolute; inset: 0; box-shadow: inset 0 0 120px rgba(255, 0, 0, 0.6); opacity: 0; transition: opacity 0.3s; }
 .damage-vignette.show { opacity: 1; transition: none; }
 
@@ -95,3 +95,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
 .settings input[type=range] { width: 160px; accent-color: var(--hud-accent); }
 .settings input[type=checkbox] { accent-color: var(--hud-accent); width: 16px; height: 16px; }
 .settings .btn { font-size: 12px; padding: 4px 10px; margin-top: 10px; }
+/* server-confirmed kill: big X over the crosshair */
+.killx { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--hud-danger); opacity: 0; }
+.killx svg { display: block; filter: drop-shadow(0 0 4px rgba(255, 60, 60, 0.8)) drop-shadow(0 0 1px #000); }
+.killx.show { opacity: 1; animation: killx-pop 0.18s ease-out; }
+.killx.headshot { color: var(--hud-gold); }
+@keyframes killx-pop { from { transform: translate(-50%, -50%) scale(1.8) rotate(-20deg); opacity: 0.2; } }
+/* floating damage numbers (aggregated per target) */
+.dmg-num { position: absolute; left: 0; top: 0; font-weight: 700; font-size: 18px; color: #fff; white-space: nowrap; will-change: transform, opacity; }
+.dmg-num.headshot { color: var(--hud-gold); font-size: 22px; }
+.dmg-num.kill { color: var(--hud-danger); }

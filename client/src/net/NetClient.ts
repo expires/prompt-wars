@@ -57,6 +57,48 @@ export interface LocalHitEvent {
   headshot: boolean;
 }
 
+/**
+ * Local player's pose as sent to the server (update_transform): feet position, look, velocity,
+ * flags and the sender clock (ms) the sample belongs to.
+ */
+export interface LocalPose {
+  pos: Vec3;
+  yaw: number;
+  pitch: number;
+  vel: Vec3;
+  crouching: boolean;
+  grounded: boolean;
+  /** discontinuity (teleport / respawn): remotes snap */
+  teleport: boolean;
+  /** sender clock, ms */
+  sendT: number;
+}
+
+/** A remote player's pose sample, as received. */
+export interface PoseSnapshot {
+  pos: Vec3;
+  vel: Vec3;
+  yaw: number;
+  pitch: number;
+  crouching: boolean;
+  grounded: boolean;
+  teleport: boolean;
+  /** sender clock (ms, may wrap at 2^32) */
+  sendT: number;
+  /** local arrival time (performance.now()) */
+  arrival: number;
+}
+
+/** Network statistics for the F3 overlay / tests. */
+export interface NetStats {
+  /** smoothed reducer round trip (ms), 0 = unknown */
+  rtt: number;
+  /** update_transform calls in the last second */
+  sendHz: number;
+  /** reducer calls per name since connect */
+  calls: Record<string, number>;
+}
+
 /** Extra info for a hit report: which shot hit, how many pellets connected, where, which zone. */
 export interface HitInfo {
   seq: number;
@@ -72,6 +114,10 @@ export interface HitConfirmEvent {
   damage: number;
   killed: boolean;
   headshot: boolean;
+  /** damage-over-time tick */
+  dot?: boolean;
+  /** impact point (world) */
+  point?: Vec3;
 }
 
 export interface GenerateWeaponResult {
@@ -91,22 +137,38 @@ export interface NetClient {
   readonly authoritative: boolean;
   connect(): Promise<void>;
   disconnect(): void;
-  /** called at a fixed rate (~15Hz) with the local player's transform + crouch state; `force` skips throttling */
-  sendTransform(pos: Vec3, yaw: number, pitch: number, crouching: boolean, force?: boolean): void;
-  /** a shot was fired locally; returns the shot sequence number used by reportHit */
+  /** send the local pose now (the send policy lives in PoseSender) */
+  sendTransform(pose: LocalPose): void;
+  /**
+   * A shot was fired locally; returns the shot sequence number. Hits reported (reportHit) with
+   * this seq before `flushShot()` travel in the same network call (hitscan / stream / melee).
+   */
   fire(origin: Vec3, dir: Vec3): number;
+  /** send the shot started by `fire` together with its batched hits */
+  flushShot?(): void;
   /** client-detected hit on another player; server validates & applies damage */
   reportHit(targetId: string, weaponId: string, info?: HitInfo): void;
   /** local player started a reload */
   reload?(): void;
   respawn(keepLoadout: boolean): void;
+  /** equip a library weapon (server: only while dead) */
+  equipWeapon?(weaponId: string): Promise<void>;
+  /** id of the preset weapon of a class (tests / debug) */
+  presetId?(weaponClass: string): string | undefined;
   /** register a weapon; resolves to its id */
   registerWeapon(json: Weapon): Promise<string>;
   /** server-side (LLM) weapon generation; auto-equipped while dead */
   generateWeapon?(prompt: string, weaponClass?: string): Promise<GenerateWeaponResult>;
   setName?(name: string): void;
-  /** fires with all *remote* players whenever any change */
+  /** fires with all *remote* players whenever any player row (not pose) changes */
   onPlayersChanged(cb: (players: NetPlayer[]) => void): () => void;
+  /** a remote player's pose changed (one call per received row) */
+  onPose?(cb: (id: string, snap: PoseSnapshot) => void): () => void;
+  /** latest pose sample of a remote player */
+  getPose?(id: string): PoseSnapshot | undefined;
+  /** number of other online players (send-rate throttling) */
+  othersOnline?(): number;
+  stats?(): NetStats;
   /** fires when the local player's authoritative state changes (hp, death, weapon) */
   onLocalChanged?(cb: (me: NetPlayer) => void): () => void;
   onKill?(cb: (e: KillEvent) => void): () => void;

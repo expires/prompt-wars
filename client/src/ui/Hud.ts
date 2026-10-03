@@ -25,6 +25,10 @@ export class Hud {
   private readonly weaponName: HTMLElement;
   private readonly killfeed = el('div', 'panel killfeed');
   private readonly hitmarker = el('div', 'hitmarker');
+  private readonly killX = el('div', 'killx');
+  private killTimer = 0;
+  /** container for floating damage numbers */
+  readonly numbersLayer = el('div', 'dmg-layer');
   private readonly crosshair = el('div', 'crosshair');
   private readonly scope = el('div', 'scope');
   private crossGap = -1;
@@ -55,7 +59,9 @@ export class Hud {
     this.hitmarker.dataset.testid = 'hitmarker';
     this.scope.innerHTML = `<div class="scope-ring"></div><div class="scope-h"></div><div class="scope-v"></div>`;
     this.scope.hidden = true;
-    this.root.append(this.scope, this.crosshair, this.hitmarker, this.vignette);
+    this.killX.innerHTML = `<svg width="56" height="56" viewBox="0 0 56 56" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M10 10L46 46M46 10L10 46"/></svg>`;
+    this.killX.dataset.testid = 'kill-confirm';
+    this.root.append(this.scope, this.crosshair, this.hitmarker, this.killX, this.numbersLayer, this.vignette);
     this.setCrosshairGap(6);
 
     const hp = el('div', 'panel hp');
@@ -225,6 +231,19 @@ export class Hud {
     this.hitTimer = kill ? 0.35 : headshot ? 0.3 : 0.14;
   }
 
+  /** server-confirmed kill: big X over the crosshair */
+  killConfirm(headshot = false) {
+    this.killX.classList.toggle('headshot', headshot);
+    this.killX.classList.remove('show');
+    void this.killX.offsetWidth;
+    this.killX.classList.add('show');
+    this.killTimer = 0.6;
+  }
+
+  get killConfirmVisible() {
+    return this.killX.classList.contains('show');
+  }
+
   /** crosshair arm gap in px (from the weapon's current spread); hidden while aiming */
   setCrosshairGap(px: number) {
     const g = Math.round(Math.min(80, Math.max(3, px)));
@@ -270,5 +289,6 @@ export class Hud {
   update(dt: number) {
     if (!this.holdHitmarker && this.hitTimer > 0 && (this.hitTimer -= dt) <= 0) this.hitmarker.classList.remove('show');
     if (this.dmgTimer > 0 && (this.dmgTimer -= dt) <= 0) this.vignette.classList.remove('show');
+    if (!this.holdHitmarker && this.killTimer > 0 && (this.killTimer -= dt) <= 0) this.killX.classList.remove('show');
   }
 }

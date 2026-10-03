@@ -369,4 +369,14 @@ export class PlayerController {
     if (yaw !== undefined) this.yaw = yaw;
     this.pitch = 0;
   }
+
+  /** test hook: move the feet along a scripted path for one fixed step (keeps render interpolation) */
+  scriptedStep(feet: THREE.Vector3, vel: THREE.Vector3) {
+    const cy = feet.y + this.halfHeight + CAPSULE_RADIUS;
+    this.body.setNextKinematicTranslation({ x: feet.x, y: cy, z: feet.z });
+    this.prevFeet.copy(this.curFeet);
+    this.curFeet.copy(feet);
+    this.velocity.copy(vel);
+    this.grounded = true;
+  }
 }

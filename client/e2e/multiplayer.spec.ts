@@ -1,5 +1,16 @@
 import { test, expect } from '@playwright/test';
-import { HEAD_CENTER_CROUCHED, HEAD_CENTER_STANDING, MAX_HEADSHOT_DAMAGE, RESPAWN_DELAY_SECONDS, clampWeapon } from '@ai-gaem/shared';
+import { execFileSync } from 'node:child_process';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  HEAD_CENTER_CROUCHED,
+  HEAD_CENTER_STANDING,
+  MAX_HEADSHOT_DAMAGE,
+  RESPAWN_DELAY_SECONDS,
+  clampWeapon,
+  effectiveFireRate,
+  fireCreditsMax,
+} from '@ai-gaem/shared';
 import {
   SERVER,
   aimAt,
@@ -7,11 +18,14 @@ import {
   hook,
   fireOnce,
   joinGame,
+  measureRates,
   shot,
+  smoothness,
   state,
   teleport,
   waitForState,
   waitSeenAt,
+  type GameState,
   type Player,
 } from './helpers';
 
@@ -203,8 +217,9 @@ test('d. server rejects shots faster than fireRate', async () => {
   expect(a0.weapon.magSize - a1.ammo, 'all 10 shots left the client').toBe(10);
   const b1 = await state(B.page);
   const drop = b0.hp - b1.hp;
-  // server cooldown = interval * 0.85 tolerance => at most floor(spam / minInterval) + 1 accepted shots
-  const maxAccepted = Math.floor(spamMs / 1000 / (interval * 0.85)) + 1;
+  // server token bucket: a full bucket (fireCreditsMax) + what refills during the spam
+  const rate = effectiveFireRate(a0.weapon);
+  const maxAccepted = Math.floor(fireCreditsMax(rate) + (spamMs / 1000) * rate);
   console.log(`[e2e] spam: 10 shots in ${spamMs.toFixed(0)}ms, dmg=${dmg}, hp drop=${drop}, max allowed=${maxAccepted * dmg}`);
   // shots spaced >= the server cooldown still land (so the rejections are due to rate, not aim)
   const minAccepted = Math.max(1, Math.floor(spamMs / 1000 / interval) - 1);
@@ -276,9 +291,13 @@ test('e. headshots: server applies the multiplier, rejects implausible head hits
   console.log(`[e2e] headshot: body=${body} head=${head} drop=${drop}`);
   expect(drop).toBeCloseTo(head, 2);
 
-  // 2) body shot through the client raycast: plain damage
+  // 2) body shot through the client raycast: plain damage; A shows a floating damage number
   await aimAt(A, B.id);
   await fireOnce(A);
+  // (the headshot's number may still be fading out: the newest entry for B is this shot's)
+  const newest = (s: GameState) => s.damageNumbers.filter((n) => n.targetId === B.id).at(-1)?.total;
+  const dn = await waitForState(A.page, (s) => Math.abs((newest(s) ?? 0) - body) < 0.01, 2_000, 'A damage number');
+  expect(newest(dn)).toBeCloseTo(body, 2);
   ({ drop, b } = await hpDrop(b.hp, gapMs));
   expect(drop).toBeCloseTo(body, 2);
 
@@ -289,15 +308,18 @@ test('e. headshots: server applies the multiplier, rejects implausible head hits
   console.log(`[e2e] implausible head zone at the feet: drop=${drop} (body=${body})`);
   expect(drop).toBeCloseTo(body, 2);
 
-  // 4) headshot finishes B: kill feed shows the headshot icon on both screens
+  // 4) headshot finishes B: kill-confirm X on A, kill feed shows the headshot icon on both screens
   const killer = (await state(A.page)).kills;
+  await hook(A, (g) => g.holdHitmarker(true));
   for (let i = 0; i < 6 && b.alive; i++) {
     await aimAtHead(A, B.id);
     await fireOnce(A);
     ({ b } = await hpDrop(b.hp, gapMs));
   }
   expect(b.alive).toBe(false);
-  await waitForState(A.page, (s) => s.kills === killer + 1, 5_000, 'A kill credited');
+  await waitForState(A.page, (s) => s.kills === killer + 1 && s.killConfirm, 5_000, 'A kill credited + kill confirm');
+  await shot(A, 'e3-alice-kill-confirm.png');
+  await hook(A, (g) => g.holdHitmarker(false));
   await expect(A.page.getByTestId('kf-headshot').first()).toBeVisible();
   await expect(B.page.getByTestId('kf-headshot').first()).toBeVisible();
   await shot(A, 'e2-alice-killfeed-headshot.png');
@@ -312,7 +334,7 @@ test('f. crouch: replicated, lowers remote hitboxes, crouched headshots validate
 
   // local crouch: eye height eases down, row replicates
   await hook(B, (g) => g.setCrouch(true));
-  const bc = await waitForState(B.page, (s) => s.crouching && s.eyeHeight < 1.1 && s.serverCrouching, 5_000, 'B crouched locally + on server');
+  const bc = await waitForState(B.page, (s) => s.crouching && s.eyeHeight < 1.04 && s.serverCrouching, 5_000, 'B crouched locally + on server');
   expect(bc.eyeHeight).toBeCloseTo(1.02, 1);
   // remote: A renders B crouched with the head hitbox lowered
   const seen = await waitForState(
@@ -335,12 +357,19 @@ test('f. crouch: replicated, lowers remote hitboxes, crouched headshots validate
   const gapMs = Math.ceil(1000 / w.fireRate) + 150;
   let b = await state(B.page);
 
-  // forged head hit at *standing* head height while B is crouched: body damage only
+  // forged head hit at *standing* head height while B is crouched: not on B's (crouched) hitbox
+  // at all => rejected; a forged head hit at B's knees => body damage only
   await hook(A, (g, args) => g.reportHitRaw(args.id, 1, args.p), {
     id: B.id,
     p: [b.pos[0], b.pos[1] + HEAD_CENTER_STANDING + 0.3, b.pos[2]] as [number, number, number],
   });
   let drop: number;
+  ({ drop, b } = await hpDrop(b.hp, gapMs));
+  expect(drop, 'standing-height head hit on a crouched player is rejected').toBeCloseTo(0, 2);
+  await hook(A, (g, args) => g.reportHitRaw(args.id, 1, args.p), {
+    id: B.id,
+    p: [b.pos[0], b.pos[1] + 0.3, b.pos[2]] as [number, number, number],
+  });
   ({ drop, b } = await hpDrop(b.hp, gapMs));
   expect(drop).toBeCloseTo(body, 2);
 
@@ -367,4 +396,98 @@ test('f. crouch: replicated, lowers remote hitboxes, crouched headshots validate
   await A.page.waitForTimeout(400);
   await shot(A, 'f3-alice-ads.png');
   await hook(A, (g) => g.setAds(null));
+});
+
+test('g. netcode: smooth remote motion, idle sends nothing, reducer call rates', async () => {
+  test.skip(SERVER !== 'local', 'local only');
+  await freshB();
+  await lineUp();
+  await A.page.waitForTimeout(500);
+
+  // idle: no transform sends, no heartbeat
+  const idleA = await measureRates(A, 3000);
+  console.log(`[e2e] idle A: ${JSON.stringify(idleA)}`);
+  expect(idleA.byName.update_transform ?? 0).toBe(0);
+
+  // A walks a circle (r = 3 m, 4.5 m/s); B samples A's rendered position every frame
+  const a = await state(A.page);
+  await hook(A, (g, m) => g.setAutoMove(m), { cx: a.pos[0], cz: a.pos[2] - 3, r: 3, speed: 4.5, y: a.pos[1] });
+  await A.page.waitForTimeout(1000);
+  const [moveA, trace] = await Promise.all([
+    measureRates(A, 3000),
+    hook(B, (g, id) => g.traceRemote(id, 3000), A.id) as unknown as Promise<{ t: number; x: number; y: number; z: number }[]>,
+  ]);
+  // F3 overlay on B: rtt / interpolation delay / jitter / send rate / buffered snapshots
+  await B.page.keyboard.press('F3');
+  await aimAt(B, A.id);
+  await B.page.waitForTimeout(300);
+  await shot(B, 'g1-bob-net-debug-overlay.png');
+  const bNet = await hook(B, (g) => g.netStats());
+  const aNet = await hook(A, (g) => g.netStats());
+  await hook(A, (g) => g.setAutoMove(null));
+  await B.page.keyboard.press('F3');
+  const m = smoothness(trace);
+  console.log(`[e2e] moving A: ${JSON.stringify(moveA)} rtt=${(aNet as { rtt: number } | null)?.rtt.toFixed(1)}ms`);
+  console.log(`[e2e] B renders A: ${JSON.stringify(m)} net=${JSON.stringify(bNet)}`);
+  expect(moveA.byName.update_transform).toBeGreaterThan(15);
+  expect(moveA.byName.update_transform).toBeLessThan(25);
+  expect(m.frames).toBeGreaterThan(30);
+  expect(m.meanSpeed).toBeGreaterThan(4.5 * 0.85);
+  expect(m.meanSpeed).toBeLessThan(4.5 * 1.15);
+  expect(m.stalls, 'no frames where the remote holds still mid-run').toBe(0);
+  expect(m.rushes, 'no frames that rush at > 2x the mean speed').toBe(0);
+  // per-frame speed stays within +-30% of the mean (measured ~1.01-1.03 locally)
+  expect(m.maxOverMean).toBeLessThan(1.3);
+  expect(m.minOverMean).toBeGreaterThan(0.7);
+
+  // stopping sends one final pose, then nothing
+  await A.page.waitForTimeout(500);
+  const after = await measureRates(A, 2000);
+  expect(after.byName.update_transform ?? 0).toBe(0);
+});
+
+/** run SQL against the local database (spacetime CLI) and return the raw table text */
+function localSql(query: string): string {
+  const env = { ...process.env, PATH: `${join(homedir(), '.local', 'bin')}:${process.env.PATH}` };
+  return execFileSync('spacetime', ['sql', '--server', 'local', 'prompt-wars-63xhe', query], { cwd: tmpdir(), env, encoding: 'utf8' });
+}
+const sqlRows = (out: string) => out.split('\n').filter((l) => /^\s*\d/.test(l)).length;
+
+test('h. projectile hit (report_hit) + damage over time from a scheduled per-victim timer', async () => {
+  test.skip(SERVER !== 'local', 'local only');
+  // B dies, equips the blowgun preset (projectile, 15 dmg + 40 DoT over 4 s) and respawns with it
+  let b = await state(B.page);
+  if (b.alive) {
+    await lineUp();
+    await hook(A, (g) => g.setPerfectAim(true));
+    await killB();
+  }
+  await waitForState(B.page, (s) => !s.alive && s.deathVisible, 5_000, 'B dead');
+  const blowgun = (await hook(B, (g) => g.equipPreset('blowgun'))) as unknown as string;
+  await waitForState(B.page, (s) => s.serverWeaponId === blowgun, 5_000, 'B equipped blowgun');
+  await B.page.getByTestId('keep-loadout').click();
+  b = await waitForState(B.page, (s) => s.alive && s.weaponId === blowgun, RESPAWN_DELAY_SECONDS * 1000 + 8_000, 'B respawned with blowgun');
+  expect(b.weapon.fireMode).toBe('projectile');
+  expect(localSql('SELECT * FROM tick_timer').includes('Interval'), 'no always-on tick timer').toBe(false);
+
+  await lineUp();
+  const a0 = await waitForState(A.page, (s) => s.alive && s.hp === 100, 8_000, 'A full hp');
+  await hook(B, (g) => g.setPerfectAim(true));
+  await aimAt(B, A.id);
+  await B.page.waitForTimeout(300);
+  expect(await fireOnce(B)).toBe(true);
+  const w = b.weapon;
+  // direct hit lands first (flight ~0.25 s), then DoT ticks every 250 ms while the timer row exists
+  const hit = await waitForState(A.page, (s) => s.hp <= a0.hp - w.damage + 0.01, 3_000, 'A hit by the dart');
+  expect(localSql('SELECT * FROM dot_timer').includes(A.id.slice(0, 16)) || sqlRows(localSql('SELECT * FROM dot_timer')) > 0, 'dot timer row exists').toBe(true);
+  await A.page.waitForTimeout((w.dotDuration + 1) * 1000);
+  const after = await state(A.page);
+  const dot = a0.hp - w.damage - after.hp;
+  console.log(`[e2e] blowgun: direct=${w.damage} dot total=${dot.toFixed(2)} (weapon dot ${w.dotDamage} over ${w.dotDuration}s) hp ${hit.hp} -> ${after.hp}`);
+  expect(dot).toBeGreaterThanOrEqual(w.dotDamage - 0.6); // exact total, minus scheduling jitter
+  expect(dot).toBeLessThanOrEqual(w.dotDamage + 0.6);
+  // the timer row is gone once the DoT expired: no more scheduled calls, hp stays put
+  expect(sqlRows(localSql('SELECT * FROM dot_timer'))).toBe(0);
+  await A.page.waitForTimeout(800);
+  expect((await state(A.page)).hp).toBe(after.hp);
 });

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { PhysicsContext } from '../engine/physics';
 import type { Input } from '../engine/input';
-import { HIT_ZONE_BODY, HIT_ZONE_HEAD, zoneDamage } from '@ai-gaem/shared';
+import { HIT_ZONE_BODY, HIT_ZONE_HEAD, directHitDamage, zoneDamage } from '@ai-gaem/shared';
 import { Effects } from './effects';
 import { Viewmodel } from './Viewmodel';
 import type { HitInfo, HitTarget, TargetRegistry } from './targets';
@@ -40,6 +40,8 @@ export interface WeaponEvents {
   onFire?(weapon: Weapon): void;
   /** a shot left the gun: returns the network shot sequence number */
   onShot?(origin: THREE.Vector3, dir: THREE.Vector3): number;
+  /** the shot's immediate hits (hitscan / stream / melee) have all been reported */
+  onShotEnd?(): void;
   /** a reload started */
   onReload?(): void;
 }
@@ -242,7 +244,8 @@ export class WeaponSystem {
         // only if most connecting pellets hit the head (single-pellet guns: that pellet).
         for (const [t, hit] of this.pendingHits) {
           const zone = hit.head * 2 > hit.pellets ? HIT_ZONE_HEAD : HIT_ZONE_BODY;
-          this.damageTarget(t, w.damage * hit.pellets, { seq: this.curSeq, pellets: hit.pellets, point: hit.point, zone });
+          const d = Math.hypot(hit.point[0] - eye.x, hit.point[1] - eye.y, hit.point[2] - eye.z);
+          this.damageTarget(t, directHitDamage(w, hit.pellets, d), { seq: this.curSeq, pellets: hit.pellets, point: hit.point, zone });
         }
         this.pendingHits.clear();
         break;
@@ -261,6 +264,8 @@ export class WeaponSystem {
         this.fireMelee(eye);
         break;
     }
+    // hits found synchronously above travel with the shot in one network call
+    this.events.onShotEnd?.();
   }
 
   private readonly pendingHits = new Map<HitTarget, { pellets: number; head: number; point: [number, number, number] }>();

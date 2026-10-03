@@ -10,19 +10,16 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-import {
-  HitReport,
-} from "./types";
-
-export default {
-  seq: __t.u32(),
-  ox: __t.f32(),
-  oy: __t.f32(),
-  oz: __t.f32(),
-  dx: __t.f32(),
-  dy: __t.f32(),
-  dz: __t.f32(),
-  get hits() {
-    return __t.array(HitReport);
-  },
-};
+export default __t.row({
+  slot: __t.u32().primaryKey(),
+  x: __t.f32(),
+  y: __t.f32(),
+  z: __t.f32(),
+  yaw: __t.f32(),
+  pitch: __t.f32(),
+  vx: __t.f32(),
+  vy: __t.f32(),
+  vz: __t.f32(),
+  flags: __t.u8(),
+  sendT: __t.u32().name("send_t"),
+});
