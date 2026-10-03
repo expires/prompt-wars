@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "provider": {
+    "name": "economy",
+    "base_url_env": "AI_ECONOMY_BASE_URL",
+    "base_url_default": "https://api.deepseek.com/v1",
+    "api_key_env": "AI_ECONOMY_API_KEY"
+  },
+  "roles": {
+    "pm": {
+      "model_env": "PM_MODEL",
+      "model_default": "deepseek-chat",
+      "temperature": 0.2,
+      "max_output_tokens": 4000,
+      "timeout_seconds": 180
+    },
+    "worker": {
+      "model_env": "WORKER_MODEL",
+      "model_default": "deepseek-coder",
+      "temperature": 0.1,
+      "max_output_tokens": 8192,
+      "timeout_seconds": 300
+    },
+    "reviewer": {
+      "model_env": "REVIEWER_MODEL",
+      "model_default": "deepseek-chat",
+      "temperature": 0.0,
+      "max_output_tokens": 3000,
+      "timeout_seconds": 180
+    }
+  },
+  "routes": [
+    "backend",
+    "frontend",
+    "infra",
+    "test",
+    "docs"
+  ],
+  "governance": {
+    "max_concurrency": 3,
+    "group_by_route": true,
+    "max_depth": 1,
+    "review_retries": 3,
+    "max_task_attempts": 2,
+    "max_tasks_per_spec": 12,
+    "lease_minutes": 45,
+    "poll_seconds": 5,
+    "decompose_specs": false
+  },
+  "cost_controls": {
+    "monthly_budget_usd": 25.0,
+    "halt_on_budget_exceeded": true,
+    "max_llm_calls_per_tick": 60,
+    "max_output_tokens_per_call": 8192,
+    "max_input_chars": 120000,
+    "max_diff_lines": 1500
+  },
+  "context": {
+    "max_files_per_task": 16,
+    "always_skills": [
+      "conventions",
+      "testing"
+    ],
+    "shared_paths": [
+      "package-lock.json",
+      "pnpm-lock.yaml",
+      "yarn.lock",
+      "bun.lockb",
+      "package.json",
+      "pyproject.toml",
+      "Cargo.toml",
+      "composer.json",
+      "Gemfile"
+    ],
+    "protected_paths": [
+      ".agents/**",
+      ".git/**",
+      ".env",
+      ".env.*",
+      "**/secrets/**",
+      "**/*.pem",
+      "**/id_rsa*",
+      "client/src/module_bindings/**",
+      "server/src/catalog.generated.ts",
+      ".vscode/**"
+    ],
+    "exclude_globs": [
+      "**/node_modules/**",
+      "**/.git/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/__pycache__/**",
+      "**/.venv/**",
+      "client/e2e/screenshots/**",
+      "**/.vite/**"
+    ]
+  },
+  "verify": {
+    "enabled": true,
+    "commands": [
+      "npx -y pnpm@10 install --frozen-lockfile",
+      "npx -y pnpm@10 --filter @ai-gaem/shared typecheck",
+      "npx -y pnpm@10 --filter @ai-gaem/shared test",
+      "npx -y pnpm@10 --filter @ai-gaem/parts typecheck",
+      "npx -y pnpm@10 --filter @ai-gaem/parts test",
+      "npx -y pnpm@10 --filter @ai-gaem/server typecheck",
+      "npx -y pnpm@10 --filter client build"
+    ]
+  },
+  "vcs": {
+    "base_branch": "main",
+    "branch_prefix": "agent/",
+    "commit_prefix": "feat(agent)",
+    "conflict_strategy": "serialize"
+  },
+  "ui": {
+    "enabled": true,
+    "autostart": true,
+    "host": "127.0.0.1",
+    "port": 8765
+  },
+  "pricing": {
+    "economy": {
+      "input_per_1k_usd": 0.00014,
+      "output_per_1k_usd": 0.00028
+    }
+  },
+  "blind_collaboration": {
+    "enabled": true,
+    "strip_identity_terms": [
+      "gpt",
+      "chatgpt",
+      "openai",
+      "anthropic",
+      "claude",
+      "gemini",
+      "deepseek",
+      "llama",
+      "mistral",
+      "qwen",
+      "grok",
+      "copilot"
+    ]
+  }
+}

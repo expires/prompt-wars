@@ -1,0 +1,13 @@
+# agent-board: keep generated/lock files out of review diffs
+package-lock.json -diff
+npm-shrinkwrap.json -diff
+yarn.lock -diff
+pnpm-lock.yaml -diff
+bun.lockb -diff
+poetry.lock -diff
+Cargo.lock -diff
+composer.lock -diff
+Gemfile.lock -diff
+go.sum -diff
+*.min.js -diff
+*.min.css -diff
