@@ -3,7 +3,7 @@ import { buildWeaponModel, type WeaponModel } from './buildWeaponModel';
 import { onPartsLibrary } from './partsLibrary';
 import type { Weapon } from './types';
 import type { MeleeView } from './MeleeSystem';
-import { BLOCK_POSE, MELEE_SPRINT_POSE, SHIELD_BLOCK_POSE, blendPose, chargePose, swingPose, type VmPose } from './meleeAnim';
+import { BLOCK_POSE, GLOVE_BASELINE, MELEE_SPRINT_POSE, SHIELD_BLOCK_POSE, blendPose, chargePose, swingPose, type VmPose } from './meleeAnim';
 import { throwPose, throwReleased } from './throwAnim';
 
 /** equip (draw) animation length, seconds */
@@ -36,6 +36,12 @@ const MAX_LEN = 0.6;
 const MAX_LEN_MELEE = 0.75;
 const MAX_HEIGHT = 0.28;
 
+/** Boxing gloves / fists get a low punch animation and a fist-forward orientation. */
+const GLOVE_RE = /glove|boxing|fist|knuckle|gauntlet/i;
+function isGloveWeapon(w: Weapon): boolean {
+  return GLOVE_RE.test(w.name) || w.parts.some((p) => GLOVE_RE.test(p.partId));
+}
+
 /** First-person weapon model rendered in the overlay scene (bottom-right). */
 export class Viewmodel {
   private readonly anchor = new THREE.Group();
@@ -62,6 +68,8 @@ export class Viewmodel {
   private equipT = 0;
   private time = 0;
   private melee = false;
+  /** boxing glove: fists held low, with a punch-from-the-bottom animation */
+  private glove = false;
   /** smoothed block blend 0..1 */
   private blockT = 0;
   /** last applied melee offset (tests / screenshots) */
@@ -102,15 +110,17 @@ export class Viewmodel {
     holder.add(orient);
     const melee = weapon.fireMode === 'melee';
     this.melee = melee;
+    this.glove = melee && isGloveWeapon(weapon);
     if (!keepAnim) this.equipT = 0;
     if (melee) {
-      // melee convention: blade/head grows toward -Z from the origin, handle toward +Z.
-      // Tilt it so the blade points up and forward, with the handle in the hand.
-      orient.rotation.set(1.05, 0.15, -0.25);
+      // Blades rest shouldered (tilted blade-up). A boxing glove is a fist, so keep it level and
+      // let the low GLOVE_BASELINE pose hold it at the bottom of the screen.
+      orient.rotation.set(this.glove ? -0.15 : 1.05, this.glove ? 0 : 0.15, this.glove ? 0.05 : -0.25);
       orient.updateMatrixWorld(true);
       const bb = new THREE.Box3().setFromObject(orient);
       const size = bb.getSize(new THREE.Vector3());
-      const s = Math.min(1.2, MAX_LEN_MELEE / Math.max(size.x, size.y, size.z, 0.001));
+      const budget = this.glove ? MAX_LEN_MELEE * 1.15 : MAX_LEN_MELEE;
+      const s = Math.min(1.2, budget / Math.max(size.x, size.y, size.z, 0.001));
       holder.scale.setScalar(s);
       holder.position.set(0.02, 0.02, -0.02);
     } else {
@@ -218,17 +228,29 @@ export class Viewmodel {
     }
     // melee: swing / charge / block keyframes
     this.blockT = ease(this.blockT, mv?.kind === 'block' ? 1 : 0, 14);
+    // gloves rest low (GLOVE_BASELINE) and add the punch on top; other melee rests at zero
     const off = this.meleeOffset;
-    off.p = [0, 0, 0];
-    off.r = [0, 0, 0];
+    off.p = this.glove ? [...GLOVE_BASELINE.p] : [0, 0, 0];
+    off.r = this.glove ? [...GLOVE_BASELINE.r] : [0, 0, 0];
     if (mv?.kind === 'swing') {
       const pose = swingPose(mv.meta.swing, mv.combo, mv.u, mv.meta.weight, mv.charge > 0);
-      off.p = [...pose.p];
-      off.r = [...pose.r];
+      const k = this.glove ? 1.35 : 1; // gloves thrust further forward
+      off.p[0] += pose.p[0] * k;
+      off.p[1] += pose.p[1] * k;
+      off.p[2] += pose.p[2] * k;
+      off.r[0] += pose.r[0];
+      off.r[1] += pose.r[1];
+      off.r[2] += pose.r[2];
+      // alternate left/right jab per punch
+      if (this.glove) off.p[0] += (mv.combo % 2 ? -1 : 1) * 0.04;
     } else if (mv?.kind === 'charge') {
       const pose = chargePose(mv.meta.swing, mv.combo, mv.charge, mv.meta.weight, this.time);
-      off.p = [...pose.p];
-      off.r = [...pose.r];
+      off.p[0] += pose.p[0];
+      off.p[1] += pose.p[1];
+      off.p[2] += pose.p[2];
+      off.r[0] += pose.r[0];
+      off.r[1] += pose.r[1];
+      off.r[2] += pose.r[2];
     }
     if (this.blockT > 0.001) {
       const b = blendPose(off, st.shield ? SHIELD_BLOCK_POSE : BLOCK_POSE, this.blockT);

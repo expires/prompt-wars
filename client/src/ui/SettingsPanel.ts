@@ -42,6 +42,7 @@ const KEYBINDS: [string, string[]][] = [
   ['Move', ['W', 'A', 'S', 'D']],
   ['Jump', ['Space']],
   ['Crouch', ['C', 'Ctrl']],
+  ['Slide', ['X']],
   ['Sprint', ['Shift']],
   ['Fire · Aim', ['LMB', 'RMB']],
   ['Reload', ['R']],

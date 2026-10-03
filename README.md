@@ -312,6 +312,7 @@ URL params:
 | T | autorun (W or S cancels; A / D still strafe) |
 | Shift | sprint, forward only (6.5 m/s, +6° FOV; firing cancels it; hold or toggle in settings) |
 | C / Ctrl | crouch (hold, or toggle in settings): 2.2 m/s, 1.2 m tall, tighter spread; crouch in the air to tuck your legs (crouch-jump) |
+| X | slide — keeps your current momentum (faster entry slides further), low friction, drops you low; slide into a jump to carry speed |
 | Space | jump (1.1 m, 100 ms coyote time + 100 ms buffer) |
 | Mouse / LMB | look / fire (hold for auto) |
 | RMB | aim down sights (hold or toggle): ~0.75x FOV (sniper 0.4x scope), centred viewmodel, less spread, 62% move speed. Melee: hold to charge a heavy attack (shields: block) |

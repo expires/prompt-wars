@@ -45,6 +45,21 @@ const AIR_JUMP_DELAY = 0.15;
 /** eye height smoothing rate (1/s) for crouch transitions */
 const EYE_LERP_RATE = 14;
 
+// ---- slide (X): preserve current momentum and skim along the ground ----
+/** how long a slide lasts */
+const SLIDE_TIME = 0.75;
+/** speed added on entry (faster entry => longer slide) */
+const SLIDE_BOOST = 2.5;
+/** minimum speed to start a slide */
+const SLIDE_MIN_SPEED = 3.2;
+const SLIDE_MAX_SPEED = 11;
+/** linear speed loss during a slide (m/s²) */
+const SLIDE_FRICTION = 3.2;
+/** end the slide below this speed */
+const SLIDE_END_SPEED = 2.4;
+/** won't start another slide until SLIDE_TIME + this has passed */
+const SLIDE_COOLDOWN = 0.9;
+
 /**
  * First-person kinematic character using Rapier's KinematicCharacterController.
  * - capsule collider on a kinematic position-based body (1.8 m, 1.2 m crouched)
@@ -76,6 +91,8 @@ export class PlayerController {
   crouched = false;
   /** currently sprinting (forward + shift, not crouched / aiming / shooting) */
   sprinting = false;
+  /** currently sliding (X): momentum preserved, low friction */
+  sliding = false;
   /** test hook / scripted override for the crouch input (null = use keys) */
   forceCrouch: boolean | null = null;
   /** smoothed eye height above the feet (crouch transitions) */
@@ -100,6 +117,9 @@ export class PlayerController {
   private jumpedAt = -1;
   private airJumpsLeft = AIR_JUMPS;
   private sprintBlock = 0;
+  private slideT = 0;
+  private slideBuffer = 0;
+  private slideCooldown = 0;
   private time = 0;
   private readonly prevFeet = new THREE.Vector3();
   private readonly curFeet = new THREE.Vector3();
@@ -163,6 +183,8 @@ export class PlayerController {
     this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
 
     if (i.wasPressed('Space') || pad.jumpPressed) this.jumpBuffer = JUMP_BUFFER;
+    // slide (X): buffered so a press between fixed steps is not lost
+    if (i.wasPressed('KeyX')) this.slideBuffer = 0.15;
     if (s.crouchToggle && (i.wasPressed('KeyC') || i.wasPressed('ControlLeft') || i.wasPressed('ControlRight') || pad.crouchPressed)) {
       this.crouchToggled = !this.crouchToggled;
     }
@@ -198,13 +220,16 @@ export class PlayerController {
     this.prevFeet.copy(this.curFeet);
     this.time += dt;
     if (this.frozen) return;
+    if (!this.inputEnabled) this.sliding = false;
     const i = this.input;
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     this.sprintBlock = Math.max(0, this.sprintBlock - dt);
+    this.slideBuffer = Math.max(0, this.slideBuffer - dt);
+    this.slideCooldown = Math.max(0, this.slideCooldown - dt);
     this.airTime = this.grounded ? 0 : this.airTime + dt;
 
-    // ---- crouch ----
-    const wantCrouch = this.wantsCrouch();
+    // ---- crouch (a slide keeps you low) ----
+    const wantCrouch = this.wantsCrouch() || this.sliding;
     if (wantCrouch && !this.crouched) this.setCrouched(true);
     else if (!wantCrouch && this.crouched) this.setCrouched(false);
 
@@ -230,6 +255,21 @@ export class PlayerController {
     }
     const hasWish = wish.lengthSq() > 1e-6;
     if (hasWish) wish.normalize().applyAxisAngle(THREE.Object3D.DEFAULT_UP, this.yaw);
+
+    // ---- slide (X): keep the current momentum and skim along the ground ----
+    if (!this.sliding && this.slideBuffer > 0 && this.grounded && this.inputEnabled && this.slideCooldown <= 0) {
+      const sp = Math.hypot(this.velocity.x, this.velocity.z);
+      if (sp >= SLIDE_MIN_SPEED) {
+        const target = Math.min(SLIDE_MAX_SPEED, sp + SLIDE_BOOST);
+        const k = target / sp;
+        this.velocity.x *= k;
+        this.velocity.z *= k;
+        this.sliding = true;
+        this.slideT = SLIDE_TIME;
+        this.slideBuffer = 0;
+        this.slideCooldown = SLIDE_TIME + SLIDE_COOLDOWN;
+      }
+    }
 
     // sprint: forward only (W, optionally diagonal), not crouched / aiming / just fired
     if (fwd <= 0.3 || this.crouched) this.sprintLatch = false;
@@ -271,10 +311,23 @@ export class PlayerController {
 
     // ---- horizontal: friction + accelerate (ground), capped accelerate (air) ----
     if (this.grounded && !jumped) {
-      this.applyFriction(dt);
-      if (hasWish) this.accelerate(wish, wishSpeed, GROUND_ACCEL, dt);
+      if (this.sliding) {
+        // momentum-preserving skim: no steering, just a light drag
+        this.applySlideFriction(dt);
+      } else {
+        this.applyFriction(dt);
+        if (hasWish) this.accelerate(wish, wishSpeed, GROUND_ACCEL, dt);
+      }
     } else if (hasWish) {
       this.accelerate(wish, Math.min(wishSpeed, AIR_WISH_CAP), AIR_ACCEL, dt);
+    }
+
+    // end the slide on timeout, when slow, when airborne, or on a slide-jump
+    if (this.sliding) {
+      this.slideT -= dt;
+      if (this.slideT <= 0 || !this.grounded || jumped || Math.hypot(this.velocity.x, this.velocity.z) < SLIDE_END_SPEED) {
+        this.sliding = false;
+      }
     }
 
     // ---- vertical ----
@@ -313,6 +366,19 @@ export class PlayerController {
     }
     const drop = Math.max(speed, STOP_SPEED) * FRICTION * dt;
     const k = Math.max(0, speed - drop) / speed;
+    v.x *= k;
+    v.z *= k;
+  }
+
+  /** constant-drag friction used while sliding (keeps the direction, bleeds speed) */
+  private applySlideFriction(dt: number) {
+    const v = this.velocity;
+    const speed = Math.hypot(v.x, v.z);
+    if (speed < 1e-4) {
+      v.x = v.z = 0;
+      return;
+    }
+    const k = Math.max(0, speed - SLIDE_FRICTION * dt) / speed;
     v.x *= k;
     v.z *= k;
   }
@@ -418,6 +484,7 @@ export class PlayerController {
     this.curFeet.copy(feet);
     this.prevFeet.copy(feet);
     this.velocity.set(0, 0, 0);
+    this.sliding = false;
     this.eyeHeight = this.crouched ? CROUCH_EYE_HEIGHT : EYE_HEIGHT;
     if (yaw !== undefined) this.yaw = yaw;
     this.pitch = 0;

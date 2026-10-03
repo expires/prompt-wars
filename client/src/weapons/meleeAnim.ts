@@ -65,6 +65,12 @@ const SPIN: Keys = [
 /** extra key half-way through the spin strike (the blade passes the crosshair) */
 const SPIN_MID = K([-0.1, 0.0, -0.17], [-0.25, 0.4, 1.55]);
 
+/**
+ * Boxing-glove resting pose: fists held low, near the bottom of the screen (a blade rests
+ * shouldered, but a glove should sit low and punch up/forward from there).
+ */
+export const GLOVE_BASELINE = K([0.0, -0.22, 0.03], [-0.12, 0.1, 0.0]);
+
 export const BLOCK_POSE = K([-0.13, 0.06, -0.04], [-0.15, 0.95, 1.45]);
 export const SHIELD_BLOCK_POSE = K([-0.16, 0.02, -0.06], [-1.05, 0.55, 0.0]);
 /** melee sprint: weapon shouldered (blade back over the shoulder) */

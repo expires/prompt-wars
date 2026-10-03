@@ -825,13 +825,15 @@ export class Game {
           ? 'BLOCKING'
           : player.autoRun
             ? 'AUTORUN · W / S to stop'
-            : player.sprinting
-              ? 'SPRINTING'
-              : player.crouched
-                ? 'CROUCHED'
-                : settings.current.trackpadMode
-                  ? 'T = autorun'
-                  : '',
+            : player.sliding
+              ? 'SLIDING'
+              : player.sprinting
+                ? 'SPRINTING'
+                : player.crouched
+                  ? 'CROUCHED'
+                  : settings.current.trackpadMode
+                    ? 'T = autorun'
+                    : '',
     );
     this.updateCrosshair();
     this.dummies?.update(dt, this.rc.camera);
