@@ -125,6 +125,14 @@ export interface Column {
   rail: boolean;
   /** which side/arc the column is on, for placement */
   part: string;
+  /**
+   * closed (west) end in the hackathon/concert configuration: tier A is retracted behind a
+   * folded-stand facade (event floor extends to CLOSED_D, balcony on top), black drapes hang in
+   * front of the upper ring
+   */
+  closed: boolean;
+  /** sector number (1..24) of the vomitory this column belongs to, 0 if none */
+  sector: number;
 }
 
 interface ColSpec {
@@ -166,6 +174,20 @@ function shortSide(): ColSpec[] {
 function arc(): ColSpec[] {
   return [...unit(), ...unit(true), ...unit()];
 }
+/** closed short side: no player tunnel (the facade covers it) */
+function closedShortSide(): ColSpec[] {
+  return [...unit(), ...unit()];
+}
+
+/** parts of the loop that are closed off by the drapes / folded stands (the west end) */
+export const CLOSED_PARTS = new Set(['NW', 'W', 'SW']);
+/** folded-stand facade line on the closed end (event floor reaches this offset) */
+export const CLOSED_D = A_D0 + 24 * (A_ROW_D / 2); // 11.8 (an existing band boundary)
+/** balcony railing band on top of the facade */
+export const CLOSED_RAIL_D1 = A_D0 + 25 * (A_ROW_D / 2); // 12.225
+/** drapes hang just in front of the upper ring, from the box-ring ceiling up to the roof */
+export const DRAPE_D = CROSS_END - 0.12;
+export const DRAPE_Y0 = BOX_CEIL;
 
 /** reference radius offset for sizing corner columns (middle of the box ring) */
 const ARC_REF_D = 17.85;
@@ -185,7 +207,9 @@ function buildLayout(): Layout {
   const az = FLOOR_HALF_Z - CORNER_R;
 
   const pushCols = (specs: ColSpec[], part: string) => {
-    for (const s of specs) columns.push({ index: columns.length, a: s.a, b: s.b, c: s.c, rail: !!s.rail, part });
+    for (const s of specs) {
+      columns.push({ index: columns.length, a: s.a, b: s.b, c: s.c, rail: !!s.rail, part, closed: CLOSED_PARTS.has(part), sector: 0 });
+    }
   };
 
   // straight side from (x0,z0) to (x1,z1) with constant normal
@@ -227,10 +251,22 @@ function buildLayout(): Layout {
   corner(arc(), ax, az, 0, 'NE');
   side(longSide(), ax, FLOOR_HALF_Z, -ax, FLOOR_HALF_Z, 0, 1, 'N');
   corner(arc(), -ax, az, Math.PI / 2, 'NW');
-  side(shortSide(), -FLOOR_HALF_X, az, -FLOOR_HALF_X, -az, -1, 0, 'W');
+  side(closedShortSide(), -FLOOR_HALF_X, az, -FLOOR_HALF_X, -az, -1, 0, 'W');
   corner(arc(), -ax, -az, Math.PI, 'SW');
   side(longSide(), -ax, -FLOOR_HALF_Z, ax, -FLOOR_HALF_Z, 0, -1, 'S');
   corner(arc(), ax, -az, (3 * Math.PI) / 2, 'SE');
+
+  // ---- sector numbers: each vomitory (aisle + vom column pair) is one sector, A1.. counter-clockwise
+  let sector = 0;
+  for (let j = 0; j < columns.length; j++) {
+    const c = columns[j]!;
+    if (c.b === 'vom' && c.a === 'aisle') {
+      sector++;
+      c.sector = sector;
+      const nx = columns[j + 1];
+      if (nx && nx.b === 'vom' && nx.a !== 'tunnel') nx.sector = sector;
+    }
+  }
 
   // ---- radial bands
   const b: number[] = [];

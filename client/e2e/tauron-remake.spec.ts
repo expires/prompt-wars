@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   A_ROW_D,
   A_D0,
+  A_END,
   CST_D1,
   C_D0,
   C_END,
@@ -175,26 +176,29 @@ test('tauron-remake: viewpoints + perf', async ({ page }) => {
 
   const va = colOf((c) => c.part === 'N' && c.a === 'aisle' && c.b === 'vom');
   const box = colOf((c) => c.part === 'S' && c.b === 'box');
-  const tun = colOf((c) => c.part === 'E' && c.a === 'tunnel');
+  const sAisle = layout().columns.filter((c) => c.part === 'S' && c.a === 'aisle')[3]!;
+  const a20 = colOf((c) => c.sector === 20 && c.a === 'aisle');
   const cs = colOf((c) => c.part === 'S' && c.b === 'cstair');
-  const corner = colOf((c) => c.part === 'SW' && c.b === 'box');
+  const corner = colOf((c) => c.part === 'SE' && c.b === 'box');
+  const closedBox = colOf((c) => c.part === 'W' && c.b === 'box');
   const pt = (j: number, d: number, y: number, f = 0.5): [number, number, number] => {
     const p = P(j, d, f);
     return [p.x, y, p.z];
   };
+  // viewpoints matching the reference photos (HackYeah 2026 at TAURON Arena Kraków)
   const views: { name: string; feet: [number, number, number]; look: [number, number, number] }[] = [
-    { name: '01-floor-centre-looking-up-north', feet: [0, 0.05, -6], look: [0, 14, 40] },
-    { name: '02-floor-east-looking-west-stage', feet: [30, 0.05, 4], look: [-30, 4, 0] },
-    { name: '03-stage-deck-looking-at-bowl', feet: [-27, 1.55, 3], look: [30, 8, -10] },
-    { name: '04-tier-a-row10-looking-at-floor', feet: pt(box.index, A_D0 + 10.4 * A_ROW_D, 7.25), look: [0, 0, 0] },
-    { name: '05-vomitory-looking-into-bowl', feet: pt(va.index, 19.2, LEVEL_B + 0.05), look: [0, 6, 0] },
-    { name: '06-concourse-along-ring', feet: pt(va.index, 24.0, LEVEL_B + 0.05), look: pt(va.index + 14, 24.5, LEVEL_B + 1.6) },
-    { name: '07-tier-c-top-overview', feet: pt(corner.index, C_END - 0.4, C_TOP + 0.05), look: [5, 2, 5] },
-    { name: '08-player-tunnel-looking-at-floor', feet: pt(tun.index, 10, 0.05, 1), look: [0, 1.4, 0] },
-    { name: '09-scoreboard-from-tier-c', feet: pt(box.index, C_D0 + 1.5 * C_ROW_D, 13.6 + 0.05), look: [0, 20.5, 0] },
-    { name: '10-box-through-glass', feet: pt(box.index, 18.6, LEVEL_B + 0.05), look: [0, 3, 0] },
-    { name: '11-c-stair-from-concourse', feet: pt(cs.index, 25.5, LEVEL_B + 0.05, 0.5), look: pt(cs.index, 17.5, 12.5) },
-    { name: '12-cross-aisle-ring', feet: pt(va.index, 15.0, LEVEL_B + 0.05), look: pt(va.index + 20, 15.0, LEVEL_B + 1.0) },
+    { name: '01-floor-near-stage-looking-up-at-scoreboard', feet: [19, 0.05, 1.8], look: [0, 12.5, -1] },
+    { name: '02-lower-tier-aisle-looking-across-floor', feet: pt(sAisle.index, A_D0 + 12.2 * A_ROW_D, 8.1), look: [-6, 1, 8] },
+    { name: '03-upper-a-rows-looking-at-stage-and-drapes', feet: pt(box.index, A_END - 0.5, 9.3), look: [-16, 4, 8] },
+    { name: '04-vomitory-a20-looking-out', feet: pt(a20.index, 14.6, LEVEL_B + 0.05, 1), look: pt(a20.index, 26, LEVEL_B + 1.75, 1) },
+    { name: '05-concourse-along-ring-with-pillars', feet: pt(va.index, 22.8, LEVEL_B + 0.05), look: pt(va.index + 16, 24.5, LEVEL_B + 1.6) },
+    { name: '06-tier-c-top-overview', feet: pt(corner.index, C_END - 0.4, C_TOP + 0.05), look: [-8, 2, 0] },
+    { name: '07-closed-end-drapes-and-folded-stands', feet: [-8, 0.05, 2], look: [-44, 9, 0] },
+    { name: '08-scoreboard-from-tier-c', feet: pt(box.index, C_D0 + 1.5 * C_ROW_D, 13.6 + 0.05), look: [0, 17, 0] },
+    { name: '09-box-through-glass', feet: pt(box.index, 18.6, LEVEL_B + 0.05), look: [0, 3, 0] },
+    { name: '10-c-stair-from-concourse', feet: pt(cs.index, 25.5, LEVEL_B + 0.05, 0.5), look: pt(cs.index, 17.5, 12.5) },
+    { name: '11-desk-rows-floor-level', feet: [-12.7, 0.05, -8], look: [-30, 1, -14] },
+    { name: '12-balcony-closed-end', feet: pt(closedBox.index, 13.6, LEVEL_B + 0.05), look: [10, 4, 0] },
   ];
   for (const v of views) {
     await page.evaluate(

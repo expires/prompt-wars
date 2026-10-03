@@ -35,20 +35,21 @@ function at(col: Column, d: number, y: number): RemakeSpawn {
 function buildSpawns(): RemakeSpawn[] {
   const out: RemakeSpawn[] = [];
   // ---- event floor (8): around the cover, incl. one on the stage deck
+  // (in the lanes between the hackathon desk rows; one on the stage deck)
   const floor: [number, number, number][] = [
-    [31, 0, -12], [31, 0, 12], [19, 0, 0], [8, 0, 12], [8, 0, -12], [-17, 0, -9], [-17, 0, 9], [-27, 1.5, -4],
+    [31.5, 0, -10], [31.5, 0, 10], [9, 0, 0], [12.7, 0, -15], [12.7, 0, 15], [-12.7, 0, -8], [-27.5, 0, 0], [-2, 1.2, 2],
   ];
   for (const [x, y, z] of floor) out.push({ x, y: r3(y + LIFT), z, yaw: r3(faceCentre(x, z)) });
 
   const box = (c: Column) => c.b === 'box';
   // ---- tier A (6): on seat rows (seats are visual only), mid-row
   const aRow = (i: number) => A_D0 + i * A_ROW_D + A_ROW_D * 0.45;
-  for (const [part, n, row] of [['N', 3, 4], ['S', 5, 9], ['E', 1, 6], ['W', 2, 11], ['NE', 2, 7], ['SW', 3, 5]] as const) {
+  for (const [part, n, row] of [['N', 3, 4], ['S', 5, 9], ['E', 1, 6], ['N', 9, 11], ['NE', 2, 7], ['SE', 3, 5]] as const) {
     out.push(at(nthColumn(part, box, n), aRow(row), aSeatTop(row)));
   }
   // ---- tier C (4)
   const cRow = (i: number) => C_D0 + i * C_ROW_D + C_ROW_D * 0.45;
-  for (const [part, n, row] of [['N', 4, 7], ['S', 2, 10], ['NW', 1, 6], ['SE', 4, 9]] as const) {
+  for (const [part, n, row] of [['N', 4, 7], ['S', 2, 10], ['NE', 1, 6], ['SE', 4, 9]] as const) {
     out.push(at(nthColumn(part, box, n), cRow(row), cSeatTop(row)));
   }
   // ---- concourse (6): in front of the box rear walls, clear of pillars / kiosks / stairs

@@ -21,6 +21,12 @@ import {
   BOX_CEIL,
   BOX_GLASS_D1,
   BOX_REAR_D0,
+  CLOSED_D,
+  CLOSED_RAIL_D1,
+  DRAPE_D,
+  DRAPE_Y0,
+  FLOOR_HALF_X,
+  FLOOR_HALF_Z,
   C_D0,
   C_END,
   C_GLASS_H,
@@ -74,10 +80,38 @@ export type SurfaceMat =
   | 'led'
   | 'carpet'
   | 'ceiling'
+  /** aisle stair risers (concrete, painted row numbers) */
+  | 'riser'
+  /** folded retractable stands + service doors on the closed end */
+  | 'stands'
+  /** upper bowl wall: cracked mosaic pattern (visual only where above reach) */
+  | 'mosaic'
   /** roof dome (visual only, above reach: not in the collision mesh) */
   | 'roof';
 
-export type PropMat = 'stage' | 'case' | 'barrier' | 'screen' | 'truss' | 'speaker' | 'pillar' | 'kiosk' | 'sign' | 'furniture' | 'metal';
+export type PropMat =
+  | 'stage'
+  | 'table'
+  | 'truss'
+  | 'speaker'
+  /** magenta LED (stage edge strips, LED truss frame) */
+  | 'led'
+  /** "YEAH HACK" letter cubes (tag = letter index) */
+  | 'letters'
+  | 'pillar'
+  /** pillar wraps (tag 0 = red/white, 1 = magenta) */
+  | 'wrap'
+  | 'counter'
+  | 'accent'
+  /** hanging concourse signs (tag = variant) */
+  | 'sign'
+  | 'exit'
+  | 'door'
+  | 'bin'
+  | 'vending'
+  | 'glassdoor'
+  | 'drape'
+  | 'metal';
 
 interface Iv {
   y0: number;
@@ -101,12 +135,12 @@ function walkwayOrRows(col: Column, dm: number, bottom: number): Iv[] {
   }
   const aisle = col.c === 'aisle';
   const top = cTop(dm, aisle);
-  return top - bottom >= 0.3 ? [{ y0: bottom, y1: top, top: aisle ? 'aisle' : 'tier', side: aisle ? 'aisle' : 'tier' }] : [];
+  return top - bottom >= 0.3 ? [{ y0: bottom, y1: top, top: aisle ? 'aisle' : 'tier', side: aisle ? 'riser' : 'tier' }] : [];
 }
 
 function stairCell(dm: number, ceilMin: number, col: Column): Iv[] {
   const top = cStairTop(dm);
-  const out: Iv[] = [{ y0: GROUND, y1: top, top: 'aisle', side: 'aisle' }];
+  const out: Iv[] = [{ y0: GROUND, y1: top, top: 'aisle', side: 'riser' }];
   out.push(...walkwayOrRows(col, dm, Math.max(ceilMin, top + CST_HEADROOM)));
   return out;
 }
@@ -140,10 +174,17 @@ function concourse(col: Column, dm: number): Iv[] {
 }
 
 function baseCell(col: Column, dm: number): Iv[] {
+  if (col.closed && dm < CROSS_END) {
+    // closed end: event floor up to the folded-stand facade, balcony (+ railing) on top of it
+    if (dm < CLOSED_D) return [{ y0: GROUND, y1: 0, top: 'floor', side: 'concrete' }];
+    const out: Iv[] = [{ y0: GROUND, y1: LEVEL_B, top: 'walk', side: 'concrete', sideIn: 'stands' }];
+    if (dm < CLOSED_RAIL_D1) out.push({ y0: LEVEL_B, y1: LEVEL_B + 1.0, top: 'glass', side: 'glass' });
+    return out;
+  }
   if (dm < 0) {
     if (col.a === 'aisle') {
       const k = Math.floor((dm - FLOOR_STAIR_D0) / FLOOR_STAIR_TREAD);
-      return [{ y0: GROUND, y1: FLOOR_STAIR_RISE * (k + 1), top: 'aisle', side: 'aisle' }];
+      return [{ y0: GROUND, y1: FLOOR_STAIR_RISE * (k + 1), top: 'aisle', side: 'riser' }];
     }
     return [{ y0: GROUND, y1: 0, top: 'floor', side: 'concrete' }];
   }
@@ -157,7 +198,7 @@ function baseCell(col: Column, dm: number): Iv[] {
   if (dm < A_D0) return [{ y0: GROUND, y1: A_WALK_Y, top: 'walk', side: 'concrete' }];
   if (dm < A_END) {
     const aisle = col.a === 'aisle';
-    return [{ y0: GROUND, y1: aTop(dm, aisle), top: aisle ? 'aisle' : 'tier', side: aisle ? 'aisle' : 'tier' }];
+    return [{ y0: GROUND, y1: aTop(dm, aisle), top: aisle ? 'aisle' : 'tier', side: aisle ? 'riser' : 'tier' }];
   }
   if (dm < CROSS_END) return [{ y0: GROUND, y1: LEVEL_B, top: 'walk', side: 'concrete' }];
   if (dm < RING_B_END) return ringB(col, dm);
@@ -168,7 +209,7 @@ function baseCell(col: Column, dm: number): Iv[] {
     return [{ y0: GROUND, y1: top, top: dm < C_END ? (aisle ? 'aisle' : 'tier') : 'walk', side: 'wall' }];
   }
   if (dm < TOP_WALK_D1) return [{ y0: GROUND, y1: C_TOP, top: 'walk', side: 'wall' }];
-  return [{ y0: GROUND, y1: WALL_TOP, top: 'concrete', side: 'wall' }];
+  return [{ y0: GROUND, y1: WALL_TOP, top: 'concrete', side: 'wall', sideIn: 'mosaic' }];
 }
 
 function cellIntervals(col: Column, d0: number, d1: number): Iv[] {
@@ -212,6 +253,10 @@ export interface Prop {
   yaw: number;
   mat: PropMat;
   collide: boolean;
+  /** render as an upright cylinder (diameter sx) */
+  cyl?: boolean;
+  /** material-specific variant (letter index, sign variant, …) */
+  tag?: number;
 }
 
 export interface Seat {
@@ -219,7 +264,8 @@ export interface Seat {
   y: number;
   z: number;
   yaw: number;
-  tier: 'A' | 'C';
+  /** A lower ring, C upper ring, B glass boxes (red VIP seats) */
+  tier: 'A' | 'B' | 'C';
   row: number;
 }
 
@@ -339,88 +385,184 @@ function propAt(j: number, f: number, d: number, y: number, sx: number, sy: numb
   return { x: p.x, y: y + sy / 2, z: p.z, sx, sy, sz, yaw: p.yawIn, mat, collide };
 }
 
+/** signed offset of (x, z) from the floor edge (rounded rectangle): < 0 inside the floor */
+export function floorEdgeOffset(x: number, z: number): number {
+  const qx = Math.abs(x) - (FLOOR_HALF_X - CORNER_R);
+  const qz = Math.abs(z) - (FLOOR_HALF_Z - CORNER_R);
+  if (qx <= 0 && qz <= 0) return Math.max(qx, qz) - CORNER_R;
+  if (qx <= 0) return qz - CORNER_R;
+  if (qz <= 0) return qx - CORNER_R;
+  return Math.hypot(qx, qz) - CORNER_R;
+}
+
+/** the closed (west) end: floor reaches the folded-stand facade at CLOSED_D */
+const isClosedSide = (x: number) => x < -(FLOOR_HALF_X - CORNER_R);
+
+/** is (x, z) on the event floor with at least `margin` m to the stands / facade? */
+export function floorClear(x: number, z: number, margin: number): boolean {
+  return floorEdgeOffset(x, z) <= (isClosedSide(x) ? CLOSED_D : 0) - margin;
+}
+
+export const TABLE_DEPTH = 0.8;
+export const TABLE_H = 0.75;
+/** hackathon desk rows run along z; x of each row (E block, W block) */
+export const TABLE_ROWS_X = [11, 14.4, 17.8, 21.2, 24.6, 28, -11, -14.4, -17.8, -21.2, -24.6, -28, -31.4, -34.8, -38.2, -41.6];
+/** centre lane |z| < TABLE_LANE stays open (E tunnel, stage sightline); cross lane gap around |z| ≈ 11.5 */
+const TABLE_LANE = 3.5;
+const CROSS_GAP: [number, number] = [10.6, 12.6];
+export const STAGE = { x0: -6, x1: 6, z0: -4, z1: 4, h: 1.2 };
+export const STAGE_FRAME = { x: 8, z: 6.6, y: 10.5 };
+
 function floorProps(): Prop[] {
   const P: Prop[] = [];
-  const box = (x: number, z: number, sx: number, sy: number, sz: number, mat: PropMat, y = 0, yaw = 0, collide = true) =>
-    P.push({ x, y: y + sy / 2, z, sx, sy, sz, yaw, mat, collide });
+  const box = (x: number, z: number, sx: number, sy: number, sz: number, mat: PropMat, y = 0, yaw = 0, collide = true, extra: Partial<Prop> = {}) =>
+    P.push({ x, y: y + sy / 2, z, sx, sy, sz, yaw, mat, collide, ...extra });
 
-  // ---- stage at the west end (front faces +x), 1.5 m deck
-  const SX0 = -33.5, SX1 = -23.5, SZ = 9, SH = 1.5;
-  box((SX0 + SX1) / 2, 0, SX1 - SX0, SH, SZ * 2, 'stage');
-  // side stairs (4 × 0.375 m) on both ends of the deck
+  // ---- central stage under the scoreboard (front faces +x / east), black deck with LED edges
+  const S = STAGE;
+  const sxm = (S.x0 + S.x1) / 2;
+  box(sxm, 0, S.x1 - S.x0, S.h, S.z1 - S.z0, 'stage');
+  // side stairs (4 × 0.3 m) at both ends, toward the back of the deck
   for (const s of [1, -1]) {
     for (let i = 0; i < 4; i++) {
       const depth = 0.3 * (4 - i);
-      box(-25.75, s * (SZ + depth / 2), 2.5, 0.375 * (i + 1), depth, 'stage');
+      box(-3.5, s * (S.z1 + depth / 2), 2.4, 0.3 * (i + 1), depth, 'stage');
     }
   }
-  // LED wall + truss towers + speaker stacks
-  box(-33.2, 0, 0.4, 6, 16, 'screen', SH);
-  for (const s of [1, -1]) {
-    box(-33.1, s * 8.6, 0.5, 8.5, 0.5, 'truss', SH);
-    box(-24.0, s * 8.6, 0.5, 8.5, 0.5, 'truss', SH);
-    box(-22.4, s * 10.1, 1.5, 3.8, 1.5, 'speaker');
+  // magenta LED strips round the deck edge (top lip + skirt line)
+  const L = 0.06;
+  for (const y of [S.h - 0.07, 0.05]) {
+    box(sxm, S.z1 + L / 2, S.x1 - S.x0 + 2 * L, 0.07, L, 'led', y, 0, false);
+    box(sxm, S.z0 - L / 2, S.x1 - S.x0 + 2 * L, 0.07, L, 'led', y, 0, false);
+    box(S.x1 + L / 2, 0, L, 0.07, S.z1 - S.z0, 'led', y, 0, false);
+    box(S.x0 - L / 2, 0, L, 0.07, S.z1 - S.z0, 'led', y, 0, false);
   }
-  // stage roof truss (visual, above jump reach from the deck)
-  box(-28.6, 0, 9.6, 0.5, 0.5, 'truss', SH + 8.5, 0, false);
-  for (const s of [1, -1]) box(-28.6, s * 8.6, 9.6, 0.5, 0.5, 'truss', SH + 8.5, 0, false);
-  box(-24.0, 0, 0.5, 0.5, 17.7, 'truss', SH + 8.5, 0, false);
-  box(-33.1, 0, 0.5, 0.5, 17.7, 'truss', SH + 8.5, 0, false);
-
-  // ---- crowd barricade in front of the stage, with gaps
-  for (let i = -4; i <= 4; i++) {
-    if (i === 0) continue;
-    box(-21.2, i * 2.9, 0.55, 1.15, 2.3, 'barrier');
+  // "YEAH" over "HACK" letter cubes at the front of the deck (cover on the stage)
+  const C = 0.9;
+  for (let i = 0; i < 8; i++) {
+    const row = i < 4 ? 1 : 0;
+    const k = i % 4;
+    box(S.x1 - 1.0, (1.5 - k) * (C + 0.04), C, C, C, 'letters', S.h + row * C, Math.PI / 2, true, { tag: i });
   }
-  box(-21.2, 0, 0.55, 1.15, 1.4, 'barrier');
-
-  // ---- front-of-house mixing tower (climbable: 0.4 m step then the 0.8 m deck... via a crate)
-  box(13, 0, 4.4, 0.8, 4, 'stage');
-  box(15.6, 0, 0.8, 0.4, 2.2, 'case');
-  box(12.4, 0, 1.0, 1.0, 3.0, 'case', 0.8);
-  box(14.9, 0, 0.12, 1.0, 4, 'barrier', 0.8);
-  box(11.1, 0, 0.12, 2.6, 4, 'barrier', 0.8);
-  box(13, 0, 4.4, 0.15, 4.2, 'metal', 3.4, 0, false);
-
-  // ---- road cases (1.2 × 1.0 × 0.8) in small stacks + pallets / risers
-  const cases: [number, number, number, number][] = [
-    // x, z, yaw, stack height (1 or 2)
-    [-14, 13, 0.2, 2], [-14, -13, -0.2, 2], [-12.6, 14.2, 0, 1], [-12.6, -14.2, 0, 1],
-    [0, 15.5, 0, 1], [1.3, 15.5, 0, 2], [0, -15.5, 0, 2], [1.3, -15.5, 0, 1],
-    [15, 14, 0.5, 2], [15, -14, -0.5, 2], [24, 7, 0, 1], [24, -7, 0, 1], [24.8, 8.2, 0.3, 2], [24.8, -8.2, -0.3, 2],
-    [-5, 6.5, 0.8, 1], [-5, -6.5, -0.8, 1], [5, 7.5, 0, 2], [5, -7.5, 0, 2],
-    [29, 0, 1.57, 2], [29, 1.3, 1.57, 1],
-  ];
-  for (const [x, z, yaw, h] of cases) {
-    box(x, z, 1.2, 1.0, 0.8, 'case', 0, yaw);
-    if (h > 1) box(x, z, 1.2, 1.0, 0.8, 'case', 1.0, yaw + 0.05);
+  // DJ / host desk at the back of the deck
+  box(-3.2, 0, 0.9, 1.0, 3.2, 'speaker', S.h);
+  // black truss towers at the frame corners (collide), line arrays hanging beside them,
+  // magenta LED truss frame overhead (visual): silver box truss with LED dashes along it
+  const F = STAGE_FRAME;
+  for (const sx of [1, -1]) {
+    for (const sz of [1, -1]) {
+      box(sx * F.x, sz * F.z, 0.4, F.y, 0.4, 'speaker');
+      box(sx * F.x, sz * F.z, 1.4, 0.08, 1.4, 'speaker', 0, 0, false); // base plate
+      box(sx * (F.x - 0.75), sz * (F.z - 0.2), 0.8, 3.6, 0.9, 'speaker', F.y - 4.6, 0, false); // line array
+    }
+    // subs on the floor beside the deck
+    box(sx * 7.3, S.z1 + 1.4, 1.2, 1.1, 1.2, 'speaker');
+    box(sx * 7.3, S.z0 - 1.4, 1.2, 1.1, 1.2, 'speaker');
   }
-  box(-8, 0, 2.2, 0.4, 4, 'stage'); // low riser
-  box(-10.2, 0, 2.2, 0.8, 4, 'stage'); // step up from the riser
-  box(21, 16, 2.4, 2.2, 2.4, 'speaker');
-  box(21, -16, 2.4, 2.2, 2.4, 'speaker');
-  box(-16, 0, 1.6, 1.6, 3.2, 'case');
+  for (const sz of [1, -1]) box(0, sz * F.z, 2 * F.x + 0.4, 0.4, 0.4, 'truss', F.y, 0, false);
+  for (const sx of [1, -1]) box(sx * F.x, 0, 0.4, 0.4, 2 * F.z + 0.4, 'truss', F.y, 0, false);
+  for (let i = 0; i < 8; i++) {
+    const t = -F.x + 0.6 + (i + 0.5) * ((2 * F.x - 1.2) / 8);
+    for (const sz of [1, -1]) box(t, sz * (F.z + 0.22), 1.1, 0.12, 0.06, 'led', F.y + 0.14, 0, false);
+  }
+  for (let i = 0; i < 6; i++) {
+    const t = -F.z + 0.6 + (i + 0.5) * ((2 * F.z - 1.2) / 6);
+    for (const sx of [1, -1]) box(sx * (F.x + 0.22), t, 0.06, 0.12, 1.1, 'led', F.y + 0.14, 0, false);
+  }
+  // inner light bar across the frame
+  box(0, 0, 2 * F.x, 0.3, 0.3, 'truss', F.y + 0.05, 0, false);
+
+  // ---- hackathon desk rows (black skirted tables, cover height), clear lanes for play
+  for (const x of TABLE_ROWS_X) {
+    for (const sgn of [1, -1]) {
+      const ok = (zz: number) => floorClear(x - 1.0, zz, isClosedSide(x - 1.0) ? 2.6 : 4.2) && floorClear(x + 1.0, zz, isClosedSide(x + 1.0) ? 2.6 : 4.2) && (zz < CROSS_GAP[0] || zz > CROSS_GAP[1]);
+      let run0 = -1;
+      for (let z = TABLE_LANE; z <= 30.001; z += 0.25) {
+        const good = z < 30 && ok(z);
+        if (good && run0 < 0) run0 = z;
+        if (!good && run0 >= 0) {
+          const z1 = z - 0.25;
+          if (z1 - run0 >= 1.75) box(x, (sgn * (run0 + z1)) / 2, z1 - run0, TABLE_H, TABLE_DEPTH, 'table', 0, Math.PI / 2);
+          run0 = -1;
+        }
+      }
+    }
+  }
+  // short rows along x beside the stage (north / south of the frame)
+  for (const sgn of [1, -1]) for (const z of [11.6, 15.0, 18.4]) box(0, sgn * z, 12, TABLE_H, TABLE_DEPTH, 'table');
   return P;
+}
+
+/** roof dome height at offset d (same curve as the mesher) */
+export function roofYAt(d: number): number {
+  const t = clamp((BACK_WALL_D1 - d) / (BACK_WALL_D1 + CORNER_R - 0.5), 0, 1);
+  return ROOF_BASE_Y + (ROOF_APEX_Y - ROOF_BASE_Y) * Math.sin((t * Math.PI) / 2);
+}
+function clamp(v: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, v));
 }
 
 function bowlProps(): Prop[] {
   const P: Prop[] = [];
   const { columns } = layout();
   const n = columns.length;
+  const H = CONC_CEIL - LEVEL_B;
+  let pillar = 0;
   for (const col of columns) {
     const j = col.index;
     const next = columns[(j + 1) % n]!;
-    // concourse pillars at box partitions
-    if (col.b === 'wall' && next.b === 'box') P.push(propAt(j, 0.5, 26.0, LEVEL_B, 0.9, CONC_CEIL - LEVEL_B, 0.9, 'pillar'));
-    // kiosks against the outer concourse wall
+    // ---- concourse: round pillars with TAURON wraps (alternating red/white and magenta), bins
+    if (col.b === 'wall' && next.b === 'box') {
+      P.push({ ...propAt(j, 0.5, 26.0, LEVEL_B, 1.1, H, 1.1, 'pillar'), cyl: true });
+      P.push({ ...propAt(j, 0.5, 26.0, LEVEL_B + 0.35, 1.18, 1.7, 1.18, 'wrap', false), cyl: true, tag: pillar % 2 });
+      if (pillar % 3 === 0) P.push({ ...propAt(j, 0.5, 26.95, LEVEL_B, 0.5, 0.8, 0.5, 'bin', false), cyl: true });
+      pillar++;
+    }
+    // ---- kiosks against the outer wall: counter + black top + magenta accent wall
     if (col.b === 'door' && col.c === 'aisle') {
       const w = Math.min(2.8, columnWidth(j, 28.5) + 1.2);
-      P.push(propAt(j, 0.5, 28.35, LEVEL_B, w, 1.1, 0.8, 'kiosk'));
-      P.push(propAt(j, 0.5, 29.5, LEVEL_B, w + 0.6, 3.2, 0.7, 'kiosk'));
-      P.push(propAt(j, 0.5, 29.1, LEVEL_B + 2.4, w + 0.4, 0.6, 0.12, 'sign', false));
+      P.push(propAt(j, 0.5, 28.35, LEVEL_B, w, 1.05, 0.8, 'counter'));
+      P.push(propAt(j, 0.5, 28.3, LEVEL_B + 1.05, w + 0.1, 0.06, 0.95, 'metal', false));
+      P.push(propAt(j, 0.5, 29.6, LEVEL_B, w + 2.4, 3.6, 0.4, 'accent'));
     }
-    // box furniture: a counter in every glass box
-    if (col.b === 'box') P.push(propAt(j, 0.5, 18.9, LEVEL_B, Math.min(1.1, columnWidth(j, 18.9) - 0.3), 1.0, 0.7, 'furniture'));
+    // ---- vomitory (aisle + vom column pair = one sector)
+    if (col.sector && col.a === 'aisle') {
+      const v = next; // the vom column right of the aisle column
+      const span = columnWidth(j, 19.6) + (v.sector === col.sector ? columnWidth(v.index, 19.6) : 0);
+      const fEnd = v.sector === col.sector ? 1 : 0.5;
+      // red double doors standing open against the side walls, frame header, exit sign
+      P.push(propAt(j, 0.03, 19.0, LEVEL_B, 0.06, 1.95, 1.1, 'door', false));
+      if (v.sector === col.sector) P.push(propAt(v.index, 0.97, 19.0, LEVEL_B, 0.06, 1.95, 1.1, 'door', false));
+      P.push(propAt(j, fEnd, 19.62, LEVEL_B + 1.95, span, 0.1, 0.12, 'door', false));
+      P.push(propAt(j, fEnd, 19.55, LEVEL_B + 2.07, 0.5, 0.17, 0.05, 'exit', false));
+      // fire-hose cabinet on the left wall
+      P.push(propAt(j, 0.035, 17.3, LEVEL_B + 0.55, 0.1, 0.95, 0.7, 'door', false));
+      // hanging red sector sign in the concourse in front of the vomitory
+      P.push({ ...propAt(j, fEnd, 22.4, LEVEL_B + 2.7, 2.8, 0.7, 0.08, 'sign', false), tag: col.sector % 2 });
+      // glass entrance doors + turnstiles on the outer wall behind every other sector
+      if (col.sector % 2 === 1) {
+        P.push(propAt(j, fEnd, 29.82, LEVEL_B, 3.8, 3.0, 0.05, 'glassdoor', false));
+        for (const f of [-1.25, -0.42, 0.42, 1.25]) {
+          const p = columnPoint(j, fEnd, 28.2);
+          // tangent = (cos yaw, −sin yaw) for the inward-facing yaw
+          P.push({ x: p.x + Math.cos(p.yawIn) * f, y: LEVEL_B + 0.5, z: p.z - Math.sin(p.yawIn) * f, sx: 0.22, sy: 1.0, sz: 0.9, yaw: p.yawIn, mat: 'metal', collide: true });
+        }
+      }
+      // stanchion posts + rope on some sectors
+      if (col.sector % 4 === 2) {
+        for (let k = 0; k < 4; k++) P.push({ ...propAt(j, fEnd, 24.0 + k * 1.2, LEVEL_B, 0.08, 1.0, 0.08, 'metal', false), cyl: true });
+        P.push(propAt(j, fEnd, 25.8, LEVEL_B + 0.8, 0.03, 0.03, 3.6, 'speaker', false));
+      }
+    }
+    // ---- vending machine against the outer wall, every few sectors
+    if (col.b === 'box' && columns[(j - 1 + n) % n]!.b === 'door' && columns[(j - 1 + n) % n]!.a === 'aisle') {
+      P.push(propAt(j, 0.5, 29.35, LEVEL_B, 0.95, 1.9, 0.8, 'vending'));
+    }
+    // ---- closed end: black drapes in front of the upper ring, box-ring ceiling → roof
+    if (col.closed) {
+      const top = roofYAt(DRAPE_D) + 0.3;
+      P.push(propAt(j, 0.5, DRAPE_D, DRAPE_Y0, columnWidth(j, DRAPE_D) + 0.03, top - DRAPE_Y0, 0.15, 'drape'));
+    }
   }
   return P;
 }
@@ -437,7 +579,7 @@ function seats(): Seat[] {
   const out: Seat[] = [];
   const { columns } = layout();
   const n = columns.length;
-  const rowRuns = (has: (c: Column) => boolean, d: number, y: number, tier: 'A' | 'C', row: number) => {
+  const rowRuns = (has: (c: Column) => boolean, d: number, y: number, tier: 'A' | 'B' | 'C', row: number) => {
     const start = columns.findIndex((c) => !has(c));
     if (start < 0) return;
     let run: number[] = [];
@@ -473,12 +615,24 @@ function seats(): Seat[] {
     flush();
   };
   for (let i = 0; i < A_ROWS; i++) {
-    const has = (c: Column) => c.a === 'seat' || (c.a === 'tunnel' && i >= 4);
+    const has = (c: Column) => !c.closed && (c.a === 'seat' || (c.a === 'tunnel' && i >= 4));
     rowRuns(has, A_D0 + (i + 1) * A_ROW_D - 0.34, aSeatTop(i), 'A', i);
   }
   for (let i = 0; i < C_ROWS; i++) {
-    const has = (c: Column) => c.c === 'seat' || (c.c === 'stair' && i >= 6);
+    const has = (c: Column) => !c.closed && (c.c === 'seat' || (c.c === 'stair' && i >= 6));
     rowRuns(has, C_D0 + (i + 1) * C_ROW_D - 0.34, cSeatTop(i), 'C', i);
+  }
+  // glass boxes: two rows of red VIP seats each (separate runs: box partitions stop them)
+  for (const [row, d] of [[0, 16.9], [1, 17.9]] as const) {
+    for (const col of columns) {
+      if (col.b !== 'box' || col.closed) continue;
+      const w = columnWidth(col.index, d);
+      const count = Math.floor((w - 0.2) / 0.55);
+      for (let s = 0; s < count; s++) {
+        const p = columnPoint(col.index, (s + 0.5) / count, d);
+        out.push({ x: p.x, y: LEVEL_B, z: p.z, yaw: p.yawIn, tier: 'B', row });
+      }
+    }
   }
   return out;
 }
@@ -640,7 +794,8 @@ export function buildArenaGeometry(): ArenaGeometry {
         const [bx, bz] = stationPoint(j + 1, dAt(t0));
         const [cx, cz] = stationPoint(j + 1, dAt(t1));
         const [dx, dz] = stationPoint(j, dAt(t1));
-        B.quad('roof', [ax, yAt(t0), az], [bx, yAt(t0), bz], [cx, yAt(t1), cz], [dx, yAt(t1), dz], [0, -1, 0], 1, false);
+        // lower dome = the cracked-mosaic upper bowl wall, upper dome = dark roof deck
+        B.quad(r < 6 ? 'mosaic' : 'roof', [ax, yAt(t0), az], [bx, yAt(t0), bz], [cx, yAt(t1), cz], [dx, yAt(t1), dz], [0, -1, 0], 1, false);
       }
     }
     for (let j = 0; j < nc; j++) {

@@ -10,6 +10,7 @@ import {
   FLOOR_HALF_X,
   FLOOR_HALF_Z,
   CONC_D1,
+  CLOSED_D,
   CST_D0,
   CST_D1,
   C_D0,
@@ -170,7 +171,7 @@ beforeAll(() => {
   for (const p of geo.props) if (p.collide) flat.push(...boxTris(p));
   solid = new Bvh(new Float32Array(flat));
   const vis = [...flat];
-  vis.push(...(geo.groups.roof?.positions ?? []));
+  vis.push(...(geo.groups.roof?.positions ?? []), ...(geo.groups.mosaic?.positions ?? []));
   for (const p of geo.props) if (!p.collide) vis.push(...boxTris(p));
   closed = new Bvh(new Float32Array(vis));
 });
@@ -196,7 +197,8 @@ describe('tauron-remake geometry', () => {
   it('stays within the performance budget', () => {
     console.info('[tauron-remake] stats', geo.stats, 'seats', geo.seats.length, 'props', geo.props.length);
     expect(geo.stats.triangles).toBeLessThan(250_000);
-    expect(geo.seats.length).toBeGreaterThan(12_000); // ~15,000 seated
+    // ~15,000 seated in full bowl config; the hackathon config retracts tier A + drapes the west end
+    expect(geo.seats.length).toBeGreaterThan(8_000);
     expect(geo.seats.length).toBeLessThan(22_000);
   });
 
@@ -332,8 +334,35 @@ describe('tauron-remake routes are climbable (autostep 0.4 m)', () => {
   });
 
   it('tier A rows sit where the layout says', () => {
-    const col = layout().columns.find((c) => c.b === 'box' && c.part === 'W')!;
+    const col = layout().columns.find((c) => c.b === 'box' && c.part === 'E')!;
     const p = columnPoint(col.index, 0.5, A_D0 + 0.4);
     expect(groundAt(p.x, p.z, 5)!.y).toBeCloseTo(1.75, 3);
+  });
+
+  it('closed west end: floor reaches the folded-stand facade, balcony on top at the cross-aisle level', () => {
+    const col = layout().columns.find((c) => c.closed && c.part === 'W' && c.b === 'box')!;
+    const floor = columnPoint(col.index, 0.5, CLOSED_D - 0.5);
+    expect(groundAt(floor.x, floor.z, 5)!.y).toBeCloseTo(0, 3);
+    const balcony = columnPoint(col.index, 0.5, CLOSED_D + 2.5);
+    expect(groundAt(balcony.x, balcony.z, 20)!.y).toBeCloseTo(LEVEL_B, 3);
+    // the balcony connects to the concourse through the vomitories
+    const vom = layout().columns.find((c) => c.closed && c.part === 'W' && c.b === 'vom' && c.a === 'aisle')!;
+    const pr = profile(vom.index, CLOSED_D + 1, CONC_D1 - 1, () => 12);
+    for (const p of pr) expect(p.y).toBeCloseTo(LEVEL_B, 3);
+    expect(geo.props.filter((p) => p.mat === 'drape').length).toBeGreaterThan(20);
+  });
+
+  it('hackathon desks leave the floor routes open', () => {
+    const tables = geo.props.filter((p) => p.mat === 'table');
+    expect(tables.length).toBeGreaterThan(40);
+    // every A aisle foot and tunnel portal has 3 m of clear floor in front of it
+    for (const c of layout().columns) {
+      if (c.closed || (c.a !== 'aisle' && c.a !== 'tunnel')) continue;
+      for (const d of [-2, -3, -4]) {
+        const p = columnPoint(c.index, 0.5, d);
+        const g = groundAt(p.x, p.z, 3)!;
+        expect(g.y, `col ${c.index} d ${d}`).toBeCloseTo(0, 3);
+      }
+    }
   });
 });
