@@ -11,16 +11,18 @@ import {
   PRESET_WEAPONS,
   RESPAWN_DELAY_SECONDS,
   SLOW_DURATION,
-  TEST_MAP_SPAWN_POINTS,
   WEAPON_CLASSES,
   WEAPON_GEN_SYSTEM,
+  activeMap,
   buildWeaponGenUserPrompt,
   chooseClassFromPrompt,
   clampWeapon,
+  effectiveSpawns,
   filterCatalogForClass,
   filterKnownParts,
   parseJsonObject,
   randomRawWeapon,
+  spawnSetsEqual,
   splashDamageAt,
   type Weapon,
 } from '@ai-gaem/shared';
@@ -360,14 +362,14 @@ function seedWorld(ctx: Ctx) {
       ctx.db.weapon.id.update({ ...row, json: JSON.stringify(clampWeapon({ ...w, parts: recipe.parts })) });
     }
   }
-  // Spawn points: seed the TEST MAP spawns. Also migrates the old placeholder ring
-  // (8 points at radius 12, y = 2) that earlier module versions seeded.
+  // Spawn points: keep the stored set in sync with the active map (ACTIVE_MAP_ID in
+  // @ai-gaem/shared). Any mismatch is replaced wholesale, which also migrates older
+  // sets such as the original placeholder ring.
+  const activeSpawns = effectiveSpawns(activeMap());
   const points = [...ctx.db.spawnPoint.iter()];
-  const isOldRing =
-    points.length === 8 && points.every(p => Math.abs(p.y - 2) < 1e-3 && Math.abs(Math.hypot(p.x, p.z) - 12) < 1e-2);
-  if (points.length === 0 || isOldRing) {
+  if (!spawnSetsEqual(points, activeSpawns)) {
     for (const p of points) ctx.db.spawnPoint.id.delete(p.id);
-    for (const sp of TEST_MAP_SPAWN_POINTS) ctx.db.spawnPoint.insert({ id: 0n, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw });
+    for (const sp of activeSpawns) ctx.db.spawnPoint.insert({ id: 0n, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw });
   }
   if (ctx.db.tickTimer.count() === 0n) {
     ctx.db.tickTimer.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(TICK_MICROS) });
