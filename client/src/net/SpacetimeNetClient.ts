@@ -1,4 +1,4 @@
-import { POSE_FLAG_BLOCK, POSE_FLAG_CROUCH, POSE_FLAG_GROUNDED, POSE_FLAG_TELEPORT, clampWeapon, type ForgeDesign } from '@ai-gaem/shared';
+import { POSE_FLAG_BLOCK, POSE_FLAG_CROUCH, POSE_FLAG_GROUNDED, POSE_FLAG_TELEPORT, clampWeapon, unpackPose, type ForgeDesign, type PackedPose } from '@ai-gaem/shared';
 import { templatesJsonFor } from '../weapons/templates';
 import type { Identity } from 'spacetimedb';
 import { DbConnection, tables } from '../module_bindings';
@@ -44,19 +44,8 @@ interface PlayerRow {
   slowElement?: number;
 }
 
-interface PoseRow {
-  slot: number;
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
-  pitch: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  flags: number;
-  sendT: number;
-}
+/** public `pose` row: quantized (see @ai-gaem/shared packPose / unpackPose) */
+type PoseRow = PackedPose;
 
 interface WeaponRow {
   id: bigint;
@@ -98,7 +87,8 @@ export function colorForId(id: string) {
   return `hsl(${h % 360},70%,50%)`;
 }
 
-function toSnapshot(r: PoseRow, arrival: number): PoseSnapshot {
+function toSnapshot(row: PoseRow, arrival: number): PoseSnapshot {
+  const r = unpackPose(row);
   return {
     pos: [r.x, r.y, r.z],
     vel: [r.vx, r.vy, r.vz],
@@ -115,12 +105,13 @@ function toSnapshot(r: PoseRow, arrival: number): PoseSnapshot {
 
 /**
  * SpacetimeDB implementation of NetClient. Movement is client-authoritative (update_transform
- * into the small `player_pose` table, keyed by a per-connection slot); damage, death, respawn,
+ * into the private pose_state; the server batches changed poses into the small quantized `pose`
+ * table, keyed by a per-connection slot); damage, death, respawn,
  * weapons and spawn points are server-authoritative. The auth token is kept in sessionStorage so
  * every browser tab is its own player (reloading a tab keeps the identity; `?fresh=1` forces a
  * new one).
  *
- * Subscriptions: player, player_pose, spawn_point, the two event tables and preset weapons;
+ * Subscriptions: player, pose, spawn_point, the two event tables and preset weapons;
  * other weapon rows are subscribed on demand when someone equips them.
  */
 export class SpacetimeNetClient implements NetClient {
@@ -214,14 +205,14 @@ export class SpacetimeNetClient implements NetClient {
               this.connected = true;
               for (const w of conn.db.weapon.iter()) this.cacheWeapon(w as WeaponRow);
               for (const r of conn.db.player.iter()) this.trackPlayer(r as PlayerRow);
-              for (const r of conn.db.playerPose.iter()) this.onPoseRow(r as PoseRow);
+              for (const r of conn.db.pose.iter()) this.onPoseRow(r as PoseRow);
               if (this.opts.name) this.setName(this.opts.name);
               tryReady();
             })
             .onError(() => done(new Error('subscription error')))
             .subscribe([
               tables.player,
-              tables.playerPose,
+              tables.pose,
               tables.spawnPoint,
               tables.shotEvent,
               tables.hitEvent,
@@ -259,7 +250,7 @@ export class SpacetimeNetClient implements NetClient {
       this.idToSlot.set(id, slot);
       // the pose row may have arrived before the player row
       if (!had) {
-        const pose = this.conn?.db.playerPose.slot.find(slot) as PoseRow | undefined;
+        const pose = this.conn?.db.pose.slot.find(slot) as PoseRow | undefined;
         if (pose) this.onPoseRow(pose);
       }
     }
@@ -302,8 +293,8 @@ export class SpacetimeNetClient implements NetClient {
     db.player.onDelete(() => this.scheduleEmit());
 
     // poses: one snapshot per changed row (never re-emit unchanged players)
-    db.playerPose.onInsert((_ctx, row) => this.onPoseRow(row as PoseRow));
-    db.playerPose.onUpdate((_ctx, _old, row) => this.onPoseRow(row as PoseRow));
+    db.pose.onInsert((_ctx, row) => this.onPoseRow(row as PoseRow));
+    db.pose.onUpdate((_ctx, _old, row) => this.onPoseRow(row as PoseRow));
 
     db.weapon.onInsert((_ctx, row) => this.cacheWeapon(row as WeaponRow));
     db.weapon.onUpdate((_ctx, _old, row) => this.cacheWeapon(row as WeaponRow));
@@ -436,6 +427,16 @@ export class SpacetimeNetClient implements NetClient {
       out.push(this.toNetPlayer(r));
     }
     return out;
+  }
+
+  /** distance (m) from `pos` to the nearest other online player's latest pose (Infinity if none) */
+  nearestOtherDistance(pos: Vec3) {
+    let best = Infinity;
+    for (const [id, p] of this.poses) {
+      if (id === this.localId || !this.idToSlot.has(id)) continue;
+      best = Math.min(best, Math.hypot(p.pos[0] - pos[0], p.pos[1] - pos[1], p.pos[2] - pos[2]));
+    }
+    return best;
   }
 
   othersOnline() {

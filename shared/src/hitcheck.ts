@@ -15,7 +15,7 @@ import {
 import { meleeSwingRate } from './melee';
 
 // ---------------------------------------------------------------------------
-// Pose flags (player_pose.flags)
+// Pose flags (pose.flags / pose_state.flags)
 // ---------------------------------------------------------------------------
 
 export const POSE_FLAG_CROUCH = 1;

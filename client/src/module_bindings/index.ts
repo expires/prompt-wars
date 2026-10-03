@@ -58,6 +58,7 @@ import * as GenerateWeaponProcedure from "./generate_weapon_procedure";
 import HitEventRow from "./hit_event_table";
 import PlayerRow from "./player_table";
 import PlayerPoseRow from "./player_pose_table";
+import PoseRow from "./pose_table";
 import ShotEventRow from "./shot_event_table";
 import SpawnPointRow from "./spawn_point_table";
 import WeaponRow from "./weapon_table";
@@ -96,6 +97,17 @@ const tablesSchema = __schema({
       { name: 'player_pose_slot_key', constraint: 'unique', columns: ['slot'] },
     ],
   }, PlayerPoseRow),
+  pose: __table({
+    name: 'pose',
+    indexes: [
+      { accessor: 'slot', name: 'pose_slot_idx_btree', algorithm: 'btree', columns: [
+        'slot',
+      ] },
+    ],
+    constraints: [
+      { name: 'pose_slot_key', constraint: 'unique', columns: ['slot'] },
+    ],
+  }, PoseRow),
   shotEvent: __table({
     name: 'shot_event',
     indexes: [

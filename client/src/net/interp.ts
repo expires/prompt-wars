@@ -1,3 +1,4 @@
+import { POSE_SEND_HZ } from '@ai-gaem/shared';
 import type { PoseSnapshot, Vec3 } from './NetClient';
 
 /**
@@ -6,7 +7,8 @@ import type { PoseSnapshot, Vec3 } from './NetClient';
  *
  * - clock offset = min(arrival - sendT) over the last ~2 s (the fastest delivery),
  * - jitter = p95 of (arrival - sendT - offset), rising at once and decaying by 10 ms/s,
- * - target delay = 2 x send interval + jitter, clamped to [70, 200] ms (30 Hz senders: ~67 ms + jitter),
+ * - target delay = 2 x send interval + jitter, clamped to [40, 150] ms (60 Hz senders: ~33 ms +
+ *   jitter, which includes the server's POSE_FLUSH_MS batching; 30 Hz senders: ~67 ms + jitter),
  * - playback time advances at 0.95..1.05x real time to converge on the target (no jumps unless
  *   the error exceeds 250 ms),
  * - cubic Hermite between snapshots using the sent velocities (linear if they disagree with the
@@ -14,8 +16,8 @@ import type { PoseSnapshot, Vec3 } from './NetClient';
  *   and a short exponential blend to hide the correction when data arrives again.
  */
 
-export const MIN_DELAY_MS = 70;
-export const MAX_DELAY_MS = 200;
+export const MIN_DELAY_MS = 40;
+export const MAX_DELAY_MS = 150;
 const OFFSET_WINDOW_MS = 2000;
 const MAX_EXTRAPOLATE_MS = 150;
 const SNAP_DISTANCE = 3;
@@ -68,8 +70,8 @@ export class RemoteInterpolator {
   private offsets: { arrival: number; off: number }[] = [];
   private minOffset = 0;
   private jitter = 0;
-  /** smoothed sender interval (ms); starts at the 30 Hz move rate */
-  private interval = 1000 / 30;
+  /** smoothed sender interval (ms); starts at the 60 Hz move rate */
+  private interval = 1000 / POSE_SEND_HZ;
   private playT: number | null = null;
   private corr: Vec3 = [0, 0, 0];
   private pendingCorrection = false;

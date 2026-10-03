@@ -132,6 +132,50 @@ export const PlayerPose = __t.object("PlayerPose", {
 });
 export type PlayerPose = __Infer<typeof PlayerPose>;
 
+export const Pose = __t.object("Pose", {
+  slot: __t.u16(),
+  x: __t.i16(),
+  y: __t.i16(),
+  z: __t.i16(),
+  yaw: __t.u16(),
+  pitch: __t.i16(),
+  vx: __t.i16(),
+  vy: __t.i16(),
+  vz: __t.i16(),
+  flags: __t.u8(),
+  sendT: __t.u32(),
+});
+export type Pose = __Infer<typeof Pose>;
+
+export const PoseFlushTimer = __t.object("PoseFlushTimer", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+});
+export type PoseFlushTimer = __Infer<typeof PoseFlushTimer>;
+
+export const PoseState = __t.object("PoseState", {
+  identity: __t.identity(),
+  slot: __t.u32(),
+  alive: __t.bool(),
+  x: __t.f32(),
+  y: __t.f32(),
+  z: __t.f32(),
+  yaw: __t.f32(),
+  pitch: __t.f32(),
+  vx: __t.f32(),
+  vy: __t.f32(),
+  vz: __t.f32(),
+  flags: __t.u8(),
+  sendT: __t.u32(),
+  poseAt: __t.timestamp(),
+  ax: __t.f32(),
+  ay: __t.f32(),
+  az: __t.f32(),
+  aflags: __t.u8(),
+  anchorAt: __t.timestamp(),
+});
+export type PoseState = __Infer<typeof PoseState>;
+
 export const Shot = __t.object("Shot", {
   id: __t.u64(),
   shooter: __t.identity(),

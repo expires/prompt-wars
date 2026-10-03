@@ -1,7 +1,10 @@
+import { POSE_CROWD_THRESHOLD, POSE_NEAR_DISTANCE, POSE_SEND_HZ, POSE_SEND_HZ_REDUCED } from '@ai-gaem/shared';
 import type { LocalPose, NetClient, Vec3 } from './NetClient';
 
-/** send interval while moving and someone else is online (30 Hz: every 2nd 60 Hz physics step) */
-export const MOVE_SEND_MS = 1000 / 30;
+/** send interval while moving with someone nearby (60 Hz: every 60 Hz physics step) */
+export const MOVE_SEND_MS = 1000 / POSE_SEND_HZ;
+/** while moving with nobody within POSE_NEAR_DISTANCE, or on a crowded server (30 Hz) */
+export const REDUCED_SEND_MS = 1000 / POSE_SEND_HZ_REDUCED;
 /** send interval when only the view direction changes (10 Hz) */
 const LOOK_SEND_MS = 100;
 /** send interval while nobody else is online (2 Hz) */
@@ -24,7 +27,9 @@ export interface PoseInput {
  * When to call update_transform. Driven from the fixed physics step with the step's timestamp
  * (uniformly spaced), so remote interpolation sees an even cadence:
  *
- * - 30 Hz while moving, 10 Hz while only looking around, nothing while idle (no heartbeat);
+ * - 60 Hz while moving (30 Hz if no other player is within POSE_NEAR_DISTANCE or more than
+ *   POSE_CROWD_THRESHOLD others are online), 10 Hz while only looking around, nothing while idle
+ *   (no heartbeat);
  * - immediately on discrete changes: start / stop moving, jump / land, crouch, teleport;
  * - alone on the server: 2 Hz plus the final "stopped" pose only.
  *
@@ -75,7 +80,8 @@ export class PoseSender {
     const sendT = this.last ? Math.max(t, this.last.pose.sendT + 1) : t;
     const pose: LocalPose = { ...p, pos: [...p.pos], vel, teleport: this.teleportPending, sendT };
     const l = this.last;
-    const alone = (this.net.othersOnline?.() ?? 1) === 0;
+    const others = this.net.othersOnline?.() ?? 1;
+    const alone = others === 0;
 
     let send = this.forcePending || !l;
     if (!send && l) {
@@ -86,7 +92,9 @@ export class PoseSender {
         send = stopped || (moving && since >= ALONE_SEND_MS - 1) || (looked && since >= ALONE_SEND_MS - 1) || l.pose.crouching !== p.crouching || !!l.pose.blocking !== !!p.blocking;
       } else {
         const discrete = stopped || (!l.moving && moving) || l.pose.crouching !== p.crouching || !!l.pose.blocking !== !!p.blocking || (l.pose.grounded !== p.grounded && (moving || l.moving));
-        send = discrete || (moving && since >= MOVE_SEND_MS - 1) || (looked && since >= LOOK_SEND_MS - 1);
+        const reduced = others > POSE_CROWD_THRESHOLD || (this.net.nearestOtherDistance?.(p.pos) ?? 0) > POSE_NEAR_DISTANCE;
+        const moveMs = reduced ? REDUCED_SEND_MS : MOVE_SEND_MS;
+        send = discrete || (moving && since >= moveMs - 1) || (looked && since >= LOOK_SEND_MS - 1);
       }
     }
     if (!send) return;

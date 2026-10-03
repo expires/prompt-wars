@@ -202,6 +202,8 @@ export interface NetClient {
   onPose?(cb: (id: string, snap: PoseSnapshot) => void): () => void;
   /** latest pose sample of a remote player */
   getPose?(id: string): PoseSnapshot | undefined;
+  /** distance (m) to the nearest other online player (send-rate throttling) */
+  nearestOtherDistance?(pos: Vec3): number;
   /** number of other online players (send-rate throttling) */
   othersOnline?(): number;
   stats?(): NetStats;

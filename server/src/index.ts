@@ -1,13 +1,15 @@
 // ai-gaem SpacetimeDB module (TypeScript, SpacetimeDB 2.x).
 //
-// Movement is client-authoritative (update_transform -> small public `player_pose` row keyed by a
-// u32 slot). Damage is server-authoritative: hitscan / stream / melee shots carry their hits in a
-// single `fire` call; projectiles call `fire` and later `report_hit`. The server validates fire
+// Movement is client-authoritative: update_transform writes the sender's private `pose_state`;
+// a coalescing one-shot `pose_flush` (every POSE_FLUSH_MS while anyone moves) copies changed
+// poses into the small quantized public `pose` table (keyed by a u16 slot) in one transaction.
+// Damage is server-authoritative: hitscan / stream / melee shots carry their hits in a single
+// `fire` call; projectiles call `fire` and later `report_hit`. The server validates fire
 // rate (token bucket), ammo, range and hit position (favor-the-shooter, swept over the victim's
 // last <= 250 ms) against the *stored* weapon stats.
 //
-// Cost notes: there is no always-on scheduled reducer. Damage-over-time uses a per-victim
-// `dot_timer` row that exists only while a DoT is active; slows expire client-side from
+// Cost notes: there is no always-on scheduled reducer (pose_flush only runs while someone
+// moves). Damage-over-time uses a per-victim `dot_timer` row that exists only while a DoT is active; slows expire client-side from
 // `slowUntil`; expired `shot` rows are cleaned up inside `fire` for that shooter.
 
 import { schema, table, t, SenderError, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
@@ -66,6 +68,10 @@ import {
   elementFromCode,
   slowDurationFor,
   stackedSlow,
+  packPose,
+  packedPoseEqual,
+  POSE_FLUSH_MS,
+  type PoseFloats,
 } from '@ai-gaem/shared';
 import { PART_CATALOG, PART_RECIPES } from './catalog.generated';
 
@@ -84,7 +90,7 @@ const player = table(
     identity: t.identity().primaryKey(),
     name: t.string(),
     online: t.bool(),
-    /** spawn position (set on respawn); live position is in player_pose */
+    /** spawn position (set on respawn); live position is in pose / pose_state */
     x: t.f32(),
     y: t.f32(),
     z: t.f32(),
@@ -119,9 +125,9 @@ const player = table(
     dotSource: t.identity(),
     /** legacy (now player_combat) */
     dotWeaponId: t.u64(),
-    /** legacy (now player_pose.flags) */
+    /** legacy (now pose.flags) */
     crouching: t.bool().default(false),
-    /** player_pose key while online (0 = none). Assigned on connect, reused by others when offline. */
+    /** pose key while online (0 = none). Assigned on connect, reused by others when offline. */
     slot: t.u32().default(0),
     /**
      * Forging: true for a new player until they have a weapon (register_design / equip_weapon /
@@ -136,8 +142,8 @@ const player = table(
 );
 
 /**
- * Hot, small, public: one row per online player, updated by update_transform (~30 Hz while
- * moving, nothing while idle). sendT = sender's clock (ms, wraps) for jitter-free interpolation.
+ * Legacy f32 pose table (replaced by the quantized `pose` + private `pose_state`). Kept only so
+ * the automatic migration doesn't have to drop a table; emptied on connect, never written.
  */
 const playerPose = table(
   { name: 'player_pose', public: true },
@@ -157,6 +163,72 @@ const playerPose = table(
   },
 );
 
+/**
+ * Hot, small, public: one quantized row per online player (@ai-gaem/shared packPose: cm
+ * positions, u16 yaw, cm/s velocities; 23 bytes). Written ONLY by the coalescing `pose_flush`
+ * (and by spawns / connects), so all poses that changed within POSE_FLUSH_MS reach subscribers in
+ * one transaction. sendT = sender's clock (ms, wraps) for jitter-free interpolation.
+ */
+const pose = table(
+  { name: 'pose', public: true },
+  {
+    slot: t.u16().primaryKey(),
+    x: t.i16(),
+    y: t.i16(),
+    z: t.i16(),
+    yaw: t.u16(),
+    pitch: t.i16(),
+    vx: t.i16(),
+    vy: t.i16(),
+    vz: t.i16(),
+    /** POSE_FLAG_* (crouch, grounded, teleport, block) */
+    flags: t.u8(),
+    sendT: t.u32(),
+  },
+);
+
+/**
+ * Private, authoritative per-online-player pose (full precision), written by update_transform
+ * (the only per-update server work: one find + one update of this row). Also holds what hit
+ * validation needs: the current pose with its server time and an "anchor" (an older pose, at
+ * most ~POSE_ANCHOR_MS + one send interval old) so shots are checked against the swept segment
+ * anchor -> current. `alive` mirrors player.alive so update_transform needn't read the player row.
+ */
+const poseState = table(
+  { name: 'pose_state' },
+  {
+    identity: t.identity().primaryKey(),
+    slot: t.u32().unique(),
+    alive: t.bool(),
+    x: t.f32(),
+    y: t.f32(),
+    z: t.f32(),
+    yaw: t.f32(),
+    pitch: t.f32(),
+    vx: t.f32(),
+    vy: t.f32(),
+    vz: t.f32(),
+    flags: t.u8(),
+    sendT: t.u32(),
+    /** server time of the current pose */
+    poseAt: t.timestamp(),
+    ax: t.f32(),
+    ay: t.f32(),
+    az: t.f32(),
+    aflags: t.u8(),
+    anchorAt: t.timestamp(),
+  },
+);
+
+/** One-shot pose flush (see POSE_FLUSH_MS); at most one row exists. */
+const poseFlushTimer = table(
+  { name: 'pose_flush_timer' },
+  {
+    scheduledId: t.u64().primaryKey().autoInc(),
+    scheduledAt: t.scheduleAt(),
+  },
+);
+
 /** Private per-online-player combat state (never broadcast). */
 const playerCombat = table(
   { name: 'player_combat' },
@@ -169,9 +241,9 @@ const playerCombat = table(
     /** token bucket (see fireCreditsMax) */
     fireCredits: t.f32(),
     creditsAt: t.timestamp(),
-    /** server time of the current player_pose row */
+    /** legacy (now pose_state.poseAt) */
     poseAt: t.timestamp(),
-    /** previous pose (favor-the-shooter hit validation) */
+    /** legacy (now the pose_state anchor) */
     px: t.f32(),
     py: t.f32(),
     pz: t.f32(),
@@ -320,6 +392,9 @@ const dotTimer = table(
 const spacetimedb = schema({
   player,
   playerPose,
+  pose,
+  poseState,
+  poseFlushTimer,
   playerCombat,
   weapon,
   spawnPoint,
@@ -334,7 +409,7 @@ export default spacetimedb;
 
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
 type PlayerRow = NonNullable<ReturnType<Ctx['db']['player']['identity']['find']>>;
-type PoseRow = NonNullable<ReturnType<Ctx['db']['playerPose']['slot']['find']>>;
+type PoseStateRow = NonNullable<ReturnType<Ctx['db']['poseState']['identity']['find']>>;
 type CombatRow = NonNullable<ReturnType<Ctx['db']['playerCombat']['identity']['find']>>;
 type WeaponRow = NonNullable<ReturnType<Ctx['db']['weapon']['id']['find']>>;
 
@@ -421,16 +496,44 @@ const poseSample = (x: number, y: number, z: number, flags: number): PoseSample 
   crouching: (flags & POSE_FLAG_CROUCH) !== 0,
 });
 
-/** The victim's recent trajectory for hit validation (see sweptPoseAt). */
-function sweptPose(ctx: Ctx, pose: PoseRow, c: CombatRow): SweptPose {
+/** The victim's recent trajectory for hit validation (see sweptPoseAt): anchor -> current pose. */
+function sweptPose(ctx: Ctx, s: PoseStateRow): SweptPose {
   return sweptPoseAt(
-    poseSample(c.px, c.py, c.pz, c.prevFlags),
-    seconds(c.prevAt),
-    poseSample(pose.x, pose.y, pose.z, pose.flags),
-    seconds(c.poseAt),
+    poseSample(s.ax, s.ay, s.az, s.aflags),
+    seconds(s.anchorAt),
+    poseSample(s.x, s.y, s.z, s.flags),
+    seconds(s.poseAt),
     seconds(ctx.timestamp),
-    Math.hypot(pose.vx, pose.vy, pose.vz),
+    Math.hypot(s.vx, s.vy, s.vz),
   );
+}
+
+/** Write the quantized public pose row for `slot` (no-op if unchanged after quantization). */
+function publishPose(ctx: Ctx, slot: number, p: PoseFloats) {
+  const row = packPose(slot, p);
+  const cur = ctx.db.pose.slot.find(row.slot);
+  if (!cur) ctx.db.pose.insert(row);
+  else if (!packedPoseEqual(cur, row)) ctx.db.pose.slot.update(row);
+}
+
+/**
+ * Server-side pose write (connect / spawn): private state (anchor reset: no sweep across a
+ * teleport) and the public row in the same transaction. Keeps the sender clock (sendT) as is.
+ */
+function setPose(ctx: Ctx, identity: Identity, slot: number, at: { x: number; y: number; z: number; yaw: number }, flags: number, alive: boolean) {
+  const old = ctx.db.poseState.identity.find(identity);
+  const p: PoseFloats = { x: at.x, y: at.y, z: at.z, yaw: at.yaw, pitch: 0, vx: 0, vy: 0, vz: 0, flags, sendT: old?.sendT ?? 0 };
+  const now = ctx.timestamp;
+  const row: PoseStateRow = { identity, slot, alive, ...p, poseAt: now, ax: p.x, ay: p.y, az: p.z, aflags: flags, anchorAt: now };
+  if (old) ctx.db.poseState.identity.update(row);
+  else ctx.db.poseState.insert(row);
+  publishPose(ctx, slot, p);
+}
+
+/** Mirror player.alive into pose_state (update_transform ignores dead players without reading `player`). */
+function setPoseAlive(ctx: Ctx, identity: Identity, alive: boolean) {
+  const s = ctx.db.poseState.identity.find(identity);
+  if (s && s.alive !== alive) ctx.db.poseState.identity.update({ ...s, alive });
 }
 
 /** Spawn point farthest from living enemies (random among the best 3 for variety). */
@@ -440,11 +543,8 @@ function pickSpawn(ctx: Ctx, forIdentity: Identity) {
     return { x: ctx.random() * 10 - 5, y: 2, z: ctx.random() * 10 - 5, yaw: 0 };
   }
   const enemies: { x: number; y: number; z: number }[] = [];
-  for (const c of ctx.db.playerCombat.iter()) {
-    if (c.identity.isEqual(forIdentity)) continue;
-    const p = ctx.db.player.identity.find(c.identity);
-    const pose = ctx.db.playerPose.slot.find(c.slot);
-    if (p && p.alive && p.online && pose) enemies.push(pose);
+  for (const s of ctx.db.poseState.iter()) {
+    if (s.alive && !s.identity.isEqual(forIdentity)) enemies.push(s);
   }
   const scored = points.map(sp => {
     let minD = Infinity;
@@ -487,11 +587,7 @@ function spawnPlayer(ctx: Ctx, p: PlayerRow, weaponId: bigint): PlayerRow {
   };
   const c = ctx.db.playerCombat.identity.find(p.identity);
   if (c) {
-    const pose = ctx.db.playerPose.slot.find(c.slot);
-    const flags = POSE_FLAG_GROUNDED | POSE_FLAG_TELEPORT;
-    const poseRow: PoseRow = { slot: c.slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, vx: 0, vy: 0, vz: 0, flags, sendT: pose?.sendT ?? 0 };
-    if (pose) ctx.db.playerPose.slot.update(poseRow);
-    else ctx.db.playerPose.insert(poseRow);
+    setPose(ctx, p.identity, c.slot, sp, POSE_FLAG_GROUNDED | POSE_FLAG_TELEPORT, true);
     ctx.db.playerCombat.identity.update({
       ...c,
       ammo: w ? w.magSize : 0,
@@ -499,12 +595,6 @@ function spawnPlayer(ctx: Ctx, p: PlayerRow, weaponId: bigint): PlayerRow {
       reloadUntil: EPOCH,
       fireCredits: w ? fireCreditsMax(effectiveFireRate(w)) : 1,
       creditsAt: ctx.timestamp,
-      poseAt: ctx.timestamp,
-      px: sp.x,
-      py: sp.y,
-      pz: sp.z,
-      prevFlags: flags,
-      prevAt: ctx.timestamp,
       dotDps: 0,
       dotUntil: EPOCH,
     });
@@ -550,6 +640,7 @@ function applyDamage(
       dotElement: 0,
     };
     deleteDotTimer(ctx, target.identity);
+    setPoseAlive(ctx, target.identity, false);
   }
   ctx.db.player.identity.update(next);
   if (killed && !attacker.isEqual(target.identity)) {
@@ -613,6 +704,8 @@ function seedWorld(ctx: Ctx) {
   }
   // Migration: the old always-on 4 Hz tick is gone.
   for (const row of [...ctx.db.tickTimer.iter()]) ctx.db.tickTimer.scheduledId.delete(row.scheduledId);
+  // Migration: poses moved to the quantized `pose` table (+ private pose_state).
+  for (const row of [...ctx.db.playerPose.iter()]) ctx.db.playerPose.slot.delete(row.slot);
 }
 
 /** Parts for a weapon that has none (no LLM, or the LLM only used unknown ids): a random class recipe. */
@@ -677,13 +770,9 @@ export const onConnect = spacetimedb.clientConnected(ctx => {
   if (!c) c = ctx.db.playerCombat.insert(newCombatRow(ctx, ctx.sender, freeSlot(ctx)));
   const existing = ctx.db.player.identity.find(ctx.sender);
   if (existing) {
-    // the pose row reflects the stored spawn / last position until the client sends one
-    if (!ctx.db.playerPose.slot.find(c.slot)) {
-      ctx.db.playerPose.insert({
-        slot: c.slot, x: existing.x, y: existing.y, z: existing.z, yaw: existing.yaw, pitch: 0,
-        vx: 0, vy: 0, vz: 0, flags: POSE_FLAG_GROUNDED | POSE_FLAG_TELEPORT, sendT: 0,
-      });
-    }
+    // the pose reflects the stored spawn / last position until the client sends one
+    if (!ctx.db.poseState.identity.find(ctx.sender)) setPose(ctx, ctx.sender, c.slot, existing, POSE_FLAG_GROUNDED | POSE_FLAG_TELEPORT, existing.alive);
+    else setPoseAlive(ctx, ctx.sender, existing.alive);
     const p: PlayerRow = { ...existing, online: true, slot: c.slot };
     // returning players get their magazine back (combat state isn't kept while offline)
     if (p.alive && c.ammo === 0) {
@@ -731,19 +820,18 @@ export const onConnect = spacetimedb.clientConnected(ctx => {
   // design (register_design) or equipped a preset. The pose row parks them at a spawn point.
   const sp = pickSpawn(ctx, ctx.sender);
   ctx.db.player.insert({ ...base, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw });
-  if (!ctx.db.playerPose.slot.find(c.slot)) {
-    ctx.db.playerPose.insert({
-      slot: c.slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
-      vx: 0, vy: 0, vz: 0, flags: POSE_FLAG_GROUNDED | POSE_FLAG_TELEPORT, sendT: 0,
-    });
-  }
+  setPose(ctx, ctx.sender, c.slot, sp, POSE_FLAG_GROUNDED | POSE_FLAG_TELEPORT, false);
 });
 
 export const onDisconnect = spacetimedb.clientDisconnected(ctx => {
   const c = ctx.db.playerCombat.identity.find(ctx.sender);
-  const pose = c ? ctx.db.playerPose.slot.find(c.slot) : undefined;
+  const pose = ctx.db.poseState.identity.find(ctx.sender);
+  if (pose) {
+    ctx.db.poseState.identity.delete(ctx.sender);
+    ctx.db.pose.slot.delete(pose.slot & 0xffff);
+  }
   if (c) {
-    ctx.db.playerPose.slot.delete(c.slot);
+    if (!pose || pose.slot !== c.slot) ctx.db.pose.slot.delete(c.slot & 0xffff);
     ctx.db.playerCombat.identity.delete(ctx.sender);
   }
   deleteDotTimer(ctx, ctx.sender);
@@ -767,10 +855,19 @@ export const set_name = spacetimedb.reducer({ name: t.string() }, (ctx, { name }
   ctx.db.player.identity.update({ ...p, name: clean });
 });
 
+/** How old the hit-validation anchor may get before it is moved up to the previous pose. */
+const POSE_ANCHOR_MICROS = 100_000n;
+const POSE_FLUSH_MICROS = BigInt(POSE_FLUSH_MS * 1000);
+
 /**
  * Client-authoritative movement: position, look, velocity (m/s), POSE_FLAG_* flags and the
- * sender's clock (ms) for interpolation. Sent ~30 Hz while moving, immediately on discrete
- * changes (jump / land / crouch / stop), nothing while idle. Ignored while dead.
+ * sender's clock (ms) for interpolation. Sent at 60 Hz while moving (30 Hz when nobody is near /
+ * crowded server), immediately on discrete changes (jump / land / crouch / stop), nothing while
+ * idle. Ignored while dead.
+ *
+ * Kept minimal on purpose (this runs N x 60 times a second): one find + one update of the
+ * sender's private pose_state row, plus scheduling the coalescing pose_flush if none is pending.
+ * Nothing is broadcast from here.
  */
 export const update_transform = spacetimedb.reducer(
   {
@@ -779,21 +876,52 @@ export const update_transform = spacetimedb.reducer(
   },
   (ctx, { x, y, z, yaw, pitch, vx, vy, vz, flags, sendT }) => {
     finite(x, y, z, yaw, pitch, vx, vy, vz);
-    const c = ctx.db.playerCombat.identity.find(ctx.sender);
-    if (!c) throw new SenderError('not connected');
-    const p = ctx.db.player.identity.find(ctx.sender);
-    if (!p || !p.alive) return;
-    const old = ctx.db.playerPose.slot.find(c.slot);
-    const row: PoseRow = { slot: c.slot, x, y, z, yaw, pitch, vx, vy, vz, flags: flags & 0xff, sendT };
-    if (old) {
-      ctx.db.playerPose.slot.update(row);
-      ctx.db.playerCombat.identity.update({ ...c, px: old.x, py: old.y, pz: old.z, prevFlags: old.flags, prevAt: c.poseAt, poseAt: ctx.timestamp });
-    } else {
-      ctx.db.playerPose.insert(row);
-      ctx.db.playerCombat.identity.update({ ...c, px: x, py: y, pz: z, prevFlags: flags, prevAt: ctx.timestamp, poseAt: ctx.timestamp });
+    let s = ctx.db.poseState.identity.find(ctx.sender);
+    if (!s) {
+      // connected before pose_state existed (module update while online): create it lazily
+      const c = ctx.db.playerCombat.identity.find(ctx.sender);
+      const p = ctx.db.player.identity.find(ctx.sender);
+      if (!c || !p) throw new SenderError('not connected');
+      setPose(ctx, ctx.sender, c.slot, { x, y, z, yaw }, flags & 0xff, p.alive);
+      s = ctx.db.poseState.identity.find(ctx.sender)!;
+    }
+    if (!s.alive) return;
+    const now = ctx.timestamp;
+    const f = flags & 0xff;
+    const next: PoseStateRow = { ...s, x, y, z, yaw, pitch, vx, vy, vz, flags: f, sendT, poseAt: now };
+    if ((f & POSE_FLAG_TELEPORT) !== 0) {
+      // discontinuity: no sweep across it
+      next.ax = x;
+      next.ay = y;
+      next.az = z;
+      next.aflags = f;
+      next.anchorAt = now;
+    } else if (micros(now) - micros(s.anchorAt) > POSE_ANCHOR_MICROS) {
+      next.ax = s.x;
+      next.ay = s.y;
+      next.az = s.z;
+      next.aflags = s.flags;
+      next.anchorAt = s.poseAt;
+    }
+    ctx.db.poseState.identity.update(next);
+    if (ctx.db.poseFlushTimer.count() === 0n) {
+      ctx.db.poseFlushTimer.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.time(micros(now) + POSE_FLUSH_MICROS) });
     }
   },
 );
+
+/**
+ * Coalesced broadcast: copy every pose_state that changed since the last flush into the public
+ * `pose` table (quantized), all in this one transaction. Scheduled one-shot by update_transform,
+ * so it runs at most every POSE_FLUSH_MS while anyone moves and never while everyone is idle.
+ */
+export const pose_flush = spacetimedb.reducer({ onSchedule: poseFlushTimer }, { timer: poseFlushTimer.rowType }, (ctx, { timer }) => {
+  requireScheduler(ctx);
+  ctx.db.poseFlushTimer.scheduledId.delete(timer.scheduledId);
+  for (const s of ctx.db.poseState.iter()) {
+    if (s.alive) publishPose(ctx, s.slot, s);
+  }
+});
 
 /** Start reloading the current weapon. */
 export const reload = spacetimedb.reducer(ctx => {
@@ -835,11 +963,11 @@ function applyHit(ctx: Ctx, s: ShotCtx, slot: number, zone: number, impact: [num
   const vc = ctx.db.playerCombat.slot.find(slot);
   if (!vc || vc.identity.isEqual(ctx.sender)) return false;
   const victim = ctx.db.player.identity.find(vc.identity);
-  const pose = ctx.db.playerPose.slot.find(slot);
+  const pose = ctx.db.poseState.identity.find(vc.identity);
   if (!victim || !victim.alive || !victim.online || !pose) return false;
   const { w, o } = s;
   const maxRange = w.range * RANGE_TOLERANCE_MULT + RANGE_TOLERANCE_ADD;
-  const swept = sweptPose(ctx, pose, vc);
+  const swept = sweptPose(ctx, pose);
 
   let damage: number;
   let headshot = false;
@@ -965,7 +1093,7 @@ export const fire = spacetimedb.reducer(
     }
 
     // Origin must be near the player (melee: near the eye).
-    const pose = ctx.db.playerPose.slot.find(c.slot);
+    const pose = ctx.db.poseState.identity.find(ctx.sender);
     if (pose && dist(ox, oy, oz, pose.x, pose.y, pose.z) > MAX_ORIGIN_OFFSET) return;
     const melee = w.fireMode === 'melee';
     if (melee && pose) {
@@ -1112,6 +1240,7 @@ export const request_redeploy = spacetimedb.reducer(ctx => {
     dotElement: 0,
   });
   deleteDotTimer(ctx, p.identity);
+  setPoseAlive(ctx, p.identity, false);
   const c = ctx.db.playerCombat.identity.find(p.identity);
   if (c && c.dotDps > 0) ctx.db.playerCombat.identity.update({ ...c, dotDps: 0 });
 });
@@ -1187,7 +1316,7 @@ export const dot_tick = spacetimedb.reducer({ onSchedule: dotTimer }, { timer: d
   const covered = c ? Number(micros(c.dotUntil) - (now - DOT_TICK_MICROS)) / 1e6 : 0;
   const seconds = Math.max(0, Math.min(Number(DOT_TICK_MICROS) / 1e6, covered));
   if (c && p && p.alive && c.dotDps > 0 && seconds > 0) {
-    const pose = ctx.db.playerPose.slot.find(c.slot);
+    const pose = ctx.db.poseState.identity.find(timer.target);
     const at: [number, number, number] = pose ? [pose.x, pose.y + 1, pose.z] : [p.x, p.y, p.z];
     applyDamage(ctx, p, c.dotDps * seconds, c.dotSource, c.dotWeaponId, { dot: true, at, element: p.dotElement });
   }
