@@ -1,623 +1,492 @@
 # Prompt Wars
 
-Multiplayer arena shooter. Prompt a weapon, then use it.
+Prompt Wars is a browser multiplayer arena shooter where you design your own gear in words. You
+describe an outfit in the Closet and a weapon in the Forge, an LLM builds both piece by piece, a
+shared balance layer keeps them fair, and you take them into a 3D arena against other players.
+It runs on Three.js and Rapier in the browser, SpacetimeDB for the game server and a small Node
+service that streams designs from Claude.
 
-## Server
+**Play it:** http://187.7.27.171/
 
-SpacetimeDB **2.10** module written in TypeScript (`server/`), with the balance logic in
-`shared/` (`@ai-gaem/shared`, bundled into the module by `spacetime build`).
+## Contents
 
-- Maincloud database: **`prompt-wars-63xhe`** (dashboard: https://spacetimedb.com/prompt-wars-63xhe)
-- Client connection: URI `wss://maincloud.spacetimedb.com`, database `prompt-wars-63xhe`
-  (constants exported from `@ai-gaem/shared`: `SPACETIME_MAINCLOUD_URI`, `SPACETIME_DB_NAME`)
-- `server/spacetime.json` sets the default server (maincloud) and database name.
+- [Features](#features)
+- [Architecture](#architecture)
+- [Quick start (local, no API key)](#quick-start-local-no-api-key)
+- [Using the real forge](#using-the-real-forge)
+- [Deploying](#deploying)
+- [Testing](#testing)
+- [Video pipeline](#video-pipeline)
+- [Configuration reference](#configuration-reference)
+- [Controls](#controls)
+- [Troubleshooting](#troubleshooting)
+- [Project structure](#project-structure)
+- [Further reading](#further-reading)
 
-### One-time setup
+## Features
 
-```bash
-curl -sSf https://install.spacetimedb.com | sh -s -- -y   # installs ~/.local/bin/spacetime
-export PATH="$HOME/.local/bin:$PATH"
-spacetime login                                          # browser login, needed for maincloud
-pnpm install
+- **Closet, then Forge.** New players start in the Closet (outfit), then the Forge (weapon), then
+  deploy. Both editors stream the design in as it is generated, and support keep / lock / reject /
+  reprompt. You can reopen them from the landing screen, the Esc menu and the death screen.
+- **Generated weapons.** The LLM writes a JSON design in the Forge DSL (`shared/src/forge/`):
+  name, class, fire mode, stats, palette, effects and up to 24 components built from primitive
+  shapes or catalog parts. `sanitizeDesign()` makes any input legal (sizes, triangle budget,
+  floating parts) and `clampWeapon()` balances it.
+- **Balance.** Per-class stat bounds, max 95 damage per body shot (direct plus damage over time,
+  so nothing one-shots from 100 HP), a sustained DPS budget of 55 (melee 80 at close range,
+  streams up to 70 at short range), headshot multipliers of 1 to 3, range falloff, and splash,
+  slow and knockback all costing budget. What you carry sets your move speed (carry weight).
+- **Generated outfits with fair hitboxes.** Armour pieces are cosmetic. Body size drives the
+  hitbox and max HP (`100 x area^0.75`, clamped to 70..140), so a big body is easier to hit but
+  takes more damage. Details in [docs/characters.md](docs/characters.md).
+- **Elements.** Weapons can carry fire, ice, poison or shock effects (`shared/src/elements.ts`),
+  applied by the server on hit.
+- **TAURON Arena map.** The active map is `tauron-remake`, a procedural model of TAURON Arena
+  Krakow built entirely in code: an oval bowl around a 72 x 46 m event floor, two seating tiers,
+  a concourse ring, tunnels, stage and roof, with about 13,000 instanced seats. All textures are
+  drawn on canvases at load time; the map ships as a small JS chunk.
+- **Health pack.** One pack in the middle of the stage heals +50 HP (capped at your max HP) and
+  respawns after 60 s. The server validates the pickup against your position.
+- **Multiplayer at 60 Hz.** Movement is client-authoritative and sent at 60 Hz while moving near
+  others (30 Hz when nobody is near or the server is crowded, 10 Hz when only looking, nothing
+  when idle). Shots are validated server-side against fire rate, ammo, range and the victim's
+  recent poses (lag compensation, capped).
+- **Players online.** The landing screen shows how many players are online.
+- **Touch and gamepad.** On-screen controls on touch devices (or with `?touch=1`) and full
+  gamepad support (sticks, triggers, aim slowdown, configurable deadzone and curve).
+- **Prompt cache.** The first design forged from a given prompt is stored; typing the same
+  prompt later shows it instantly and counts a use ("First forged by X" / "Forged by X, N uses").
+  The forge service also keeps an in-memory cache that replays repeat prompts without a model call.
+- **Profanity filter.** Names, prompts and part names are filtered (English and basic Polish,
+  leetspeak folded, whole words only) in the module and in the forge before a prompt reaches the
+  model.
+- **Telemetry and reconnect.** Production clients report crashes, WebGL context loss and similar
+  events to the forge service. The client shows a status banner and reconnects when the
+  connection drops, and checks `/version.json` to detect a stale build.
+
+## Architecture
+
+```
+                  WebSocket (subscriptions + reducer calls)
+  Browser client  <------------------------------------------->  SpacetimeDB module
+  (client/)                                                       (server/, Maincloud db
+    |                                                              prompt-wars-63xhe)
+    | POST /api/forge/generate, /api/forge/outfit (NDJSON stream)
+    v
+  Forge service (forge/)  ----------->  Anthropic Messages API (claude-haiku-4-5)
+  127.0.0.1:8787                        (mock mode when no API key is set)
 ```
 
-### Local dev
+The client asks the forge for a design, renders it as it streams in, then registers the final
+design with the SpacetimeDB module (`register_design`, `register_outfit`). The module re-sanitizes
+and re-balances it with the same `shared` code before storing it, so the client and the forge are
+never trusted for stats.
+
+In production, Caddy serves the static client and proxies `/api/forge/*` to the forge on
+127.0.0.1:8787 (systemd unit `ai-gaem-forge`). In development, Vite proxies `/api/forge/*`
+(see `FORGE_PROXY` below).
+
+| Package | Path | What it is |
+| --- | --- | --- |
+| `client` | `client/` | Vite + TypeScript + Three.js + Rapier game client, menus, Closet / Forge editors, Playwright e2e tests, load test |
+| `@ai-gaem/shared` | `shared/` | Code shared by all packages: Forge DSL and sanitizer, balance (`clampWeapon`), elements, outfits, pickups, maps, hit validation, profanity filter |
+| `@ai-gaem/server` | `server/` | SpacetimeDB 2.10 TypeScript module: tables, reducers, hit validation, world seeding |
+| `@ai-gaem/forge` | `forge/` | Node 22 service (plain `node:http`) that streams weapon and outfit designs as NDJSON from Claude, with a template-based mock |
+| `@ai-gaem/parts` | `parts/` | Weapon part library (`catalog.json`), templates, assembly, and a part gallery |
+| `@ai-gaem/video` | `video/` | Promo video pipeline: Playwright capture of the real client plus Remotion compositions |
+
+## Quick start (local, no API key)
+
+This runs everything on your machine: a local SpacetimeDB, the forge in mock mode and the client.
+No API key is needed and nothing touches the live game.
+
+### Prerequisites
+
+- **Node.js 22 or newer** (the forge requires `>=22`; the map scripts under `client/scripts/map`
+  run `.ts` files directly, which needs a Node version with type stripping on by default, 22.18+).
+- **pnpm** (the workspace uses `pnpm-workspace.yaml`; developed with pnpm 11).
+- **SpacetimeDB CLI 2.10**:
+
+  ```bash
+  curl -sSf https://install.spacetimedb.com | sh -s -- -y   # installs ~/.local/bin/spacetime
+  export PATH="$HOME/.local/bin:$PATH"
+  spacetime --version
+  ```
+
+### Steps
 
 ```bash
-spacetime start                                          # terminal 1: local server on :3000
-cd server
-pnpm publish:local                                       # sync part catalog, build, publish to local
-pnpm generate                                            # regenerate client/src/module_bindings
+# 1. install dependencies
+pnpm install
+
+# 2. terminal 1: start a local SpacetimeDB on :3000
+spacetime start
+
+# 3. terminal 2: build and publish the module to the local server
+pnpm --filter @ai-gaem/server publish:local
+
+# 4. terminal 3: run the forge in mock mode on 127.0.0.1:8787 (no ANTHROPIC_API_KEY set)
+pnpm --filter @ai-gaem/forge dev
+curl http://127.0.0.1:8787/api/forge/health      # reports mock mode
+
+# 5. terminal 4: run the client, with /api/forge pointed at the local forge
+FORGE_PROXY=http://127.0.0.1:8787 pnpm dev
+```
+
+Then open **http://localhost:5173/?server=local**.
+
+Notes:
+
+- Without `FORGE_PROXY`, the dev server proxies `/api/forge/*` to the **live** forge, and real
+  generations there cost API credits. Set it for local work.
+- Without `?server=local`, the client connects to the Maincloud database (the live game).
+- `pnpm --filter @ai-gaem/server publish:local` runs `sync-catalog` first, which bundles the part
+  catalog and recipes into the module. Republish after changing the catalog or the module.
+- After changing tables or reducers, regenerate the client bindings:
+  `pnpm --filter @ai-gaem/server generate` (writes `client/src/module_bindings/`, which is committed).
+- For a quick look with no server at all: `http://localhost:5173/?offline=1` (single player,
+  optional `&bots=3`).
+
+Useful local commands:
+
+```bash
 spacetime logs --server local prompt-wars-63xhe -f
 spacetime sql  --server local prompt-wars-63xhe "SELECT * FROM player"
-```
-
-Point the client at local with `?server=local` (or `VITE_SPACETIMEDB_HOST=ws://localhost:3000`).
-
-### Publish to Maincloud
-
-```bash
-cd server
-pnpm publish:maincloud                                   # = sync-catalog + spacetime publish --server maincloud prompt-wars-63xhe
-pnpm generate                                            # after any schema/reducer change
-```
-
-Schema changes are automatic migrations (added tables / columns with defaults, no data wipe); the
-CLI warns that connected clients will be disconnected, and old client builds are incompatible with
-changed reducers, so redeploy the client at the same time.
-
-If the database ever pre-dates the module (init never ran), call `claim_admin` once from your
-logged-in identity: `spacetime call --server maincloud prompt-wars-63xhe claim_admin`.
-
-### LLM weapon generation
-
-`generate_weapon` is a SpacetimeDB *procedure* that calls the Anthropic Messages API from inside
-the module (`ctx.http.fetch`). The key lives in a private `config` table, set by the admin
-(the identity that published / claimed admin):
-
-```bash
-spacetime call --server maincloud prompt-wars-63xhe set_api_key '"sk-ant-..."'
-spacetime call --server maincloud prompt-wars-63xhe set_llm_model '"claude-haiku-4-5-20251001"'   # default
-```
-
-Templates: the 20k-template library (`@ai-gaem/parts` `searchTemplates`) is too big for the module,
-so the client searches it with the player's prompt and passes the best <= 5 matches as compact JSON
-(`generate_weapon(prompt, weaponClass, templatesJson)`, shape in `shared/src/templates.ts`). The
-server re-validates their part ids against the synced catalog, picks the class from the best
-template (unless one was requested), and uses them as few-shot examples in the LLM prompt. Melee
-results keep the template's `melee` meta (swing / reach / weight) so animations match.
-
-Without a key, `generate_weapon` turns the best template into the weapon (class preset stats
-scaled by its `statHints`, its parts and melee meta, then `clampWeapon`); with no templates it
-rolls a random (still balanced) weapon with a random class recipe. Parts are drawn
-from `parts/catalog.json`; `server/scripts/sync-catalog.mjs` bundles a compact copy of the catalog
-plus the recipes (`parts/src/recipes.ts`) into the module on every build/publish, so **republish
-after the catalog changes**.
-
-### World seeding
-
-On init / every connect (`seedWorld`, idempotent): 14 preset weapons (one per class; presets with no
-parts get their class's first recipe) and the 8 TEST MAP spawn points (`TEST_MAP_SPAWN_POINTS` in
-`@ai-gaem/shared`, also used by the client's test map; the old placeholder ring is migrated
-automatically). It also deletes any leftover `tick_timer` rows (the old always-on 4 Hz tick).
-
-**Pickups**: the active map's `MapDef.pickups` (tauron-remake: one health pack in the middle of the
-stage) are synced into the public `pickup` table the same way. `take_pickup(id)` (the client calls it
-when the local player overlaps a pack) checks the caller's server pose (1.5 m) and HP < 100, heals +50
-(capped), marks it unavailable and schedules a one-shot `pickup_timer` row that brings it back after
-`respawnSecs` (60 s); `pickup_event` drives the heal feedback. Tests shorten the delay with the admin
-reducer `set_pickup_respawn <seconds>` (see `client/e2e/pickups.spec.ts`; reset it to 60 afterwards).
-New players start **forging**: `alive = false`, no weapon, `needsLoadout = true`; `respawn` is refused
-until they `register_design` (or `equip_weapon` a preset). Respawning without "keep loadout" still rolls
-a random preset. See "Forge" below.
-
-### Tables and cost
-
-SpacetimeDB bills per reducer call and per byte written / broadcast, so the hot paths are kept small:
-
-| Table | Visibility | What |
-| --- | --- | --- |
-| `player` | public | rarely-changing state: name, online, hp, alive, kills, deaths, weaponId, respawnAt, slow, `slot`; `x/y/z/yaw` = spawn / resume point. Some columns are legacy (ammo, reload, dot, crouching...): an automatic migration can't drop columns, they are just no longer written |
-| `player_pose` | public | hot: one ~45-byte row per online player keyed by a u32 `slot` (assigned on connect): position, yaw/pitch, velocity, flags (crouch / grounded / teleport / melee block), sender clock `sendT` |
-| `player_combat` | private | ammo, reload, fire-rate token bucket, previous pose + timestamps (lag compensation), DoT, `lastSwingAt` (melee charge bound). One row per online player |
-| `weapon` | public | presets + generated weapons; clients subscribe to presets and fetch other rows on demand by id |
-| `shot` | private | recent projectile shots (for `report_hit`); expired rows are cleaned up inside `fire` |
-| `dot_timer` | private, scheduled | one row per victim while a damage-over-time effect is active (250 ms ticks, deleted on expiry) |
-| `shot_event`, `hit_event` | public events | remote shot visuals (+ melee `charge` / `combo` for the third-person swing), damage / kills (+ `blocked`) |
-| `tick_timer` | private | legacy, always empty (kept so the auto-migration doesn't have to drop a table) |
-| `forged_prompt` | public | prompt cache: normalized prompt -> first design forged from it (`designId`, `firstBy`, `firstName`, `uses`) |
-
-There is no always-on scheduled reducer: an idle server does nothing. Slows expire client-side
-from `slowUntil`. Clients subscribe to `player`, `player_pose`, `spawn_point`, the event tables and
-preset weapons only (not `subscribeToAllTables`), with `withConfirmedReads(false)`.
-
-### Melee
-
-Melee weapons carry `melee: { swing: 'slash'|'overhead'|'thrust'|'bash'|'spin', reach, weight }`
-(`shared/src/melee.ts`; `clampWeapon` always sets it for melee, inferring it from the name / parts /
-stats when missing; reach is the template's hand -> tip length, 0.3-3 m). Hit reach (eye ->
-impact) = reach + 0.75 m arm, clamped to 1.2-3 m, so tiny objects still connect.
-
-- Timing by weight: light 0.35 s, medium 0.55 s, heavy 0.9 s per swing (charged x1.35, slash
-  finisher x1.15); the swing rate is min(fireRate, 1 / swing time) (token bucket, `effectiveFireRate`).
-  Phases (`MELEE_PHASES`): anticipation -> strike window (hits swept only here) -> follow-through ->
-  recovery.
-- Slash: 3-hit combo (right->left, left->right, wide finisher) when the next swing starts within
-  0.45 s of the previous one ending.
-- Heavy attack (right mouse / LT, hold up to 1 s): damage x(1 + 0.75 charge), +25% reach, slower;
-  charged hits are capped at 75 body / 100 head (never below the plain hit). The server grants
-  at most (time since the last swing + 0.15 s) / 1 s of charge (`grantedCharge`, `lastSwingAt`).
-- Block (F / RB; right mouse with shields): 40% damage from melee hits inside the front 120 deg
-  cone, 55% move speed, no knockback; replicated as `POSE_FLAG_BLOCK`; only counts while holding a
-  melee weapon.
-- Hits: during the strike window the client sweeps the swing arc every frame with 0.1 m sphere
-  casts spaced <= 3 deg apart (`sampleMeleeArc`), each target once per swing, head zone counts.
-  All hits of a swing go out in one `fire(seq, origin, dir, hits, charge, combo)` (sent when the
-  strike window closes). The server checks origin near the attacker's eye (1 m + speed x 0.15 s),
-  eye -> impact <= charged reach + 0.4 m, impact on the swept hitbox (round 2), applies
-  `meleeHitDamage` (block x0.4) and knockback x(1 + charge) (heavy x1.2, max 15 m/s).
-- Feel: procedural keyframed viewmodel (`client/src/weapons/meleeAnim.ts`), 70 ms hit-stop,
-  camera punch / shake by weight, blade vs blunt impact sounds, stylized star + spark impacts,
-  forward lunge on heavy / charged hits. Remote players play the matching third-person swing
-  (arm / torso keys, skipping the wind-up), a gun recoil pose, block pose and crouch.
-
-### Balance
-
-`clampWeapon()` in `shared/src/balance.ts` runs on every stored weapon: per-class templates and
-bounds, max 95 damage per shot (direct + DoT, so no one-shots from 100 HP), shots over 60 damage
-limited to 0.8/s, sustained DPS budget 55 (melee 80 at <= 3 m, streams up to 70 at short range),
-with splash / slow / knockback costing budget. Tests: `pnpm --filter @ai-gaem/shared test`.
-
-Headshots: every weapon has a `headshotMultiplier` in [1, 3] (class bounds: default 2, sniper 2.5
-(2-3), SMG/LMG 1.75, blowgun 1.5, shotgun 1 (max 1.25); forced to 1 for streams and anything with
-splash). Head damage per shot = min(body * multiplier, 150) (`zoneDamage`), so body shots stay
-<= 95 while a sniper headshot one-taps.
-
-Range falloff (`rangeFalloff`, hitscan + streams): full damage to 60% of the weapon's range, then
-linear down to 75% at max range. Fire rate is a token bucket (`spendFireCredit`): credits refill at
-the weapon's rate, a shot costs 1, the bucket holds `max(1.5, 1 + 0.25 s * rate)` so network
-bunching is tolerated while the long-run rate stays exact (1.5, not 2, so heavy weapons can't
-double-tap).
-
-Hit validation (`shared/src/hitcheck.ts`, favor-the-shooter with a cap): the server keeps each
-victim's previous pose and its timestamp; a direct hit is accepted if the impact point is on the
-victim's hitbox anywhere along previous -> current pose within the last 250 ms, with tolerance
-0.3 m + victim speed x 0.25 s. A claimed head hit must be within the head sphere (crouch-aware,
-+-0.3 m vertical, 0.5 m horizontal + the speed term), otherwise it counts as a body hit; an impact
-that isn't on the body at all is rejected.
-
-### Forge (LLM-designed weapons)
-
-Weapons are designed from scratch by an LLM in the **Forge DSL** (`shared/src/forge/`): a JSON
-`ForgeDesign` = name, class, fireMode, balanced `stats`, `palette`, `fx` hints and up to 24
-`components` (parent / anchor / transform, built from primitive `shapes` or catalog parts).
-`sanitizeDesign()` makes any input legal (limits, sizes, triangle budget, floating parts, balance via
-`clampWeapon`); `applyEdit()` / `mergeReprompt()` implement lock / reject / replace / reprompt;
-`buildDesign()` (`@ai-gaem/shared/forge/build`, THREE) renders it.
-
-- Forge service `forge/` (Node 22, plain `node:http`): `POST /api/forge/generate` streams NDJSON
-  events (`start`, `meta`, `component`..., `stats`, `done`, `error`, `end`, each tagged with `variant`)
-  from the Anthropic API (`FORGE_MODEL`, default `claude-haiku-4-5-20251001`), or from a template-based
-  mock without `ANTHROPIC_API_KEY`. Rate limit 20 generations / 10 min per IP and per identity.
-  `pnpm --filter @ai-gaem/forge dev | test | integration | samples`; deploy with `./scripts/deploy-forge.sh`
-  (systemd `ai-gaem-forge` on 127.0.0.1:8787, env `/etc/ai-gaem-forge.env`, Caddy `/api/forge/*`).
-- SpacetimeDB: `register_design(designJson, prompt, fresh)` re-sanitizes and stores the design in
-  `weapon.design` (`weapon.json` stays the balanced Weapon) and the prompt in `weapon.prompt`,
-  equipping it while dead. `fresh` = forged straight from the prompt (no previous design, locks or
-  rejects): the first such design per normalized prompt (`normalizePrompt`: lowercase, punctuation
-  -> space, collapsed whitespace) becomes its `forged_prompt` row, later ones count a use.
-- Prompt cache: typing a prompt that is already in `forged_prompt` (no locks / rejects, one variant)
-  shows that design instantly ("Cached"); equipping it calls `use_forged(norm)` (counts a use, equips
-  the original weapon row, no new row). Weapon cards show **First forged by X** for the first forger
-  and **Forged by X · N uses** for everyone else. The forge service also keeps an in-memory LRU of
-  plain prompts (`FORGE_CACHE_MAX`, default 500, 0 = off) and replays hits without a model call or
-  rate-limit cost. `?nocache=1` skips the client-side lookup.
-- Closet (outfits, see `docs/characters.md`): `POST /api/forge/outfit` streams an Outfit DSL
-  (body proportions + armour pieces on humanoid sockets; same limiter / cache as weapons).
-  `register_outfit(outfitJson, prompt)` / `equip_outfit(outfitId)` (only while dead) store and wear
-  it; the server derives max HP (70..140), hitbox scale and move speed from the sanitized body.
-  Pieces are cosmetic. Opened from the landing, Esc menu, death screen and after the first forge.
-- Death screen, kill feed chip and Tab scoreboard show the killer weapon's original prompt.
-- Profanity filter (`@ai-gaem/shared` `censorText`, English + Polish basics, leetspeak / diacritics /
-  repeated letters folded, whole words only so "Scunthorpe" / "assassin" pass): offending words
-  become asterisks in `set_name`, `register_design` (prompt, weapon / part names),
-  `generate_weapon`, `register_weapon`, and in the forge service before the prompt reaches the model.
-  `request_redeploy()` (Esc menu) kills you without kill credit (a death only if damaged) so you can
-  switch loadout; respawn after 3 s.
-- Client SDK (not wired in yet): `client/src/forge/forgeClient.ts` (`streamForge`, `ForgeSession`).
-
-## Client
-
-Vite + TypeScript + Three.js + Rapier (`@dimforge/rapier3d-compat`) in `client/`.
-Multiplayer via SpacetimeDB (`SpacetimeNetClient`, default) or single-player (`OfflineNetClient`,
-`?offline=1`), both behind the `NetClient` interface in `src/net/`. Weapons use the shared
-`Weapon` schema from `@ai-gaem/shared`; models are assembled from the `@ai-gaem/parts` library.
-
-### Multiplayer
-
-```bash
-pnpm dev                                   # http://localhost:5173 -> Maincloud prompt-wars-63xhe
-# local server instead:
-spacetime start                            # terminal 1
-pnpm --filter @ai-gaem/server publish:local
-open "http://localhost:5173/?server=local"
-```
-
-| URL param | Effect |
-| --- | --- |
-| *(none)* | Maincloud `wss://maincloud.spacetimedb.com`, db `prompt-wars-63xhe` |
-| `?server=local` | `ws://localhost:3000` (local `spacetime start`), same db name |
-| `?server=wss://host` | any SpacetimeDB host |
-| `?db=name` | database override |
-| `?offline=1` | no server (`OfflineNetClient`, optional `?bots=3`, `?map=`) |
-| `?name=Alice` | display name (`set_name`) |
-| `?fresh=1` | ignore the stored token -> new identity |
-| `?music=0` | mute the procedural lobby music |
-
-### Lobby music
-
-The menus play **procedurally composed indie music** (`client/src/audio/Music.ts`) — no audio files.
-Each time it starts it randomises the key, mode (major/minor/dorian/lydian/pentatonic), tempo and
-chord progression, and re-rolls the arpeggio/melody every 4 bars, so it never quite repeats. Layers:
-soft pad chords, a plucked arpeggio, bass, brushed drums and a sparse lead, through a lowpass +
-feedback delay. It plays on the landing / pause / death / forge screens and fades out during a match;
-it honours the master volume and `?music=0`.
-
-The auth token lives in `sessionStorage`, so **each browser tab is a separate player** (a reload
-keeps your identity). Multiplayer plays the active map — `ACTIVE_MAP_ID` in `shared/src/maps.ts`,
-which defaults to the procedural TEST MAP — and you spawn at one of the server's `spawn_point` rows
-for that map (see [Venue map](#venue-map)).
-
-How it plays: movement is client-authoritative. `update_transform(x, y, z, yaw, pitch, vx, vy, vz,
-flags, sendT)` goes out from the fixed physics step: 20 Hz while moving, 10 Hz while only looking
-around, nothing while idle (no heartbeat), immediately on discrete changes (start / stop, jump /
-land, crouch, teleport); 2 Hz (+ the final stop) while nobody else is online (`PoseSender`).
-Hitscan, stream and melee shots are one call each: `fire(seq, origin, dir, hits[])` where `hits`
-lists each remote player the local raycast hit (head sphere + body capsule, lowered while
-crouched): `{slot, zone, ix, iy, iz, pellets}`. Projectile / arc weapons call `fire` and later
-`report_hit(seq, slot, pellets, impact, zone)` when the projectile lands. The server validates fire
-rate / ammo / range / hit position against the stored weapon and the victim's recent poses and
-applies damage. HP, death, kills/deaths, slow and knockback come from the `player` row and
-`hit_event` (aggregated floating damage numbers, kill-confirm X + chime); other players' shots are
-drawn from `shot_event`; the kill feed comes from `hit_event.killed`. Remote players are
-interpolated humanoids with name tags and HP bars, hidden while dead.
-
-Interpolation (`client/src/net/interp.ts`) runs on the *sender's* clock: each pose row is one
-snapshot (only rows that changed), the clock offset is min(arrival - sendT) over ~2 s, the delay
-target is 2 x send interval + p95 jitter (80-200 ms) and playback converges at 0.95-1.05x speed
-instead of jumping; positions use Hermite curves from the sent velocity, extrapolate along it for
-<= 150 ms when the buffer runs dry, and snap on teleports / respawns / jumps > 3 m. F3 shows RTT,
-interpolation delay / target, jitter, send rate, buffered snapshots and per-reducer call counts.
-On death: **Keep loadout** waits for `respawnAt` and calls `respawn(true)`; **Generate new weapon**
-calls the `generate_weapon` procedure with your prompt (auto-equipped while dead), shows the
-result's name and stats, then respawns with it.
-
-### E2E tests (Playwright)
-
-```bash
-pnpm e2e                 # starts a local SpacetimeDB if :3000 is free, publishes, runs Vite + Playwright,
-                         # stops the server it started. Extra args go to Playwright: pnpm e2e --grep cooldown
-pnpm e2e:maincloud       # smoke test (a) against Maincloud (publish there first if the server changed)
-```
-
-Tests live in `client/e2e/` (two browser contexts, headless Chromium with SwiftShader WebGL) and
-drive the game through `window.__game` (`getState()`, `teleport`, `aimAt(id)`, `aimAtHead(id)`,
-`lookAt`, `fireOnce`, `reload`, `setCrouch`, `setAds`, `setPerfectAim`, `reportHitRaw`,
-`holdHitmarker`, `setAutoMove`, `traceRemote`, `equipPreset`, `netStats`) instead of mouse look:
-
-- **a** both players see each other; moving A is reflected on B (`@smoke`)
-- **b** A kills B with the pistol: HP drops by exactly the server's per-shot damage, kill feed on
-  both, kills/deaths updated, dead player hidden
-- **c** death screen: Keep loadout respawns after the delay with the same weapon; Generate new weapon
-  (`"a bubble gun that traps people"`) returns a new bubble gun whose stats are clampWeapon-stable,
-  with a multi-mesh viewmodel built from library parts, also visible in B's hand on A's screen
-- **d** firing 10 shots in 450 ms (local cooldown bypassed) only lands what the server's fire-rate
-  token bucket allows
-- **e** headshots: a client-raycast head hit does `damage * headshotMultiplier`, a body hit plain
-  damage (and a floating damage number), a forged head hit at the feet (`reportHitRaw`) is
-  downgraded to body damage; the headshot kill shows the kill-confirm X and the kill-feed headshot
-  icon on both screens (gold hitmarker screenshot)
-- **f** crouch: B's crouch replicates (pose row + A renders B crouched, head hitbox lowered);
-  a forged standing-height head hit on a crouched B is rejected, a forged one at the knees is body
-  damage, a real crouched headshot counts; standing up replicates; ADS zooms the FOV and tightens
-  spread (screenshot)
-- **g** netcode: idle clients send nothing; A walks a circle at 4.5 m/s and B's rendered position is
-  sampled every frame for 3 s: no holds, no rushes, per-frame speed within +-30% of the mean
-  (measured ~+-4%); 20 `update_transform`/s while moving; reducer call rates are logged; F3
-  overlay screenshot
-- **h** blowgun (projectile -> `report_hit`) direct hit + damage over time from the per-victim
-  `dot_timer` (exact total, timer row gone afterwards, no `tick_timer`)
-
-`client/e2e/melee.spec.ts` (two more players):
-
-- **i** melee preset: a swing at 1.5 m does exactly the server damage and replicates (B sees A's
-  slash); beyond reach the sweep finds nothing and a forged hit is rejected; A saw B's gun recoil
-- **j** charged swing (after > 1 s) does more damage, within the 75 body cap
-- **k** block: 40% from the front, full damage from behind; block flag replicates (screenshots)
-- **l** "Generate new weapon" from templates: "grandma's umbrella sword" -> umbrella sword (thrust,
-  umbrella parts, melee meta) that hits; sledgehammer (overhead), frying pan (bash), nunchucks (spin);
-  first-person + third-person screenshots of every swing type mid-strike (`l-*.png`)
-- **m** fake gamepad moves / looks, T autorun, trackpad mode preset + hint toast
-
-Screenshots of every step go to `client/e2e/screenshots/` (`maincloud-*` for the smoke run). The
-Playwright config uses Playwright's Chromium if installed (`npx playwright install chromium`),
-else the newest cached Chrome for Testing in `~/Library/Caches/ms-playwright`, or `PW_CHROMIUM_PATH`.
-
-### Dev commands
-
-```bash
-pnpm install
-pnpm dev                          # = pnpm --filter client dev  -> http://localhost:5173
-pnpm --filter client build        # tsc --noEmit + vite build
+pnpm --filter client build          # tsc --noEmit + vite build -> client/dist/
 pnpm --filter client typecheck
 ```
 
-URL params:
+## Using the real forge
 
-- `?map=/maps/venue.glb` load a GLB map (put files in `client/public/maps/`, or on the bucket/CDN
-  set by `VITE_MAP_BASE_URL`). Colliders come from `venue_collision.glb` next to it if present,
-  otherwise from the visual mesh (trimesh). Falls back to the procedural test map if the file is
-  missing.
-- `?bots=3` simulated remote players (offline) to exercise `RemotePlayers` interpolation.
+The forge switches from mock to live mode when `ANTHROPIC_API_KEY` is set in its environment.
+Never commit the key or paste it into files in the repo.
 
-### Controls
+```bash
+export ANTHROPIC_API_KEY=<your-anthropic-api-key>
+export FORGE_MODEL=claude-haiku-4-5-20251001     # optional, this is the default
+export FORGE_RATE_LIMIT=100                       # optional, generations per window per IP and per identity
+export FORGE_RATE_WINDOW_MS=600000                # optional, window length (10 min)
+pnpm --filter @ai-gaem/forge dev
+```
 
-| Key | Action |
+`curl http://127.0.0.1:8787/api/forge/health` should now report live mode. Point the client at it
+with `FORGE_PROXY=http://127.0.0.1:8787 pnpm dev` as above.
+
+Repeat prompts are served from the forge's in-memory cache (`FORGE_CACHE_MAX`, default 500
+entries, `0` turns it off) without a model call or rate-limit cost. Set `FORGE_DEBUG_RAW=1` to log
+the raw model output. See the [configuration reference](#configuration-reference) for the rest.
+
+Forge scripts:
+
+```bash
+pnpm --filter @ai-gaem/forge test          # vitest
+pnpm --filter @ai-gaem/forge integration   # end-to-end against a running forge (FORGE_URL) and SpacetimeDB (STDB_URL, STDB_DB)
+pnpm --filter @ai-gaem/forge samples       # generate sample designs (FORGE_URL)
+pnpm --filter @ai-gaem/forge build         # bundle dist/server.mjs (used by the deploy)
+```
+
+## Deploying
+
+The live game has three parts: the SpacetimeDB module on Maincloud, the static client on a VPS
+behind Caddy, and the forge service on the same VPS. The deploy scripts SSH to the game VPS; set
+`DEPLOY_HOST=user@host` to target a different machine.
+
+### Server module (Maincloud)
+
+```bash
+spacetime login                                     # once, browser login
+pnpm --filter @ai-gaem/server publish:maincloud     # sync-catalog + publish to prompt-wars-63xhe
+pnpm --filter @ai-gaem/server generate              # only if tables or reducers changed
+```
+
+> **Warning:** never pass `-c` / `--delete-data` (or any other clear flag) when publishing to
+> Maincloud. It destroys all player, weapon, outfit and prompt-cache data in the live database.
+> The publish scripts use `--yes`, which only skips confirmation prompts; it does not delete data.
+
+Schema changes are applied as automatic migrations (new tables, new columns with defaults). The
+CLI disconnects connected clients, and old client builds are incompatible with changed reducers,
+so deploy the client at the same time.
+
+If the database pre-dates the module (init never ran), claim admin once from your logged-in
+identity: `spacetime call --server maincloud prompt-wars-63xhe claim_admin`.
+
+Dashboard: https://spacetimedb.com/prompt-wars-63xhe
+
+### Client
+
+```bash
+./scripts/deploy.sh        # also available as: pnpm deploy
+```
+
+Builds the client and rsyncs `client/dist/` to the VPS (Caddy serves it with precompressed
+brotli / gzip). Hashed assets go up first and old ones are kept for 14 days, so players on an older
+`index.html` can still load their chunks; `index.html` goes last. The build writes
+`version.json`, which running clients poll to detect that a newer build is live.
+
+### Forge
+
+```bash
+./scripts/deploy-forge.sh
+```
+
+Bundles `forge/dist/server.mjs`, uploads it, installs Node 22 on the VPS if missing, and (re)writes
+the systemd unit `ai-gaem-forge` listening on 127.0.0.1:8787. It also makes sure Caddy has a
+`/api/forge/*` reverse-proxy block first in the Caddyfile (validated before reload, restored on
+failure), then checks `/api/forge/health`.
+
+Configuration lives in `/etc/ai-gaem-forge.env` on the VPS. The script **never overwrites** that
+file: it creates it if missing (with an empty `ANTHROPIC_API_KEY`, which means mock mode) and
+only appends keys that are absent. To go live or change settings, edit that file on the VPS and
+run `systemctl restart ai-gaem-forge`. The script prints only key names, never values.
+
+### Crash logs
+
+Production clients send crash telemetry to the forge (`POST /api/forge/telemetry`), which appends
+it to a size-capped log on the VPS. Read it with:
+
+```bash
+./scripts/client-errors.sh               # last 50 reports
+./scripts/client-errors.sh -n 200        # last 200
+./scripts/client-errors.sh -f            # follow live
+./scripts/client-errors.sh -g <pattern>  # filter by name, message, GPU, ...
+./scripts/client-errors.sh -k contextlost   # one report kind (error, rejection, contextlost, wasm, ws, mem, fps, ...)
+./scripts/client-errors.sh --summary     # counts per kind, player and GPU
+./scripts/client-errors.sh --raw         # raw JSONL
+```
+
+## Testing
+
+### Unit tests
+
+```bash
+pnpm --filter @ai-gaem/shared test    # balance, forge DSL, outfits, pickups, maps (TAURON spawns, closed shell, climbable routes)
+pnpm --filter @ai-gaem/forge test
+pnpm --filter @ai-gaem/parts test
+pnpm --filter client test:scripts     # map processing scripts (node --test)
+```
+
+Typecheck any package with `pnpm --filter <package> typecheck`.
+
+### End-to-end (Playwright)
+
+```bash
+pnpm e2e                    # full local run
+pnpm e2e --grep cooldown    # extra args go to Playwright
+pnpm e2e:maincloud          # @smoke tests against Maincloud (publish there first if the module changed)
+```
+
+`pnpm e2e` (`client/e2e/run.mjs`) starts a local SpacetimeDB if nothing is listening on :3000,
+publishes the module, starts a mock forge on :8788 (it refuses to run against a forge that has an
+API key), runs Playwright (which starts Vite), and stops whatever it started. Tests drive the game
+through `window.__game` instead of mouse input, with two or more browser contexts on headless
+Chromium.
+
+Specs in `client/e2e/`:
+
+| Spec | Covers |
 | --- | --- |
-| Click | lock mouse / play |
-| WASD | move (Source-style accel + friction: walk 4.5 m/s) |
-| T | autorun (W or S cancels; A / D still strafe) |
-| Shift | sprint, forward only (6.5 m/s, +6° FOV; firing cancels it; hold or toggle in settings) |
-| C / Ctrl | crouch (hold, or toggle in settings): 2.2 m/s, 1.2 m tall, tighter spread; crouch in the air to tuck your legs (crouch-jump) |
-| X | slide — keeps your current momentum (faster entry slides further), low friction, drops you low; slide into a jump to carry speed |
-| Space | jump (1.1 m, 100 ms coyote time + 100 ms buffer) |
-| Mouse / LMB | look / fire (hold for auto) |
-| RMB | aim down sights (hold or toggle): ~0.75x FOV (sniper 0.4x scope), centred viewmodel, less spread, 62% move speed. Melee: hold to charge a heavy attack (shields: block) |
-| LMB (melee) | swing (slash weapons: 3-hit combo) |
-| F | melee block |
-| Gamepad | left stick move, right stick look (deadzone + curve + sensitivity in settings, aim slowdown over enemies), RT fire, LT aim / heavy, A jump, B crouch, X reload, L3 sprint, RB block, Start = play / menu (no pointer lock needed) |
-| Arrows / Q E | keyboard turning (trackpad / palm-rejection fallback; speed in settings) |
-| R | reload |
-| 1-0 | debug (offline only): swap sample weapon (rifle, shotgun, rocket, grenade arc, flamethrower stream, sword; 7-0: template katana, sledgehammer, spear, frying pan) |
-| K | debug (offline only): kill yourself (death screen) |
-| M | debug (offline only): open the weapon slot machine (also on the death screen: "Slot machine") |
-| F2 | spawn editor: **P** save current position as spawn, **Backspace** undo, **Delete** clear |
-| F3 | debug overlay (fps, worst frame time, mouse events/s + `(raw)` when raw input is active, position, grounded; net: RTT, interp delay, jitter, send Hz, buffered snapshots, reducer calls) |
-| Esc | release mouse; the pause screen has a **Settings** panel (sensitivity, ADS sensitivity, FOV, key-turn speed, volume, toggle crouch / sprint / aim, invert Y, head bob, gamepad look speed / deadzone / aim slowdown, **Trackpad mode**; saved in `localStorage` `ai-gaem.settings`) |
+| `multiplayer.spec.ts` | seeing each other, kills, death screen, fire-rate limit, headshots, crouch, netcode smoothness, damage over time |
+| `melee.spec.ts` | swings, reach, charged attacks, block, template melee weapons, gamepad |
+| `forge.spec.ts` | Forge flow against the mock forge |
+| `closet.spec.ts` | Closet outfits, body size to HP |
+| `elements.spec.ts` | fire / ice / poison / shock effects |
+| `pickups.spec.ts`, `pickups-offline.spec.ts` | health pack heal, respawn, server validation |
+| `tauron-remake.spec.ts` | walkthroughs of the arena routes, viewpoint screenshots |
+| `mouse-input.spec.ts` | high-rate mouse input in Chromium and Firefox (offline) |
 
-Feel: spread per weapon class (`src/weapons/handling.ts`): base spread x ADS / crouch / movement /
-airborne multipliers + per-shot bloom that recovers over time; recoil is a CS-style aim punch with
-spring recovery (`src/player/CameraRig.ts`, which also does speed-scaled head bob, landing dip and
-FOV). Procedural WebAudio sounds (`src/audio/Sfx.ts`): gunshots by class (remote ones panned and
-attenuated), hit tick, headshot ding, kill chime, footsteps, jump / land, reload.
+Screenshots go to `client/e2e/screenshots/`. Playwright uses its own Chromium if installed
+(`npx playwright install chromium`), otherwise a cached Chrome for Testing, or `PW_CHROMIUM_PATH`.
 
-Trackpad / ThinkPad support (the OS disables the touchpad while keys are held): T autorun,
-**Trackpad mode** preset (toggle crouch / sprint / aim, +25% sensitivity, autorun hint, arrow / Q E
-turning; turning it off restores the previous values). If movement keys are held > 400 ms with no
-mouse movement and the mouse moves right after release, three times, a one-time toast offers it.
+### Load test
 
-Mouse / frame rate: the `mousemove` listener (`src/engine/input.ts`) only sums movementX/Y
-(passive, no allocation, no filtering or rounding), and the sum is applied once per rendered frame
-(`PlayerController.frameInput`), so 1-8 kHz gaming mice lose nothing; physics runs at a fixed 60 Hz
-with render interpolation and rendering follows `requestAnimationFrame`, so the game itself never
-caps the frame rate. **Raw input** (settings, default on) asks for pointer lock with
-`unadjustedMovement` (Chromium: no OS acceleration), falling back to a plain lock where it isn't
-supported. Firefox stuck at 60 FPS on a high-refresh monitor is Firefox's vsync: check
-`about:support` -> Refresh Rate, set `layout.frame_rate` to the monitor rate in `about:config`,
-and `privacy.resistFingerprinting` (LibreWolf / hardened profiles) pins animation to 60 FPS. On
-Linux X11, Firefox emulates pointer lock by warping the cursor, which can drop or lag fast mouse
-motion before it reaches the page; a Wayland session (or a Chromium-based browser) gets real
-relative-pointer deltas. `client/e2e/mouse-input.spec.ts` (offline, no server) streams 1 kHz and
-8 kHz synthetic mouse movement through the real listener in Chromium and Firefox and checks the
-total yaw equals sum(dx) x sensitivity; `node client/e2e/measure-mouse.mjs <url> <browser>` prints
-the same numbers for any build.
-
-Spawn points saved with the editor go to `localStorage` (`ai-gaem.spawns.<mapId>`) and are logged
-as JSON in the console so they can be pasted into code / the server.
-
-### Layout
-
-- `src/engine/` renderer (main scene + viewmodel overlay pass), Rapier init (60 Hz fixed step), input, `Game` loop
-- `src/map/` `loadMap()` (GLB + trimesh colliders), procedural `testMap`, spawn storage
-- `src/player/` kinematic character controller, humanoid placeholder, target dummies
-- `src/weapons/` `Weapon` type (shared schema + id), part registry + built-in kit (`PART_IDS`), `buildWeaponModel()`, fire modes, effects
-- `src/ui/` DOM HUD, death screen, spawn editor, scoreboard
-- `src/net/` `NetClient` interface, `SpacetimeNetClient`, `OfflineNetClient`, `RemotePlayers`
-- `src/module_bindings/` generated SpacetimeDB bindings (`pnpm --filter @ai-gaem/server generate`)
-- `src/testHook.ts` `window.__game` for e2e tests
-- `e2e/` Playwright specs, `run.mjs` orchestrator, screenshots
-
-`buildWeaponModel()`: parts from the `@ai-gaem/parts` library (registered in the part registry)
-are assembled with its `assembleWeapon()`; parts from the built-in kit use the legacy socket
-builder; weapons with no known parts (presets, old rows) use a library recipe for their class.
-Melee weapons (blade toward -Z, handle toward +Z) are tilted blade-up in the viewmodel.
-
-## Procedural arena: `tauron-remake`
-
-`?map=tauron-remake` (also `?offline=1&map=tauron-remake`) loads an **original, procedural model of
-TAURON Arena Kraków**, built in code with no scan data, photos or downloaded textures (all textures
-are drawn on canvases at load time; the map ships as a ~25 kB JS chunk):
-
-- oval bowl around a 72 × 46 m event floor (volleyball court, stage, FOH tower, road cases as cover),
-  lower ring A (15 rows, 33°), cross aisle + glass-fronted boxes (B), upper ring C (15 rows, 35°),
-  ~13,000 instanced seats, vomitories from the cross aisle into a full concourse ring (kiosks, pillars),
-  C stairs from the concourse, four floor-level player tunnels with stairwells up to the concourse,
-  centre-hung scoreboard, lighting truss, catwalk and roof dome; closed shell + invisible bounds.
-- Layout/heights: `shared/src/tauronRemake/layout.ts` (design notes + sources), mesher:
-  `geometry.ts` (watertight column/band interval mesher shared by visuals, colliders and tests),
-  spawns: `spawns.ts` (24: floor 8, tier A 6, tier C 4, concourse 6), three.js build:
-  `client/src/map/tauronRemake.ts`.
-- Tests: `pnpm --filter @ai-gaem/shared test` (spawn validity by raycast, closed shell, climbable
-  routes incl. autostep headroom), `pnpm --filter client exec playwright test tauron-remake`
-  (walkthrough floor → A aisle → vomitory → concourse → C stair → tier C top, and floor → tunnel →
-  concourse; viewpoint screenshots in `client/e2e/screenshots/tauron-remake/`), real-GPU fps:
-  `node client/e2e/tauron-remake-gpu-perf.mjs` against a running Vite on :5181.
-- Sources (facts only): tauronarenakrakow.pl (arena plan: floor 3,900 m², levels 0/A/B/C, ~15,000
-  seated / up to ~22,000; fact sheet seat counts), Wikipedia "Tauron Arena Kraków", and
-  OpenStreetMap way 292867512 (`height=27`) — © OpenStreetMap contributors, ODbL
-  (https://www.openstreetmap.org/copyright). No OSM footprint geometry is used.
-
-## Venue map
-
-The multiplayer map is a GLB derived from a scan of the real venue. This is the whole path from a
-raw capture to spawning players inside the arena.
-
-### Get a scan
-
-- **Phone scan** with Polycam, Scaniverse or Luma, exported as **GLB** or **OBJ**. Capture the
-  whole space in one pass; when it is an OBJ, keep the exported textures next to the `.obj`.
-- **MatterPak** — if the venue has a Matterport tour, the tour owner can export an official
-  **MatterPak OBJ** from that space. Prefer it when it exists: it is already aligned and scaled.
-- **Scrape a public Matterport tour** — when you only have the tour link and need the map for a
-  hackathon, `client/scripts/map/scrape-matterport.mjs` pulls the 50k mesh and its textures straight
-  from the tour page and writes an OBJ:
-
-  ```bash
-  node client/scripts/map/scrape-matterport.mjs eECbFJAzMzz --name tauron-arena
-  # -> scans/tauron-arena/tauron-arena.obj + textures/
-  ```
-
-  It reads the signed asset manifest the `show/` page embeds (valid ~24 h) and decodes the tiled
-  `.dam` mesh (f32 positions/UVs + LEB128 indices). **This downloads someone else's model — only do
-  it for a model you are allowed to use, and do not redistribute the result without permission.**
-
-Put the raw files in `scans/` (repo root). That directory is only a staging area for captures — the
-game never loads anything from it directly.
-
-### Process the scan
-
-`client/scripts/map/process-scan.ts` turns a raw capture into the runtime GLB plus a
-`_collision.glb` sibling that `loadMap()` uses for the Rapier trimesh colliders (the visual mesh is
-far too heavy to collide against). Run it straight with Node — it is erasable TypeScript, which
-Node 26 strips natively.
+A headless netcode load test spreads N bot clients over worker processes, all sending poses at a
+given rate, and measures SpacetimeDB CPU, delivery rate, gaps and latency. It only runs against a
+**local** server (it refuses Maincloud):
 
 ```bash
-# the usual case: a Z-up OBJ (phone scan or Matterport .dam export)
-node client/scripts/map/process-scan.ts scans/tauron-arena/tauron-arena.obj --name tauron-arena --up z
-
-# scanned venues: keep the collision 1:1 with what you can see (defaults decimate to 80k tris and
-# drop islands < 50 tris, which turns walls into swiss cheese)
-node client/scripts/map/process-scan.ts scans/tauron-arena/tauron-arena.obj \
-  --name tauron-arena --up z --collision-tris 400000 --min-island-tris 1
-# -> client/public/maps/tauron-arena.glb + tauron-arena_collision.glb + tauron-arena.meta.json
+spacetime start --listen-addr 127.0.0.1:3100                                       # separate local server
+spacetime publish --server http://127.0.0.1:3100 --module-path server pw-load --yes
+cd client && node scripts/loadtest/run.mjs --port 3100 --db pw-load --n 8,16,32,64 --rate 30,60 --duration 20
 ```
 
-| Flag | Meaning |
+## Video pipeline
+
+`video/` produces the promo material from the real client. Outputs land in `video/out/` and
+`video/public/` (gitignored).
+
+| Command | What it does |
 | --- | --- |
-| `<in.obj\|.glb>` | raw scan to read (positional); OBJ needs its `.mtl` + textures alongside |
-| `--name <id>` | map id; writes `<id>.glb`, `<id>_collision.glb`, `<id>.meta.json` |
-| `--up <y\|z>` | `z` rotates Z-up sources into Y-up (default `y`) |
-| `--out <dir>` | output directory (default `client/public/maps`) |
-| `--visual-tris` / `--collision-tris` | triangle budgets (default 400000 / 80000) |
-| `--min-island-tris <n>` | drop collision islands smaller than n tris (default 50; use 1 to keep everything) |
-| `--no-meshopt` | skip EXT_meshopt_compression on the visual GLB |
-
-A Y-up source goes through the same command without `--up z`. If the processed map comes out lying
-on its side or floating, re-run with the other up axis before digging any deeper. The pipeline logs
-the resulting bbox, triangle counts and file sizes (`tauron-arena`: 265k visual tris / 8.2 MB,
-265k collision tris / 4.9 MB with the 1:1 flags, 193 textures).
-
-### Seal holes (solid collision)
-
-Photogrammetry scans have holes, and a 1:1 collision faithfully keeps them — you can walk through
-walls and fall through the floor. `client/scripts/map/solidify.ts` rebuilds the collision as a
-**watertight voxel shell**: it rasterizes the surface, morphologically closes it (bridging gaps up
-to ~2·close·pitch metres) and emits only the exposed cell faces, then simplifies.
+| `pnpm video:record` | Drives the client through landing, Closet, Forge and a few seconds in game; forge calls go to the real forge and the streams are saved as fixtures (costs two generations) |
+| `pnpm video:capture` | Same capture, but replays the saved fixtures with their original timing (identical takes, no API cost) -> `video/public/capture.mp4` |
+| `pnpm video:studio` | Opens Remotion Studio |
+| `pnpm video:render` | Renders the main composition -> `video/out/prompt-wars-forge.mp4` |
+| `pnpm video:render:clips` | Renders the armour and weapon clips |
+| `pnpm video:flyover` | Arena flyover over live bot fights on a local SpacetimeDB -> `video/out/arena-flyover.mp4` |
+| `pnpm video:voiceover` | Generates the promo voiceover with ElevenLabs (needs `ELEVENLABS_API_KEY` in the environment) |
+| `pnpm video:promo:prep` | Stages the promo media (crops a gameplay recording, collects clips and the flyover) |
+| `pnpm video:render:promo` | Renders the narrated promo -> `video/out/prompt-wars-promo.mp4` |
 
 ```bash
-# keep the raw collision so this is re-runnable
-cp client/public/maps/tauron-arena_collision.glb scans/tauron-arena_collision_raw.glb
-node client/scripts/map/solidify.ts \
-  scans/tauron-arena_collision_raw.glb \
-  client/public/maps/tauron-arena_collision.glb \
-  --pitch 0.6 --close 1 --tris 300000
+ELEVENLABS_API_KEY=<your-elevenlabs-key> pnpm video:voiceover [--voice george|daniel] [--only s3]
 ```
 
-The visual map is untouched, so texture holes stay cosmetic. Re-run `bake-spawns.ts` afterwards (the
-walkable surface moved slightly) and rebuild the client. Verified for `tauron-arena`: 0/255 drop
-points fell out and all spawns have ground beneath them.
+The capture scripts accept flags such as `--headless`, `--dpr 2`, `--armour "<prompt>"` and
+`--weapon "<prompt>"`; see the header of `video/scripts/capture.ts`. Rendering needs `ffmpeg`.
 
-The collision shell can optionally be drawn as a **neutral backdrop** (`?shell=1`, off by default):
-the same geometry is added with an unlit `BackSide` material and `polygonOffset`, so scan holes
-read as solid grey walls. It is opt-in because on the arena the voxel shell sits inside the photo
-walls, so it can occlude the texture — prefer the greybox below instead.
+## Configuration reference
 
-**Greybox fallback.** `tauron-solid` in `shared/src/maps.ts` points the map at the solidified shell
-itself, so you get a complete, watertight, hole-free arena with no photo texture. Open it with
-`?map=/maps/tauron-solid.glb` (or set `ACTIVE_MAP_ID = 'tauron-solid'`) when completeness matters
-more than the photo skin.
+### Forge service (environment)
 
-If you still see through a wall in-game, bump `--close` (2 closes bigger gaps) — at the cost of
-sealing very narrow doorways; drop `--pitch` for a finer shell.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | empty | Anthropic key. Empty means mock mode |
+| `FORGE_MODEL` | `claude-haiku-4-5-20251001` | Model used for generations |
+| `FORGE_RATE_LIMIT` | `100` | Generations per window, per IP and per identity |
+| `FORGE_RATE_WINDOW_MS` | `600000` | Rate-limit window (10 min) |
+| `FORGE_CACHE_MAX` | `500` | Prompt cache entries (`0` = off) |
+| `FORGE_HOST` / `FORGE_PORT` | `127.0.0.1` / `8787` | Listen address |
+| `FORGE_TIMEOUT_MS` | `45000` | Model request timeout |
+| `FORGE_MAX_BODY` | `240000` | Max request body (bytes) |
+| `FORGE_ALLOWED_ORIGINS` | empty | Extra allowed browser origins, comma-separated |
+| `FORGE_TRUST_PROXY` | on | Trust `X-Forwarded-For` from loopback (Caddy); `0` turns it off |
+| `FORGE_MOCK_DELAY_MS` | `90` | Delay between streamed events in mock mode |
+| `FORGE_DEBUG_RAW` | off | `1` logs raw model output |
+| `FORGE_TELEMETRY_LOG` | `/var/log/ai-gaem/client-errors.jsonl` | Crash telemetry log path |
+| `FORGE_TELEMETRY_MAX_BYTES` | 20 MB | Telemetry log size before rotation |
 
-### Check it offline
+### Client build and dev (environment)
+
+| Variable | Purpose |
+| --- | --- |
+| `FORGE_PROXY` | Where the Vite dev / preview server proxies `/api/forge/*`. Defaults to the live forge; use `http://127.0.0.1:8787` locally |
+| `VITE_SPACETIMEDB_HOST` | SpacetimeDB URI baked into the build (default Maincloud) |
+| `VITE_SPACETIMEDB_DB_NAME` | Database name baked into the build (default `prompt-wars-63xhe`) |
+| `VITE_MAP_BASE_URL` | Base URL for GLB maps loaded with `?map=/maps/...` (default: the client origin) |
+| `APP_VERSION` | Overrides the build id written to `version.json` |
+
+### Other scripts (environment)
+
+| Variable | Used by |
+| --- | --- |
+| `DEPLOY_HOST` | `scripts/*.sh`: SSH target (`user@host`), defaults to the game VPS |
+| `ELEVENLABS_API_KEY` | `pnpm video:voiceover` |
+| `E2E_SERVER`, `E2E_DB`, `E2E_PORT`, `E2E_BASE_URL` | Playwright e2e configuration |
+| `PW_CHROMIUM_PATH` | Chromium binary for Playwright / video capture |
+
+### Client URL parameters
+
+| Parameter | Effect |
+| --- | --- |
+| *(none)* | Connect to Maincloud, database `prompt-wars-63xhe` |
+| `?server=local` | Connect to `ws://localhost:3000` (local `spacetime start`) |
+| `?server=wss://host` | Connect to any SpacetimeDB host |
+| `?db=<name>` | Override the database name |
+| `?offline=1` | Single player, no server (optionally `&bots=3`) |
+| `?map=<id or url>` | Load a map: `tauron-remake`, `testmap`, or a GLB path such as `/maps/venue.glb` |
+| `?quality=low\|medium\|high` | Force graphics quality (otherwise the setting, default Auto) |
+| `?touch=1` / `?touch=0` | Force touch controls on / off |
+| `?closet=1` / `?closet=0` | Force the Closet step on / off in the onboarding flow |
+| `?name=<callsign>` | Set the display name |
+| `?fresh=1` | Ignore the stored token and join as a new identity |
+| `?nocache=1` | Skip the client-side prompt cache lookup |
+| `?forge=https://host` | Use a different forge base URL |
+| `?music=0` | Mute the procedural menu music |
+| `?telemetry=0` / `?telemetry=1` | Force crash telemetry off / on (off by default in dev and automation) |
+| `?shell=1` | Draw the collision shell of scanned GLB maps as a backdrop |
+| `?bakeSpawns=1` | Spawn editor in bake mode (offline, GLB maps) |
+
+## Controls
+
+| Input | Action |
+| --- | --- |
+| Click | Lock the mouse and play |
+| WASD | Move |
+| Shift | Sprint (forward only) |
+| C / Ctrl | Crouch |
+| X | Slide |
+| Space | Jump |
+| T | Autorun |
+| LMB | Fire / swing (hold for automatic weapons) |
+| RMB | Aim down sights; with melee, hold to charge a heavy attack |
+| F | Block (melee) |
+| R | Reload |
+| Arrows / Q E | Keyboard turning (trackpad fallback) |
+| Tab | Scoreboard |
+| F3 | Debug overlay (fps, position, RTT, interpolation, reducer calls) |
+| Esc | Release the mouse; pause menu with Settings, Closet, Forge, redeploy |
+| Gamepad | Left stick move, right stick look, RT fire, LT aim / heavy, A jump, B crouch, X reload, L3 sprint, RB block, Start menu |
+
+Settings (sensitivity, FOV, toggles, Trackpad mode, gamepad tuning, graphics quality) are stored in
+`localStorage`. Each browser tab is a separate player; a reload keeps your identity.
+
+## Troubleshooting
+
+**The game looks out of date after a deploy.** The client compares its build id with
+`/version.json` every 60 s (and after a reconnect) and shows a "New version, Reload" banner
+when a newer build is live. If you don't see it, hard refresh
+(Cmd+Shift+R / Ctrl+Shift+R). The check is disabled on the dev server.
+
+**Reducer errors or a broken schema locally.** Reset the local database (local only, never on
+Maincloud):
 
 ```bash
-pnpm dev
-open "http://localhost:5173/?offline=1&map=/maps/tauron-arena.glb"
+spacetime publish --server local --module-path server prompt-wars-63xhe --delete-data --yes
 ```
 
-`?offline=1` selects `OfflineNetClient`, so no server is needed, and `?map=` loads the GLB. Walk the
-space (F3 shows fps, position, grounded) and test the collision mesh by moving around: doorways,
-stairs and edges are where a scan's collider usually hurts. Without `VITE_MAP_BASE_URL` the path is
-resolved against the client origin, i.e. `client/public/maps/`; a missing file falls back to the
-procedural test map. Serving the map from the CDN instead is covered under
-[Deploying](#deploying).
+Or stop `spacetime start` and start it again with a fresh `--data-dir`.
 
-Scanned maps always get an **invisible safety box** (`client/src/map/bounds.ts`): four walls, a
-ceiling and a **floor slab at `bounds.min[1]`**, pushed as colliders so gaps in the scan can't drop
-a player out of the world. The box comes from `MAPS[id].bounds` (else the scan's `meta.bbox`),
-expanded by 0.5 m; for `tauron-arena` its floor sits at y = 0. Raise `bounds.min[1]` in
-`shared/src/maps.ts` if you want the catch plane higher (e.g. at concourse level).
+**Client errors about missing tables or reducers.** The bindings are out of date:
+`pnpm --filter @ai-gaem/server generate`, then restart `pnpm dev`.
 
-### Bake spawn points
+**Forge requests cost credits during local dev.** You forgot `FORGE_PROXY`; without it the dev
+server proxies to the live forge.
 
-```bash
-open "http://localhost:5173/?offline=1&map=/maps/tauron-arena.glb&bakeSpawns=1"
+**`pnpm e2e` fails with "the forge on :8788 is LIVE".** Something with an API key is running on
+:8788. Stop it; e2e needs the mock.
+
+**pnpm refuses to run a script because dependencies need verifying.** Run `pnpm install`, or prefix
+the command with `pnpm_config_verify_deps_before_run=false`.
+
+**Firefox on Linux: mouse look drops or lags fast movement.** On X11, Firefox emulates pointer lock
+by warping the cursor. Use a Wayland session or a Chromium-based browser.
+
+**Firefox stuck at 60 FPS on a high-refresh monitor.** That is Firefox's vsync: check
+`about:support` (Refresh Rate), set `layout.frame_rate` in `about:config`, and note that
+`privacy.resistFingerprinting` pins animation to 60 FPS.
+
+**Laptop touchpad stops working while keys are held.** Enable Trackpad mode in Settings (toggle
+crouch / sprint / aim, autorun on T, arrow / Q E turning).
+
+## Project structure
+
+```
+.
+├── client/                  game client (Vite + Three.js + Rapier)
+│   ├── src/
+│   │   ├── engine/          renderer, physics step, game loop, onboarding flow, quality
+│   │   ├── forge/           Forge and Closet editors, forge client
+│   │   ├── map/             map loading, procedural maps (tauronRemake.ts)
+│   │   ├── net/             NetClient, SpacetimeDB and offline clients, interpolation, pose sender
+│   │   ├── player/          character controller, camera, humanoids, outfit models
+│   │   ├── weapons/         weapon models, fire modes, melee animation, effects
+│   │   ├── ui/              HUD, menus, touch controls, status banner
+│   │   ├── audio/           procedural sound effects and menu music
+│   │   └── module_bindings/ generated SpacetimeDB bindings
+│   ├── e2e/                 Playwright specs and runner
+│   └── scripts/             loadtest/, map/ (scan processing, spawn baking)
+├── shared/src/              forge DSL, balance, elements, outfit/, pickups, maps, tauronRemake/
+├── server/                  SpacetimeDB module (src/, scripts/sync-catalog.mjs, spacetime.json)
+├── forge/                   forge service (src/server.ts, llm.ts, mock.ts, outfit.ts, cache.ts, ratelimit.ts)
+├── parts/                   part catalog, templates, gallery
+├── video/                   capture scripts and Remotion compositions
+├── scripts/                 deploy.sh, deploy-forge.sh, client-errors.sh
+└── docs/                    characters.md, ui-spec.md
 ```
 
-`?bakeSpawns=1` puts the spawn editor in bake mode: the positions you save are logged ready to
-paste into `shared/src/maps.ts`.
+## Further reading
 
-- **F2** toggles the editor
-- **P** saves the current position as a spawn
-- **Backspace** undoes the last one
-- **C** clears them all
-
-Spawns are also kept in `localStorage` (`ai-gaem.spawns.<mapId>`), so a reload does not lose them.
-When you are happy with the set, paste the logged list into the spawn entry for that map in
-`shared/src/maps.ts`.
-
-To bake them headlessly (no browser), run the same logic straight from Node:
-
-```bash
-node client/scripts/map/bake-spawns.ts \
-  client/public/maps/tauron-arena_collision.glb \
-  client/public/maps/tauron-arena.meta.json --spacing 6 \
-  --ts shared/src/tauron-arena.spawns.ts --export TAURON_ARENA_SPAWNS
-```
-
-It casts down every column so multi-floor arenas (bowl tiers, concourses) all get spawn points.
-Without `--ts` it prints a `MapSpawn[]` JSON array to paste into `MAPS[id].spawns`; with `--ts` it
-writes a module (as `shared/src/tauron-arena.spawns.ts` is), which `shared/src/maps.ts` imports —
-re-run it after re-processing the map's collision GLB.
-
-### Make it the active map
-
-Both the server and the client read the active map from `shared/src/maps.ts` (`ACTIVE_MAP_ID`) via
-`@ai-gaem/shared`.
-
-**1. Add the map and point at it.** Add or update the map's entry in `shared/src/maps.ts` — id,
-GLB path and the baked spawns — then set `ACTIVE_MAP_ID` to that id.
-
-**2. Republish the module** so `seedWorld` reseeds `spawn_point` for the new map:
-
-```bash
-pnpm --filter @ai-gaem/server publish:maincloud
-```
-
-**3. Confirm the reseed:**
-
-```bash
-spacetime sql --server maincloud prompt-wars-63xhe "SELECT * FROM spawn_point"
-```
-
-**4. Restart the client** (`pnpm dev`; the client bundles `@ai-gaem/shared`, so `ACTIVE_MAP_ID` is
-read at build time) and join a multiplayer game: you should spawn on the venue map.
-
-### Deploying
-
-- **Server** — SpacetimeDB **Maincloud**, database `prompt-wars-63xhe`:
-  `pnpm --filter @ai-gaem/server publish:maincloud` (run `pnpm --filter @ai-gaem/server generate`
-  too if tables or reducers changed).
-- **Client** — `pnpm --filter client build` produces a static bundle in `client/dist/`; upload that
-  directory to any static host (S3 / Cloudflare Pages / Netlify / Vercel / nginx). Nothing
-  server-side is needed.
-- **Map files** — put the visual GLB and its `_collision.glb` on a bucket/CDN. Configure CORS so the
-  client origin can `GET` them (`Access-Control-Allow-Origin: https://<client-origin>`,
-  `Access-Control-Allow-Methods: GET`); the browser fetches GLBs with `fetch`, so a missing CORS
-  header shows up as a failed load and the game falls back to the test map.
-- **`VITE_MAP_BASE_URL`** — set it at build time to the bucket root, e.g.
-  `VITE_MAP_BASE_URL=https://cdn.example.com pnpm --filter client build`; `?map=/maps/tauron-arena.glb`
-  then loads `https://cdn.example.com/maps/tauron-arena.glb`. Leave it unset to serve maps from the
-  client origin (`client/public/maps/`).
+- [docs/characters.md](docs/characters.md): Closet outfits, body sizes and the HP / hitbox balance.
+- [docs/ui-spec.md](docs/ui-spec.md): UI design tokens and component spec.
+- Code comments at the top of `shared/src/balance.ts`, `shared/src/hitcheck.ts`,
+  `shared/src/melee.ts` and `client/src/net/interp.ts` cover balance, hit validation, melee timing
+  and interpolation in detail.
