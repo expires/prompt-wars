@@ -1,4 +1,20 @@
-# Prompt Wars
+# CityScape
+
+Explore medieval Kraków at your own pace: 15 landmarks, 12 hidden legends, and a guide that can
+walk you there. Built for accessibility: blind mode (narration, snap turns, wall sonar, spoken
+directions), captions, large text, high contrast and calm motion. No combat, no timers.
+
+- Game code: `client/src/explore/` (entry `client/src/main.ts`). Run `pnpm dev`.
+- Landmarks and legends: `client/src/explore/data.ts`, placed in the frame of the processed
+  `krakow-oldtown` GLB (`client/public/maps/`, not in git).
+- After changing the map, re-bake the walkable grid and the map image:
+  `node client/scripts/map/bake-navgrid.ts …` and `node client/scripts/map/bake-topdown.ts …`
+  (usage in each script's header).
+
+The rest of this README documents the SpacetimeDB server from the arena shooter this branch grew
+out of (Prompt Wars). CityScape does not use it.
+
+## Prompt Wars (legacy server)
 
 Multiplayer arena shooter. Prompt a weapon, then use it.
 

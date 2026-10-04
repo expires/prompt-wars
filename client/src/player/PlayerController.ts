@@ -103,6 +103,14 @@ export class PlayerController {
   moveMult = 1;
   /** gamepad look multiplier (aim slowdown over enemies), 1 = none */
   aimSlow = 1;
+  /** world-space wish direction that replaces movement input (auto-walk); null = player input */
+  steer: THREE.Vector3 | null = null;
+  /** arrow up / down walk instead of pitching the view (keyboard-only play) */
+  arrowKeysWalk = false;
+  /** hold-to-turn with the arrow / turn keys (off: the game does its own snap turns) */
+  keyTurn = true;
+  /** keyboard turning keys (arrows always turn left / right) */
+  turnKeys: { left: string[]; right: string[] } = { left: ['KeyQ'], right: ['KeyE'] };
   /** sprint latched by toggle-sprint (Shift tap) or the gamepad's L3 */
   private sprintLatch = false;
 
@@ -168,10 +176,10 @@ export class PlayerController {
     this.pitch -= d.dy * sens * (s.invertY ? -1 : 1);
     // keyboard turning (trackpad / palm-rejection fallback): arrows + Q/E
     const turn = ((s.keyTurnSpeed * Math.PI) / 180) * dt * fovScale;
-    if (i.isDown('ArrowLeft') || i.isDown('KeyQ')) this.yaw += turn;
-    if (i.isDown('ArrowRight') || i.isDown('KeyE')) this.yaw -= turn;
-    if (i.isDown('ArrowUp')) this.pitch += turn * 0.7;
-    if (i.isDown('ArrowDown')) this.pitch -= turn * 0.7;
+    if (this.keyTurn && (i.isDown('ArrowLeft') || this.turnKeys.left.some((k) => i.isDown(k)))) this.yaw += turn;
+    if (this.keyTurn && (i.isDown('ArrowRight') || this.turnKeys.right.some((k) => i.isDown(k)))) this.yaw -= turn;
+    if (i.isDown(this.arrowKeysWalk ? 'PageUp' : 'ArrowUp')) this.pitch += turn * 0.7;
+    if (i.isDown(this.arrowKeysWalk ? 'PageDown' : 'ArrowDown')) this.pitch -= turn * 0.7;
     // gamepad right stick: rad/s at full deflection (after the response curve)
     const pad = i.pad;
     if (pad.connected && (pad.look[0] !== 0 || pad.look[1] !== 0)) {
@@ -238,8 +246,9 @@ export class PlayerController {
     let fwd = 0;
     let analog = 1;
     if (this.inputEnabled) {
-      if (i.isDown('KeyW') || this.autoRun) fwd += 1;
-      if (i.isDown('KeyS')) fwd -= 1;
+      const walkKeys = this.arrowKeysWalk;
+      if (i.isDown('KeyW') || (walkKeys && i.isDown('ArrowUp')) || this.autoRun) fwd += 1;
+      if (i.isDown('KeyS') || (walkKeys && i.isDown('ArrowDown'))) fwd -= 1;
       if (i.isDown('KeyA')) wish.x -= 1;
       if (i.isDown('KeyD')) wish.x += 1;
       // gamepad left stick (analog: partial deflection walks slower)
@@ -253,8 +262,14 @@ export class PlayerController {
       fwd = Math.max(-1, Math.min(1, fwd));
       wish.z -= fwd;
     }
+    if (this.steer && this.inputEnabled) {
+      // auto-walk: the steer direction is already in world space
+      wish.set(this.steer.x, 0, this.steer.z);
+      fwd = 1;
+    }
     const hasWish = wish.lengthSq() > 1e-6;
-    if (hasWish) wish.normalize().applyAxisAngle(THREE.Object3D.DEFAULT_UP, this.yaw);
+    if (hasWish && this.steer && this.inputEnabled) wish.normalize();
+    else if (hasWish) wish.normalize().applyAxisAngle(THREE.Object3D.DEFAULT_UP, this.yaw);
 
     // ---- slide (X): keep the current momentum and skim along the ground ----
     if (!this.sliding && this.slideBuffer > 0 && this.grounded && this.inputEnabled && this.slideCooldown <= 0) {

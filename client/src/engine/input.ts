@@ -11,6 +11,8 @@ export class Input {
   padPlaying = false;
   /** playing with the on-screen touch controls (phones / tablets: no pointer lock) */
   touchPlaying = false;
+  /** playing with keyboard + drag-to-look, no pointer lock (the explorer's default) */
+  freePlay = false;
   /** touch controls source (merged into `pad` every poll while touchPlaying) */
   touch: { frame(): TouchFrame } | null = null;
   /** event timestamp (performance.now() clock) of the last mouse movement while locked (trackpad hint heuristic) */
@@ -38,7 +40,7 @@ export class Input {
       if (this.suspended || isTyping(e)) return;
       if (!this.keys.has(e.code)) this.pressed.add(e.code);
       this.keys.add(e.code);
-      if (['Space', 'F2', 'Tab'].includes(e.code) || (this.locked && e.code.startsWith('Arrow'))) e.preventDefault();
+      if (['Space', 'F2', 'Tab'].includes(e.code) || ((this.locked || this.freePlay) && (e.code.startsWith('Arrow') || e.code.startsWith('Page')))) e.preventDefault();
       // crouch on Ctrl: swallow browser shortcuts (Ctrl+S/D/F...) while playing. Ctrl+W can't be blocked
       // outside fullscreen, which is why C is the primary crouch key.
       if (this.locked && (e.ctrlKey || e.metaKey) && e.code !== 'KeyW') e.preventDefault();
@@ -106,16 +108,16 @@ export class Input {
     return this.pad;
   }
 
-  /** touch-drag look: accumulated like mouse movement (applied once per frame) */
+  /** touch / mouse-drag look: accumulated like mouse movement (applied once per frame) */
   addLook(dx: number, dy: number) {
-    if (!this.touchPlaying) return;
+    if (!this.touchPlaying && !this.freePlay) return;
     this.mouseDX += dx;
     this.mouseDY += dy;
   }
 
-  /** player input is live: pointer locked, or playing on a gamepad */
+  /** player input is live: pointer locked, playing on a gamepad / touch, or free play */
   get active() {
-    return this.locked || this.padPlaying || this.touchPlaying;
+    return this.locked || this.padPlaying || this.touchPlaying || this.freePlay;
   }
 
   /** any of the movement keys held */

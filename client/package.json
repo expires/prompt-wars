@@ -21,6 +21,7 @@
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@dimforge/rapier3d-compat": "0.21.0",
     "@gltf-transform/core": "^4.1.0",
     "@gltf-transform/extensions": "^4.1.0",
     "@gltf-transform/functions": "^4.1.0",

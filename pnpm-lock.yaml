@@ -29,6 +29,9 @@ importers:
         specifier: ^0.186.1
         version: 0.186.1
     devDependencies:
+      '@dimforge/rapier3d-compat':
+        specifier: 0.21.0
+        version: 0.21.0
       '@gltf-transform/core':
         specifier: ^4.1.0
         version: 4.5.1
@@ -191,6 +194,9 @@ packages:
 
   '@dimforge/rapier3d-compat@0.12.0':
     resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==}
+
+  '@dimforge/rapier3d-compat@0.21.0':
+    resolution: {integrity: sha512-tCl1HPGwOhn5aCQbgqWbOH+Nx/5fnr3IPAnzQuR7zIhC/raqi2yxC6LhvZqjdI2El5hQgY5RDAwDrAjAi2FdPA==}
 
   '@dimforge/rapier3d@0.19.3':
     resolution: {integrity: sha512-tkD1tvHTDML0W9s9rUYAsx0btO9LbVTnMBKJWVgOsas5haGFbYY+pzr5hbwYysv/IJmgmMrIFoVWIcsaCUE9ow==}
@@ -1822,6 +1828,8 @@ snapshots:
       nosleep.js: 0.12.0
 
   '@dimforge/rapier3d-compat@0.12.0': {}
+
+  '@dimforge/rapier3d-compat@0.21.0': {}
 
   '@dimforge/rapier3d@0.19.3': {}
 
