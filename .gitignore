@@ -22,3 +22,10 @@ client/public/maps/*.meta.json
 .agents/ui.json
 .agents/board/.lock
 .agents/board/**/.tmp-*
+
+# --- video pipeline outputs (video/): renders, captured takes, frame scratch ---
+video/out/
+video/public/*.mp4
+video/public/*.webm
+video/public/capture.json
+video/.capture-tmp/

@@ -4,6 +4,7 @@ packages:
   - server
   - parts
   - forge
+  - video
 allowBuilds:
   esbuild: true
   sharp: false

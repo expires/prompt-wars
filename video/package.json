@@ -1,0 +1,29 @@
+{
+  "name": "@ai-gaem/video",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Promo video pipeline: Playwright captures the real client (Closet + Forge) with replayed forge streams; Remotion edits the take",
+  "scripts": {
+    "record": "tsx scripts/capture.ts --record",
+    "capture": "tsx scripts/capture.ts",
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts PromptWarsForge out/prompt-wars-forge.mp4",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.532",
+    "@remotion/google-fonts": "4.0.532",
+    "@remotion/transitions": "4.0.532",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "remotion": "4.0.532"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.2.0",
+    "playwright": "^1.63.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
