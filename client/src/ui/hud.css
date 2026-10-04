@@ -221,6 +221,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
 .hud-net__sep { margin: 0 0.6em; color: var(--fg-mute); }
 .hud-net__ping.is-warn { color: var(--hp-mid); }
 .hud-net__ping.is-bad { color: var(--hp-lo); }
+.hud-net__online { display: inline-flex; align-items: center; gap: 0.5em; }
+.hud-net__dot { width: 0.5em; height: 0.5em; background: var(--hp-hi); transform: rotate(45deg); }
 .hud-debug {
   max-width: min(560px, 40vw);
   padding: 8px 10px;

@@ -721,6 +721,14 @@ export class SpacetimeNetClient implements NetClient {
     return best;
   }
 
+  /** player rows with online = true (every server connection is a real client: bots are offline-only) */
+  onlineCount() {
+    if (!this.conn) return 0;
+    let n = 0;
+    for (const r of this.conn.db.player.iter() as Iterable<PlayerRow>) if (r.online) n++;
+    return n;
+  }
+
   othersOnline() {
     let n = 0;
     for (const id of this.slotToId.values()) if (id !== this.localId) n++;

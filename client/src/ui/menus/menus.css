@@ -54,6 +54,10 @@
 .landing-status .dot { width: 8px; height: 8px; background: var(--hp-hi); transform: rotate(45deg); }
 .landing-status.off .dot { background: var(--fg-mute); }
 .landing-status.bad .dot { background: var(--hp-lo); }
+.landing-online { display: inline-flex; align-items: center; gap: 8px; margin-top: -16px; font: 600 12px/1 var(--font-label); letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-mute); }
+.landing-online[hidden] { display: none; }
+.landing-online b { color: var(--fg); font-weight: 700; font-variant-numeric: tabular-nums; }
+.landing-online .dot { width: 8px; height: 8px; background: var(--hp-hi); transform: rotate(45deg); }
 .landing-right { display: flex; flex-direction: column; gap: 14px; }
 .landing-right .ui-micro { display: flex; justify-content: space-between; }
 .landing-forge { min-height: 64px; font-size: calc(20px * var(--text-scale)); }

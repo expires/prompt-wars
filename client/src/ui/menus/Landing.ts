@@ -48,6 +48,8 @@ export class Landing {
   private readonly quick: HTMLElement;
   private readonly statusEl: HTMLElement;
   private readonly forgeBtn: HTMLButtonElement;
+  private readonly onlineEl: HTMLElement;
+  private onlineN: number | null = null;
   private st: LandingState | null = null;
   handlers?: LandingHandlers;
 
@@ -71,6 +73,7 @@ export class Landing {
         </div>
         <button class="ui-btn ui-btn--primary ui-btn--lg landing-play" data-k="play" data-testid="landing-play">${icon('play')}<span data-k="playLabel">Play</span></button>
         <p class="landing-hint" data-k="hint"></p>
+        <div class="landing-online" data-k="online" data-testid="landing-online" hidden><span class="dot"></span><span><b data-k="onlineN">0</b> online</span></div>
         <div class="landing-controls">
           <span class="ui-kbd"><span>WASD</span></span><span>move · <span class="ui-kbd"><span>Space</span></span> jump · <span class="ui-kbd"><span>Shift</span></span> sprint · <span class="ui-kbd"><span>C</span></span> crouch</span>
           <span class="ui-kbd"><span>Mouse</span></span><span>aim · LMB fire · RMB ADS · <span class="ui-kbd"><span>R</span></span> reload</span>
@@ -95,6 +98,7 @@ export class Landing {
     this.quick = q('quick');
     this.statusEl = q('status');
     this.forgeBtn = q('forge');
+    this.onlineEl = q('online');
     isolate(r);
     r.addEventListener('keydown', (e) => e.stopPropagation());
     this.input.addEventListener('keydown', (e) => {
@@ -151,6 +155,14 @@ export class Landing {
     this.quick.innerHTML = presets.length
       ? presets.map((p) => `<button class="ui-chip" data-preset="${esc(p.id)}" data-cls="${esc(p.cls)}" data-testid="quick-pick-${esc(p.cls)}" ${s.busy ? 'disabled' : ''}><span>${esc(p.name)}</span></button>`).join('')
       : '<span class="ui-micro">Connecting…</span>';
+  }
+
+  /** live "● N online" under PLAY (null = offline / unknown: hidden) */
+  setOnline(n: number | null) {
+    if (n === this.onlineN) return;
+    this.onlineN = n;
+    this.onlineEl.hidden = n === null;
+    if (n !== null) this.onlineEl.querySelector('[data-k="onlineN"]')!.textContent = String(n);
   }
 
   hide() {

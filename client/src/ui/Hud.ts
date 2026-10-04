@@ -528,12 +528,12 @@ export class Hud {
     if (this.scoreboard.root.hidden === on) this.scoreboard.root.hidden = !on;
   }
 
-  /** top-left "23 MS · 144 FPS" (ping null = offline: omitted) */
-  setNetMicro(pingMs: number | null, fps: number) {
+  /** top-left "23 MS · 3 ONLINE · 144 FPS" (ping / players null = offline: omitted) */
+  setNetMicro(pingMs: number | null, fps: number, players: number | null = null) {
     const showFps = settings.current.showFps;
     const ping = pingMs == null ? null : Math.round(pingMs);
     const f = Math.round(fps);
-    const key = `${ping}|${showFps ? f : ''}`;
+    const key = `${ping}|${players}|${showFps ? f : ''}`;
     if (key === this.netKey) return;
     this.netKey = key;
     const parts: string[] = [];
@@ -541,6 +541,7 @@ export class Hud {
       const cls = ping > 150 ? ' is-bad' : ping > 80 ? ' is-warn' : '';
       parts.push(`<span class="hud-net__ping${cls}">${ping} ms</span>`);
     }
+    if (players !== null) parts.push(`<span class="hud-net__online" data-testid="hud-online"><span class="hud-net__dot"></span>${players} online</span>`);
     if (showFps) parts.push(`<span>${f} fps</span>`);
     this.netEl.hidden = parts.length === 0;
     this.netEl.innerHTML = parts.join('<span class="hud-net__sep">·</span>');

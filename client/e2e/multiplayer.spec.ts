@@ -111,6 +111,12 @@ test('a. two players see each other and movement replicates @smoke', async () =>
   await shot(B, 'a3-bob-sees-alice-moved.png');
 });
 
+test('a2. players-online count: two clients -> HUD shows 2 online', async () => {
+  // local server only (Maincloud has real players); count = player rows with online = true
+  for (const p of [A, B]) await expect(p.page.getByTestId('hud-online')).toHaveText(/^2 online$/i, { timeout: 10_000 });
+  await shot(A, 'a4-hud-online-count.png');
+});
+
 test('b. pistol kills: server-computed damage, kill feed, kills/deaths', async () => {
   test.skip(SERVER !== 'local', 'local only');
   await lineUp();

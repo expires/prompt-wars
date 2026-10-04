@@ -1221,7 +1221,9 @@ export class Game {
     const online = this.net.authoritative;
     const st = this.net.stats?.();
     const ping = online && st && st.rtt > 0 ? Math.round(st.rtt) : null;
-    this.hud.setNetMicro(ping, this.fps);
+    const players = online ? (this.net.onlineCount?.() ?? null) : null;
+    this.hud.setNetMicro(ping, this.fps, players);
+    this.flow.landing.setOnline(players);
     const rowFor = (p: NetPlayer, you: boolean) => {
       const w = p.weaponId ? this.net.getWeapon?.(p.weaponId) : undefined;
       const hs = this.hsKills.get(you ? this.net.localId : p.id);

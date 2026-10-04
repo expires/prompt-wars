@@ -265,6 +265,8 @@ export interface NetClient {
   nearestOtherDistance?(pos: Vec3): number;
   /** number of other online players (send-rate throttling) */
   othersOnline?(): number;
+  /** connected (online) players on the server, including us; undefined when offline */
+  onlineCount?(): number;
   stats?(): NetStats;
   /** fires when the local player's authoritative state changes (hp, death, weapon) */
   onLocalChanged?(cb: (me: NetPlayer) => void): () => void;
