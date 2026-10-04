@@ -1,12 +1,12 @@
 # Prompt Wars
 
+### ▶ [Play the live game: http://187.7.27.171/](http://187.7.27.171/)
+
 Prompt Wars is a browser multiplayer arena shooter where you design your own gear in words. You
 describe an outfit in the Closet and a weapon in the Forge, an LLM builds both piece by piece, a
 shared balance layer keeps them fair, and you take them into a 3D arena against other players.
 It runs on Three.js and Rapier in the browser, SpacetimeDB for the game server and a small Node
 service that streams designs from Claude.
-
-**Play it:** http://187.7.27.171/
 
 ## Contents
 
