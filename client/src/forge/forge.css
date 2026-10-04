@@ -74,6 +74,12 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+.forge-brand-text { display: flex; flex-direction: column; gap: 6px; }
+.forge-step {
+  font: 600 calc(11px * var(--text-scale)) / 1.2 var(--font-label);
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
 .forge-brand-mark {
   display: inline-flex;
   align-items: center;

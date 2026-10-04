@@ -1,4 +1,5 @@
-// Screen flow: landing (first login) -> forge / quick pick -> deploy; Esc pause menu; death screen;
+// Screen flow: landing (first login) -> Closet (step 1, character) -> Forge (step 2, weapon) -> deploy
+// (or a landing quick pick); Esc pause menu; death screen;
 // the Weapon Forge editor (lazy chunk). Owns the menus; Game owns the simulation.
 import { bodyStats, bodyStatsLine, DEFAULT_BODY, type ForgeDesign, type OutfitDesign } from '@ai-gaem/shared';
 import type { Game } from './Game';
@@ -31,8 +32,10 @@ export class GameFlow {
   closet: ClosetEditorHandle | null = null;
   private closetLoading = false;
   private closetReturn: Screen = 'none';
-  /** first login: the weapon is registered, the Closet comes next (then deploy) */
-  private pendingCloset = false;
+  /** first login: the outfit is equipped, the Forge (step 2) opens once the Closet closes */
+  private pendingForge = false;
+  /** first login: the character step is done this session (PLAY goes straight to the Forge) */
+  private firstOutfitDone = false;
   private outfitEquipped = false;
   /** screen to go back to when the forge closes */
   private forgeReturn: Screen = 'none';
@@ -62,7 +65,7 @@ export class GameFlow {
       },
       onCloset: (cs) => {
         this.applyCallsign(cs);
-        void this.openCloset('pause', 'landing');
+        void this.openCloset(this.needsLoadout ? 'first' : 'pause', 'landing');
       },
     };
     this.pause.handlers = {
@@ -198,7 +201,7 @@ export class GameFlow {
   private async play(cs: string) {
     this.applyCallsign(cs);
     if (this.needsLoadout) {
-      await this.openForge({ mode: 'first' }, 'landing');
+      await this.startFirstFlow();
       return;
     }
     if (this.game.alive) {
@@ -214,6 +217,16 @@ export class GameFlow {
       this.busy = false;
       if (this.landing.visible) this.landing.update(this.landingState());
     }
+  }
+
+  /**
+   * First login: Closet (character) then Forge (weapon). Character already picked (this session,
+   * or a reload mid-flow with an outfit on) -> straight to the Forge; e2e skips the Closet.
+   */
+  private async startFirstFlow() {
+    const picked = this.firstOutfitDone || (this.online && (this.game.me?.outfitId ?? '0') !== '0');
+    if (this.closetInFirstFlow && !picked) await this.openCloset('first', 'landing');
+    else await this.openForge({ mode: 'first' }, 'landing');
   }
 
   private async quickPick(presetId: string, cs: string) {
@@ -543,6 +556,7 @@ export class GameFlow {
       baseUrl: this.forgeBase(),
       seed,
       equipLabel,
+      step: o.mode === 'first' && this.closetInFirstFlow ? 'Step 2/2 · Weapon' : undefined,
       onEquip: (design, prompt, origin) => this.equipDesign(design, prompt, origin),
       cacheLookup: this.cacheLookup,
       onClose: () => this.onForgeClosed(),
@@ -554,12 +568,6 @@ export class GameFlow {
 
   private onForgeClosed() {
     this.forge = null;
-    if (this.pendingCloset) {
-      this.pendingCloset = false;
-      this.equipped = false;
-      void this.openCloset('first', 'landing');
-      return;
-    }
     if (this.equipped) {
       this.equipped = false;
       this.syncHud();
@@ -583,7 +591,6 @@ export class GameFlow {
     if (!net.registerDesign) throw new Error('Server doesn’t support forged weapons');
     const fresh = !!origin?.fresh;
     const cached = this.online && origin?.cached && net.useForged ? origin.cached : undefined;
-    const firstTime = this.needsLoadout;
     if (!this.online) {
       const id = await net.registerDesign(design, prompt);
       const w = id ? net.getWeapon?.(id) : undefined;
@@ -620,12 +627,6 @@ export class GameFlow {
       const id = await net.registerDesign(design, prompt, fresh);
       if (!id) throw new Error('the weapon didn’t arrive from the server');
       await this.waitFor(() => this.game.me?.weaponId === id && !this.needsLoadout, 4000);
-    }
-    if (firstTime && this.closetInFirstFlow) {
-      // first login: pick a look before deploying (the Closet opens once the forge closes)
-      this.equipped = true;
-      this.pendingCloset = true;
-      return;
     }
     this.equipped = true;
     this.death.setBusy(true, 'Respawning…');
@@ -694,39 +695,29 @@ export class GameFlow {
       baseUrl: this.forgeBase(),
       presets,
       seed,
-      equipLabel: mode === 'first' ? 'Wear & deploy' : alive ? 'Wear & redeploy' : 'Wear & respawn',
+      equipLabel: mode === 'first' ? 'Next: weapon' : alive ? 'Wear & redeploy' : 'Wear & respawn',
+      step: mode === 'first' ? 'Step 1/2 · Character' : undefined,
       onEquip: (o, prompt, presetId) => this.equipOutfit(o, prompt, presetId),
-      onSkip: () => void this.skipCloset(),
-      onClose: () => this.onClosetClosed(mode),
+      onClose: () => this.onClosetClosed(),
     });
     this.syncHud();
   }
 
-  private skipped = false;
-
-  private async skipCloset() {
-    this.skipped = true;
-    try {
-      await this.deploy(true);
-    } catch (err) {
-      this.game.hud.toast(esc(`Deploy failed: ${(err as Error)?.message ?? err}`), { type: 'error' });
-    }
-  }
-
-  private onClosetClosed(mode: ClosetEditorOptions['mode']) {
+  private onClosetClosed() {
     this.closet = null;
+    if (this.pendingForge) {
+      // first login: character done, step 2 is the weapon
+      this.pendingForge = false;
+      this.outfitEquipped = false;
+      void this.openForge({ mode: 'first' }, 'landing');
+      return;
+    }
     if (this.outfitEquipped) {
       this.outfitEquipped = false;
       this.syncHud();
       return;
     }
-    if (mode === 'first') {
-      // closing the first-login Closet = keep the default body and deploy
-      if (!this.skipped) void this.skipCloset();
-      this.skipped = false;
-      this.syncHud();
-      return;
-    }
+    // closed without wearing anything (first login included: back to the landing, no deploy)
     const back = this.closetReturn;
     if (back === 'landing' || this.needsLoadout) this.showLanding();
     else if (back === 'death' && !this.game.alive) this.death.show(this.deathInfo);
@@ -767,6 +758,7 @@ export class GameFlow {
       await net.requestRedeploy?.();
       await this.waitFor(() => !this.game.alive, 4000);
     }
+    const firstLogin = this.needsLoadout;
     let id: string;
     if (presetId !== undefined) {
       id = presetId;
@@ -778,6 +770,14 @@ export class GameFlow {
       id = got;
     }
     await this.waitFor(() => (this.game.me?.outfitId ?? '0') === id, 4000);
+    if (firstLogin) {
+      // first login: no weapon yet, so no respawn; the Forge (step 2) opens once the Closet closes
+      if ((this.game.me?.outfitId ?? '0') !== id) throw new Error('the outfit didn’t arrive from the server');
+      this.firstOutfitDone = true;
+      this.outfitEquipped = true;
+      this.pendingForge = true;
+      return;
+    }
     this.outfitEquipped = true;
     this.death.setBusy(true, 'Respawning…');
     try {

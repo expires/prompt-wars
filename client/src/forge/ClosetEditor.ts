@@ -25,6 +25,7 @@ import { Turntable, type Mark } from './Turntable';
 import { Humanoid } from '../player/humanoid';
 import { el, esc, reducedMotion } from '../ui/dom';
 import { icon, type IconName } from '../ui/icons';
+import { brandText } from './brand';
 
 export interface ClosetPreset {
   /** outfit row id ('0' = default body) */
@@ -42,9 +43,11 @@ export interface ClosetEditorOptions {
   /** start from the outfit the player wears */
   seed?: { outfit: OutfitDesign | null; presetId?: string };
   equipLabel?: string;
+  /** first login step indicator (e.g. "Step 1/2 · Character") */
+  step?: string;
   /** wear it: `presetId` when it is an unchanged preset (equip by id), else register */
   onEquip(outfit: OutfitDesign | null, prompt: string, presetId?: string): Promise<void>;
-  /** first login: deploy with the default body */
+  /** optional Skip button in the header */
   onSkip?(): void;
   onClose(): void;
   parent?: HTMLElement;
@@ -94,13 +97,13 @@ class ClosetEditor implements ClosetEditorHandle {
     r.dataset.mode = opts.mode;
     r.innerHTML = `
       <header class="forge-head">
-        <div class="forge-brand"><span class="forge-brand-mark">${icon('shield', 'ui-icon')}</span><span>Closet</span></div>
+        <div class="forge-brand"><span class="forge-brand-mark">${icon('shield', 'ui-icon')}</span>${brandText('Closet', opts.step)}</div>
         <div class="forge-titlebar">
           <h1 class="forge-name" data-testid="closet-name" data-k="name"></h1>
           <div class="forge-tier closet-line" data-k="line" data-testid="closet-statsline"></div>
         </div>
         <div class="forge-head-actions">
-          ${opts.mode === 'first' ? `<button class="ui-btn ui-btn--secondary ui-btn--sm" data-k="skip" data-testid="closet-skip"><span>Skip</span></button>` : ''}
+          ${opts.onSkip ? `<button class="ui-btn ui-btn--secondary ui-btn--sm" data-k="skip" data-testid="closet-skip"><span>Skip</span></button>` : ''}
           <button class="ui-btn ui-btn--secondary ui-btn--sm" data-k="close" data-testid="closet-close">${icon('x', 'ui-icon ui-icon--sm')}<span>Close</span><span class="ui-kbd"><span>Esc</span></span></button>
         </div>
       </header>

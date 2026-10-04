@@ -13,7 +13,8 @@ import { SERVER, hook, joinGame, shot, state, teleport, waitForState, type Playe
  * A small (Scout preset) and a big (custom, registered) player: server-derived max HP differs,
  * spawn HP = max HP, the health pack caps at the body's max HP (> 100 for the big one), a
  * headshot at the big player's *scaled* head height counts as a headshot, and the big player
- * walks up the player-tunnel stairs into the concourse.
+ * walks up the player-tunnel stairs into the concourse. First login with `?closet=1`: the Closet
+ * (step 1, character) comes before the Forge (step 2, weapon); Esc on step 1 returns to the landing.
  */
 
 const MAP = 'tauron-remake';
@@ -32,6 +33,7 @@ function adminCall(reducer: string, ...args: string[]) {
 }
 
 let A: Player; // small (Scout), shooter
+let C: Player | undefined; // first-login flow
 let B: Player; // big (custom tank)
 const tag = Math.random().toString(36).slice(2, 6);
 const BIG = { ...OUTFIT_TANK, name: `Big ${tag}`, pieces: [...OUTFIT_TANK.pieces, OUTFIT_KNIGHT.pieces.find((p) => p.id === 'cape')!], body: { size: 1.08, build: 1.3, head: 1.2, limbs: 1 } };
@@ -48,6 +50,7 @@ test.afterAll(async () => {
   } finally {
     await A?.context.close();
     await B?.context.close();
+    await C?.context.close();
   }
 });
 
@@ -157,4 +160,62 @@ test('the big player walks up the player-tunnel stairs into the concourse', asyn
   await hook(B, (g) => g.setAutoRun(false));
   expect(top.crouching).toBe(false);
   expect(top.playerDims?.scale).toBeCloseTo(1.08, 3);
+});
+
+test('first login (?closet=1): Closet (character) comes before the Forge (weapon)', async ({ browser }) => {
+  test.setTimeout(240_000);
+  // last test: the two dressed players are done (three SwiftShader clients starve the lazy chunks)
+  await A?.context.close();
+  await B?.context.close();
+  C = await joinGame(browser, `New-${tag}`, { loadout: 'none', query: { closet: '1' } });
+  const p = C.page;
+  expect((await state(p)).needsLoadout).toBe(true);
+  await expect(p.getByTestId('landing')).toContainText('Create a character to start.');
+
+  // Esc on step 1 goes back to the landing (no deploy)
+  await p.getByTestId('landing-play').click();
+  await expect(p.getByTestId('closet-editor')).toBeVisible({ timeout: 45_000 });
+  await expect(p.getByTestId('forge-editor')).toHaveCount(0);
+  await p.keyboard.press('Escape');
+  await expect(p.getByTestId('landing')).toBeVisible();
+  await expect(p.getByTestId('closet-editor')).toHaveCount(0);
+  await p.waitForTimeout(500);
+  let s = await state(p);
+  expect(s.alive).toBe(false);
+  expect(s.needsLoadout).toBe(true);
+
+  // step 1: the Closet first, no Skip; a quick pick + "Next: weapon"
+  await p.getByTestId('landing-play').click();
+  const closet = p.getByTestId('closet-editor');
+  await expect(closet).toBeVisible({ timeout: 45_000 });
+  await expect(p.getByTestId('forge-editor')).toHaveCount(0);
+  await expect(closet.getByTestId('flow-step')).toHaveText(/Step 1\/2/);
+  await expect(p.getByTestId('closet-skip')).toHaveCount(0);
+  await expect(p.getByTestId('closet-equip')).toContainText('Next: weapon');
+  const scout = (await hook(C, (g) => g.outfitPresets())).find((o) => o.name === 'Scout')!;
+  await p.getByTestId('closet-preset').filter({ hasText: 'Scout' }).click();
+  await expect(p.getByTestId('closet-equip')).toBeEnabled();
+  await p.waitForTimeout(600);
+  await shot(C, 'closet-first-step1.png');
+  await p.getByTestId('closet-equip').click();
+
+  // step 2: the Forge, outfit already on, still not deployed
+  const forge = p.getByTestId('forge-editor');
+  await expect(forge).toBeVisible({ timeout: 45_000 });
+  await expect(p.getByTestId('closet-editor')).toHaveCount(0);
+  await expect(forge.getByTestId('flow-step')).toHaveText(/Step 2\/2/);
+  await expect(p.getByTestId('forge-equip')).toContainText('Equip & deploy');
+  s = await state(p);
+  expect(s.outfitId).toBe(scout.id);
+  expect(s.alive).toBe(false);
+  await shot(C, 'closet-first-step2.png');
+
+  await p.getByTestId('forge-prompt').fill(`a tiny scout blaster ${tag}`);
+  await p.getByTestId('forge-reforge').click();
+  await waitForState(p, (x) => !!x.forge && !x.forge.busy && !!x.forge.design, 40_000, 'forged');
+  await p.getByTestId('forge-equip').click();
+  s = await waitForState(p, (x) => x.alive && !x.needsLoadout && x.screen === 'none', 20_000, 'deployed after step 2');
+  expect(s.outfitId).toBe(scout.id);
+  expect(s.serverMaxHp).toBe(scout.maxHp);
+  expect(s.serverHp).toBe(scout.maxHp);
 });

@@ -1,5 +1,5 @@
 // Landing / first login: callsign + PLAY + loadout card + FORGE + quick pick.
-// New players (server needsLoadout) must forge or quick-pick before PLAY deploys.
+// New players (server needsLoadout) create a character + weapon (or quick-pick) before PLAY deploys.
 import './menus.css';
 import { el, esc, isolate } from '../dom';
 import { icon } from '../icons';
@@ -138,10 +138,10 @@ export class Landing {
     this.play.disabled = !!s.busy;
     this.forgeBtn.disabled = !!s.busy;
     const cb = this.root.querySelector<HTMLButtonElement>('[data-k="closet"]')!;
-    cb.disabled = !!s.busy || s.needsLoadout;
+    cb.disabled = !!s.busy;
     this.root.querySelector('[data-k="outfitNote"]')!.textContent = s.outfitLine ?? '';
     this.hint.innerHTML = s.needsLoadout
-      ? '<b>Forge a weapon</b> to start.'
+      ? '<b>Create a character</b> to start.'
       : `Deploying with <b>${esc(s.weapon?.name ?? 'your weapon')}</b>`;
     renderWeaponCard(this.card, s.weapon ? cardDataFor(s.weapon, s.weapon.owner ? s.callsign : undefined, localIdentity() || undefined) : null);
     const st = this.statusEl;

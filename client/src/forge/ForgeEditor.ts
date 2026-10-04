@@ -13,6 +13,7 @@ import { Turntable, type Mark } from './Turntable';
 import { budgetOf, elementBlurb, statRows, ttk, weaponFromStats } from './forgeStats';
 import { el, esc, reducedMotion } from '../ui/dom';
 import { icon } from '../ui/icons';
+import { brandText } from './brand';
 import { flavorFor, pipsHtml, rarityOfDesign, TIER_LABELS, type Tier } from '../ui/rarity';
 import { renderWeaponCard, type WeaponCardData } from '../ui/WeaponCard';
 import type { Weapon } from '../weapons/types';
@@ -26,6 +27,8 @@ export interface ForgeEditorOptions {
   seed?: { design?: ForgeDesign | null; prompt?: string; autostart?: boolean; title?: string };
   /** label of the equip button (e.g. "EQUIP & DEPLOY") */
   equipLabel?: string;
+  /** first login step indicator (e.g. "Step 2/2 · Weapon") */
+  step?: string;
   /** register the design + deploy; reject to show an error. `origin`: prompt cache provenance */
   onEquip(design: ForgeDesign, prompt: string, origin?: ForgeOrigin | null): Promise<void>;
   /** prompt cache (forged_prompt) */
@@ -154,7 +157,7 @@ class ForgeEditor implements ForgeEditorHandle {
     r.dataset.mode = opts.mode;
     r.innerHTML = `
       <header class="forge-head">
-        <div class="forge-brand"><span class="forge-brand-mark">${icon('spark', 'ui-icon')}</span><span>Weapon Forge</span></div>
+        <div class="forge-brand"><span class="forge-brand-mark">${icon('spark', 'ui-icon')}</span>${brandText('Weapon Forge', opts.step)}</div>
         <div class="forge-titlebar">
           <h1 class="forge-name" data-testid="forge-name" data-k="name"></h1>
           <div class="forge-tier" data-k="tier"></div>
@@ -900,3 +903,4 @@ function biggestDiff(a: Weapon, b: Weapon): string {
   if (!best || Math.abs(mag) < 0.02) return 'similar stats';
   return `${mag > 0 ? '+' : '−'}${Math.round(Math.abs(mag) * 100)}% ${best}`;
 }
+

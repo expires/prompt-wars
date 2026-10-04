@@ -18,8 +18,8 @@ mkdirSync(SCREENSHOT_DIR, { recursive: true });
  */
 export const E2E_MAP = 'testmap';
 
-export function gameUrl(name: string, map: string | null = E2E_MAP) {
-  const p = new URLSearchParams({ e2e: '1', fresh: '1', name });
+export function gameUrl(name: string, map: string | null = E2E_MAP, query: Record<string, string> = {}) {
+  const p = new URLSearchParams({ e2e: '1', fresh: '1', name, ...query });
   if (SERVER === 'local') p.set('server', 'local');
   // separate local database (parallel worktrees / agents sharing one `spacetime start`)
   if (process.env.E2E_DB) p.set('db', process.env.E2E_DB);
@@ -38,7 +38,7 @@ export interface Player {
  * Open the game as a new player. New players land on the landing screen (server needsLoadout):
  * by default they quick-pick the pistol preset and deploy; `loadout: 'none'` stops at the landing.
  */
-export async function joinGame(browser: Browser, name: string, opts: { loadout?: string | 'none'; map?: string | null } = {}): Promise<Player> {
+export async function joinGame(browser: Browser, name: string, opts: { loadout?: string | 'none'; map?: string | null; query?: Record<string, string> } = {}): Promise<Player> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
   // count WebSocket frames / bytes in both directions (works for any client version)
@@ -65,7 +65,7 @@ export async function joinGame(browser: Browser, name: string, opts: { loadout?:
     if (m.type() === 'error' || m.type() === 'warning') console.log(`[${name}] ${m.type()}: ${m.text()}`);
   });
   page.on('pageerror', (e) => console.log(`[${name}] pageerror: ${e.message}`));
-  await page.goto(gameUrl(name, opts.map === undefined ? E2E_MAP : opts.map));
+  await page.goto(gameUrl(name, opts.map === undefined ? E2E_MAP : opts.map, opts.query));
   await page.waitForFunction(
     () => {
       const w = window as unknown as Win;
