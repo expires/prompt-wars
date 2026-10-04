@@ -1,16 +1,22 @@
 {
   "kind": "weapon",
-  "prompt": "tactical karambit with a black blade and orange grip",
-  "recordedAt": "2026-10-04T06:05:01.046Z",
+  "prompt": "fire sniper rifle with a long scorched barrel and glowing ember scope",
+  "recordedAt": "2026-10-04T06:32:05.400Z",
   "source": "http://187.7.27.171",
   "offsetsMs": [
-    682,
-    2091,
-    4383,
-    5059,
-    5494,
-    5974,
-    5974,
-    5974
+    157,
+    2105,
+    4203,
+    6299,
+    7801,
+    8921,
+    11082,
+    11749,
+    12677,
+    14710,
+    16026,
+    16401,
+    16417,
+    16417
   ]
 }

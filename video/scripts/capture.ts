@@ -19,7 +19,7 @@
 //   --base-url <url>      drive an already running client instead of starting Vite
 //   --upstream <url>      forge to record from (default http://187.7.27.171)
 //   --armour "<prompt>"   Closet prompt     (default: medieval knight in battered steel plate armour)
-//   --weapon "<prompt>"   Forge prompt      (default: tactical karambit with a black blade and orange grip)
+//   --weapon "<prompt>"   Forge prompt      (default: fire sniper rifle with a long scorched barrel and glowing ember scope)
 //   --name <callsign>     player name       (default PromptWarsDemo)
 //   --headless            headless Chromium on SwiftShader (default: headed, real GPU, smoother)
 //   --dpr <1|2>           device scale factor (2 = 4K frames, crisper zooms; default 1)
@@ -66,7 +66,7 @@ const args = {
   baseUrl: opt('base-url', ''),
   upstream: opt('upstream', LIVE_URL),
   armour: opt('armour', 'medieval knight in battered steel plate armour'),
-  weapon: opt('weapon', 'tactical karambit with a black blade and orange grip'),
+  weapon: opt('weapon', 'fire sniper rifle with a long scorched barrel and glowing ember scope'),
   name: opt('name', 'PromptWarsDemo'),
   headless: flag('headless'),
   dpr: Number(opt('dpr', '1')) || 1,
