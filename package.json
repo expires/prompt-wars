@@ -10,6 +10,7 @@
     "video:capture": "pnpm --filter @ai-gaem/video capture",
     "video:studio": "pnpm --filter @ai-gaem/video studio",
     "video:render": "pnpm --filter @ai-gaem/video render",
-    "video:render:clips": "pnpm --filter @ai-gaem/video render:clips"
+    "video:render:clips": "pnpm --filter @ai-gaem/video render:clips",
+    "video:flyover": "pnpm --filter @ai-gaem/video flyover"
   }
 }

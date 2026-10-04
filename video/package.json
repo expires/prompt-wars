@@ -10,7 +10,8 @@
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts PromptWarsForge out/prompt-wars-forge.mp4",
     "typecheck": "tsc --noEmit",
-    "render:clips": "remotion render src/index.ts ArmourClip out/armour-clip.mp4 && remotion render src/index.ts WeaponClip out/sniper-clip.mp4 && node scripts/finalize.mjs out/armour-clip.mp4 out/sniper-clip.mp4"
+    "render:clips": "remotion render src/index.ts ArmourClip out/armour-clip.mp4 && remotion render src/index.ts WeaponClip out/sniper-clip.mp4 && node scripts/finalize.mjs out/armour-clip.mp4 out/sniper-clip.mp4",
+    "flyover": "tsx scripts/flyover.ts"
   },
   "dependencies": {
     "@remotion/cli": "4.0.532",

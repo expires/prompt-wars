@@ -29,27 +29,18 @@
 //   --speed <x>           replay speed of the forge streams (default 1 = recorded timing)
 //   --fixtures <dir>      fixture directory (default video/fixtures)
 
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright';
 import { startForgeProxy, type ForgeProxy } from './forgeProxy';
+import { VIEWPORT, children, chromiumPath, encode, env, gpuArgs, httpOk, killAll, publicDir, repoDir, sleep, startScreencast, startVite, videoDir, waitHttp } from './lib';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const videoDir = resolve(here, '..');
-const repoDir = resolve(videoDir, '..');
-const clientDir = join(repoDir, 'client');
 const serverDir = join(repoDir, 'server');
-const publicDir = join(videoDir, 'public');
 const framesDir = join(videoDir, '.capture-tmp');
-
 const LIVE_URL = 'http://187.7.27.171';
 const VITE_PORT = Number(process.env.VIDEO_VITE_PORT ?? 5193);
 const PROXY_PORT = Number(process.env.VIDEO_FORGE_PORT ?? 8794);
-const VIEWPORT = { width: 1920, height: 1080 };
 
 // ------------------------------------------------------------------ args
 
@@ -77,44 +68,9 @@ const args = {
   fixtures: resolve(opt('fixtures', join(videoDir, 'fixtures'))),
 };
 
-const env = { ...process.env, PATH: `${join(homedir(), '.local', 'bin')}:${process.env.PATH}` };
 const log = (m: string) => console.log(`[capture] ${m}`);
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------------ local stack
-
-const children: ChildProcess[] = [];
-function killAll() {
-  for (const c of children) {
-    try {
-      if (c.pid) process.kill(-c.pid, 'SIGTERM');
-    } catch {
-      /* gone */
-    }
-  }
-}
-process.on('SIGINT', () => {
-  killAll();
-  process.exit(130);
-});
-
-async function httpOk(url: string): Promise<boolean> {
-  try {
-    const r = await fetch(url);
-    return r.status < 500;
-  } catch {
-    return false;
-  }
-}
-
-async function waitHttp(url: string, ms: number, what: string) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    if (await httpOk(url)) return;
-    await sleep(500);
-  }
-  throw new Error(`${what} did not come up at ${url}`);
-}
 
 async function localStack(proxyUrl: string): Promise<string> {
   // SpacetimeDB on :3000 (reuse a running one)
@@ -137,41 +93,10 @@ async function localStack(proxyUrl: string): Promise<string> {
   }
   // Vite dev server; its /api/forge proxy points at the record / replay server, never the live forge
   log(`starting Vite on :${VITE_PORT} (forge -> ${proxyUrl}) ...`);
-  const vite = spawn('pnpm', ['exec', 'vite', '--port', String(VITE_PORT), '--strictPort'], {
-    cwd: clientDir,
-    env: { ...env, FORGE_PROXY: proxyUrl },
-    detached: true,
-    stdio: 'ignore',
-  });
-  children.push(vite);
-  await waitHttp(`http://localhost:${VITE_PORT}/`, 60_000, 'Vite');
-  return `http://localhost:${VITE_PORT}`;
+  return startVite(VITE_PORT, proxyUrl);
 }
 
 // ------------------------------------------------------------------ browser
-
-/** Playwright's own Chromium, else the newest cached Chrome for Testing (same logic as client/playwright.config.ts) */
-function chromiumPath(): string | undefined {
-  if (process.env.PW_CHROMIUM_PATH) return process.env.PW_CHROMIUM_PATH;
-  try {
-    const own = chromium.executablePath();
-    if (existsSync(own)) return own;
-  } catch {
-    /* fall through */
-  }
-  const cache = process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), 'Library', 'Caches', 'ms-playwright');
-  if (!existsSync(cache)) return undefined;
-  const dirs = readdirSync(cache)
-    .filter((d) => /^chromium-\d+$/.test(d))
-    .sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
-  for (const d of dirs) {
-    for (const sub of ['chrome-mac-arm64', 'chrome-mac']) {
-      const exe = join(cache, d, sub, 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing');
-      if (existsSync(exe)) return exe;
-    }
-  }
-  return undefined;
-}
 
 type Win = Window & { __game: { getState(): Record<string, any> }; __gameError?: string };
 
@@ -226,61 +151,6 @@ async function rectOf(page: Page, selector: string) {
   return b ? { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) } : null;
 }
 
-// ------------------------------------------------------------------ screencast
-
-interface Frame {
-  file: string;
-  t: number;
-}
-
-async function startScreencast(page: Page, dpr: number) {
-  const cdp = await page.context().newCDPSession(page);
-  const frames: Frame[] = [];
-  const writes: Promise<void>[] = [];
-  rmSync(framesDir, { recursive: true, force: true });
-  mkdirSync(framesDir, { recursive: true });
-  cdp.on('Page.screencastFrame', (f) => {
-    const file = join(framesDir, `f${String(frames.length).padStart(6, '0')}.jpg`);
-    frames.push({ file, t: f.metadata.timestamp ?? Date.now() / 1000 });
-    writes.push(writeFile(file, Buffer.from(f.data, 'base64')));
-    void cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
-  });
-  await cdp.send('Page.startScreencast', {
-    format: 'jpeg',
-    quality: 95,
-    maxWidth: VIEWPORT.width * dpr,
-    maxHeight: VIEWPORT.height * dpr,
-    everyNthFrame: 1,
-  });
-  return {
-    frames,
-    async stop() {
-      await cdp.send('Page.stopScreencast').catch(() => {});
-      await Promise.all(writes);
-      await cdp.detach().catch(() => {});
-    },
-  };
-}
-
-/** frames (variable rate, wall-clock stamped) -> constant 60 fps H.264 */
-function encode(frames: Frame[], out: string) {
-  if (frames.length < 2) throw new Error('screencast produced no frames');
-  const lines = ['ffconcat version 1.0'];
-  for (let i = 0; i < frames.length; i++) {
-    const next = frames[i + 1]?.t ?? frames[i]!.t + 1 / 60;
-    lines.push(`file '${frames[i]!.file}'`, `duration ${Math.max(0.001, next - frames[i]!.t).toFixed(6)}`);
-  }
-  lines.push(`file '${frames.at(-1)!.file}'`);
-  const list = join(framesDir, 'frames.ffconcat');
-  writeFileSync(list, lines.join('\n') + '\n');
-  const r = spawnSync(
-    'ffmpeg',
-    ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-vf', 'fps=60,pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p', '-c:v', 'libx264', '-preset', 'slow', '-crf', '14', '-movflags', '+faststart', out],
-    { stdio: 'inherit' },
-  );
-  if (r.status !== 0) throw new Error('ffmpeg encode failed');
-}
-
 // ------------------------------------------------------------------ main
 
 async function main() {
@@ -295,13 +165,10 @@ async function main() {
   }
   const url = `${base}/?${query}`;
 
-  const gpuArgs = args.headless
-    ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
-    : ['--ignore-gpu-blocklist', '--enable-gpu-rasterization'];
   const browser: Browser = await chromium.launch({
     headless: args.headless,
     executablePath: chromiumPath(),
-    args: [...gpuArgs, `--window-size=${VIEWPORT.width},${VIEWPORT.height + 140}`, '--hide-scrollbars', '--mute-audio', '--force-color-profile=srgb'],
+    args: gpuArgs(args.headless),
   });
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: args.dpr });
   const page = await context.newPage();
@@ -343,7 +210,7 @@ async function main() {
     await page.getByTestId('landing').waitFor({ state: 'visible' });
     await sleep(1500); // fonts + landing intro animation
 
-    cast = await startScreencast(page, args.dpr);
+    cast = await startScreencast(page, args.dpr, framesDir);
     await sleep(300);
     mark('start');
     await sleep(1800);
@@ -409,7 +276,7 @@ async function main() {
     mkdirSync(publicDir, { recursive: true });
     const out = join(publicDir, 'capture.mp4');
     log('encoding -> video/public/capture.mp4 ...');
-    encode(frames, out);
+    encode(frames, out, framesDir);
     const rel: Record<string, number> = {};
     for (const [k, v] of Object.entries(markers)) rel[k] = +(v - t0).toFixed(3);
     const meta = {
