@@ -18,6 +18,7 @@ export const C = {
   fgDim: '#a9b0be',
   fgMute: '#6b7383',
   accent: '#ffd23f',
+  hpHi: '#4be38a',
   forge: '#ff3da5',
   forge2: '#7b5cff',
   forgeGrad: 'linear-gradient(100deg, #ff3da5 0%, #7b5cff 100%)',

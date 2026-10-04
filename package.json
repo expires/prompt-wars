@@ -11,6 +11,9 @@
     "video:studio": "pnpm --filter @ai-gaem/video studio",
     "video:render": "pnpm --filter @ai-gaem/video render",
     "video:render:clips": "pnpm --filter @ai-gaem/video render:clips",
-    "video:flyover": "pnpm --filter @ai-gaem/video flyover"
+    "video:flyover": "pnpm --filter @ai-gaem/video flyover",
+    "video:voiceover": "pnpm --filter @ai-gaem/video voiceover",
+    "video:promo:prep": "pnpm --filter @ai-gaem/video promo:prep",
+    "video:render:promo": "pnpm --filter @ai-gaem/video render:promo"
   }
 }

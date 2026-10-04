@@ -1,6 +1,7 @@
 import { Composition, staticFile } from 'remotion';
 import { CLIP_FPS, Clip, clipFrames, type ClipKind, type ClipProps } from './Clip';
 import { PromptWarsForge, type PromptWarsForgeProps } from './PromptWarsForge';
+import { PROMO_FPS, Promo, promoFrames, type Durations, type PromoProps } from './promo/Promo';
 import { FPS, HEIGHT, WIDTH, totalFrames, type CaptureMeta } from './timeline';
 
 // the take's markers decide the cut points and the length (run `pnpm video:capture` first)
@@ -39,5 +40,19 @@ export const RemotionRoot: React.FC = () => (
     />
     {clip('ArmourClip', 'closet')}
     {clip('WeaponClip', 'forge')}
+    <Composition
+      id="Promo"
+      component={Promo}
+      width={WIDTH}
+      height={HEIGHT}
+      fps={PROMO_FPS}
+      durationInFrames={PROMO_FPS * 10}
+      defaultProps={{ durations: null } satisfies PromoProps}
+      calculateMetadata={async ({ props }) => {
+        // section lengths follow the voiceover clips (run `pnpm video:voiceover` first)
+        const durations = props.durations ?? ((await fetch(staticFile('vo/durations.json')).then((r) => r.json())) as Durations);
+        return { durationInFrames: promoFrames(durations), props: { ...props, durations } };
+      }}
+    />
   </>
 );

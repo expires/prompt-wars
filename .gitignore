@@ -29,3 +29,5 @@ video/public/*.mp4
 video/public/*.webm
 video/public/capture.json
 video/.capture-tmp/
+video/public/vo/
+video/public/promo/
