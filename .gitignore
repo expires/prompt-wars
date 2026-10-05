@@ -22,3 +22,4 @@ client/public/maps/*.meta.json
 .agents/ui.json
 .agents/board/.lock
 .agents/board/**/.tmp-*
+submission/

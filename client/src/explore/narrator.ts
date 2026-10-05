@@ -58,6 +58,7 @@ export class Narrator {
   private readonly captions: HTMLElement;
   private english: SpeechSynthesisVoice[] = [];
   private polish: SpeechSynthesisVoice | null = null;
+  private polishAll: SpeechSynthesisVoice[] = [];
   /** the last spoken line (R repeats it) */
   last = '';
 
@@ -73,7 +74,8 @@ export class Narrator {
     const load = () => {
       const voices = window.speechSynthesis?.getVoices() ?? [];
       this.english = voices.filter((v) => v.lang.startsWith('en') && voiceScore(v) > -100).sort((a, b) => voiceScore(b) - voiceScore(a));
-      this.polish = voices.filter((v) => v.lang.startsWith('pl')).sort((a, b) => voiceScore(b) - voiceScore(a))[0] ?? null;
+      this.polishAll = voices.filter((v) => /^pl/i.test(v.lang) && voiceScore(v) > -100).sort((a, b) => voiceScore(b) - voiceScore(a));
+      this.polish = this.polishAll[0] ?? null;
     };
     load();
     window.speechSynthesis?.addEventListener?.('voiceschanged', load);
@@ -86,9 +88,13 @@ export class Narrator {
     return typeof window.speechSynthesis !== 'undefined';
   }
 
-  /** English voices, best first (the settings picker) */
+  /** voices for the current language, best first (the settings picker) */
   voiceOptions(): VoiceOption[] {
-    return this.english.map((v) => ({ uri: v.voiceURI, label: `${v.name} (${v.lang})`, score: voiceScore(v) }));
+    return this.pool().map((v) => ({ uri: v.voiceURI, label: `${v.name} (${v.lang})`, score: voiceScore(v) }));
+  }
+
+  private pool(): SpeechSynthesisVoice[] {
+    return prefs.current.lang === 'pl' ? this.polishAll : this.english;
   }
 
   /** the voice in use sounds robotic: the settings screen suggests installing a better one */
@@ -103,7 +109,8 @@ export class Narrator {
 
   private voice(): SpeechSynthesisVoice | null {
     const want = prefs.current.voice;
-    return (want && this.english.find((v) => v.voiceURI === want)) || this.english[0] || null;
+    const pool = this.pool();
+    return (want && pool.find((v) => v.voiceURI === want)) || pool[0] || null;
   }
 
   say(text: string, opts: SayOptions = {}) {
@@ -137,6 +144,13 @@ export class Narrator {
     const synth = window.speechSynthesis;
     if (!synth) return;
     if (interrupt) synth.cancel();
+    if (prefs.current.lang === 'pl') {
+      // Polish: one Polish voice for everything
+      const v = this.voice();
+      for (const sentence of sentences(text)) this.utter(sentence, v, v?.lang ?? 'pl-PL');
+      synth.resume();
+      return;
+    }
     const en = this.voice();
     const pl = prefs.current.polishVoice ? this.polish : null;
     for (const sentence of sentences(text)) {

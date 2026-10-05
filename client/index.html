@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="pl">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -7,7 +7,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#1b1611" />
     <title>CityScape</title>
-    <meta name="description" content="Explore medieval Kraków at your own pace: landmarks, legends and a guide that can walk you there." />
+    <meta name="description" content="Zwiedzaj średniowieczny Kraków we własnym tempie: zabytki, legendy i przewodnik, który może cię zaprowadzić. Dostępne dla osób niewidomych i słabowidzących." />
     <link rel="icon" href="data:," />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -31,7 +31,7 @@
     <div id="boot" data-testid="boot" role="status" aria-live="polite">
       <h1>CityScape</h1>
       <div class="bar"><div class="fill"></div></div>
-      <div class="msg">Loading…</div>
+      <div class="msg">Wczytywanie…</div>
     </div>
     <script>
       // Loading screen: byte-weighted progress over the initial JS chunks (Resource Timing) and the
@@ -60,7 +60,7 @@
           var loaded = jsDone + (A.wasm ? wasmFrac * A.wasm.br : 0);
           var p = total ? loaded / total : 0;
           fill.style.transform = 'scaleX(' + Math.max(0.02, Math.min(1, p)).toFixed(3) + ')';
-          msg.textContent = stage || (total && p > 0.999 ? 'Starting…' : total ? 'Downloading… ' + Math.round(p * 100) + '%  (' + (loaded / 1024).toFixed(0) + ' / ' + (total / 1024).toFixed(0) + ' KB)' : 'Loading…');
+          msg.textContent = stage || (total && p > 0.999 ? 'Uruchamianie…' : total ? 'Pobieranie… ' + Math.round(p * 100) + '%  (' + (loaded / 1024).toFixed(0) + ' / ' + (total / 1024).toFixed(0) + ' KB)' : 'Wczytywanie…');
         }
         window.__boot = {
           wasm: function (f) { wasmFrac = f; render(); },

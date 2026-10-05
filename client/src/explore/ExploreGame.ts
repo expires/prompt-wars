@@ -16,6 +16,7 @@ import { NavGrid } from './navGrid';
 import { Narrator } from './narrator';
 import { clearProgress, loadProgress, prefs, saveProgress, WALK_MULT, type Progress } from './prefs';
 import { Beacon, Dragon, Pigeons, Trail, makeArmillary, makeBell, makeBones, makeCart, makeGlow, makeKnife, makeLajkonik, makeMoon, makeSheep, makeWindow } from './props';
+import { compassWord, legend, metres, place, relativeWords, tx } from './i18n';
 import { ExploreUi, type JournalEntry, type Kind, type LabelInfo, type UiHost } from './ui';
 
 type V3 = [number, number, number];
@@ -33,6 +34,8 @@ interface Target {
 interface Interactable {
   label: string;
   run(): void;
+  /** the landmark story (always available inside a landmark; not announced as "something here") */
+  info?: boolean;
 }
 
 const HEJNAL_FIRST = 45;
@@ -51,19 +54,9 @@ export function bearingOf(dx: number, dz: number): number {
   return (((Math.atan2(dz, dx) * 180) / Math.PI + NORTH_OFFSET_DEG) % 360 + 360) % 360;
 }
 
-const COMPASS_WORDS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
-
-/** "ahead to your right, at 2 o'clock" for an angle in radians (positive = right) */
-export function relativeWords(rel: number): string {
-  const deg = (rel * 180) / Math.PI;
-  const a = Math.abs(deg);
-  const side = deg > 0 ? 'right' : 'left';
-  const clock = ((Math.round(deg / 30) % 12) + 12) % 12 || 12;
-  const words = a < 15 ? 'straight ahead' : a < 55 ? `ahead to your ${side}` : a < 125 ? `to your ${side}` : a < 165 ? `behind you to the ${side}` : 'behind you';
-  return `${words}, at ${clock} o’clock`;
-}
-
 const roundDist = (m: number) => (m < 20 ? Math.max(1, Math.round(m)) : m < 100 ? Math.round(m / 5) * 5 : Math.round(m / 10) * 10);
+/** "40 metres" / "40 metrów", rounded for speech */
+const dist = (m: number) => metres(roundDist(m));
 
 /**
  * CityScape: walk the stylised medieval city, discover landmarks, find legends.
@@ -165,7 +158,7 @@ export class ExploreGame implements UiHost {
     this.ui = new ExploreUi(this);
     settings.set('headBob', !prefs.current.calmMotion);
 
-    boot?.stage('Loading medieval Kraków…');
+    boot?.stage(prefs.current.lang === 'pl' ? 'Wczytywanie średniowiecznego Krakowa…' : 'Loading medieval Kraków…');
     const url = resolveMapUrl(MAP_URL)!;
     const [map, nav] = await Promise.all([loadMap(url, this.physics, this.rc.scene, { shell: false }), NavGrid.load()]);
     this.map = map;
@@ -388,8 +381,9 @@ export class ExploreGame implements UiHost {
     this.progress.landmarks.push(l.id);
     saveProgress(this.progress);
     this.audio.discover();
-    this.ui.toast('Discovered', l.name, l.polish);
-    this.narrator.say(`${l.short} Press E to hear its story.`);
+    const pl = place(l);
+    this.ui.toast(tx().discovered, pl.name, pl.polish);
+    this.narrator.say(`${pl.short} ${tx().g.pressEStory}`);
     this.refreshBeacons();
     // the guide moves on once its target is found (after the walk there finishes)
     if (this.target?.kind === 'landmark' && this.target.id === l.id && !this.autoWalk) this.moveOnSoon();
@@ -402,7 +396,7 @@ export class ExploreGame implements UiHost {
     setTimeout(() => {
       if (this.state !== 'playing' || this.target !== was) return;
       this.pickNextTarget(true);
-      this.narrator.say('Press F when you are ready to walk on.');
+      this.narrator.say(tx().g.walkOn);
     }, 5000);
   }
 
@@ -413,13 +407,13 @@ export class ExploreGame implements UiHost {
       this.progress.secrets.push(id);
       saveProgress(this.progress);
       this.audio.secret();
-      this.ui.toast('Legend found', s.name);
+      this.ui.toast(tx().legendFound, legend(s).name);
       if (id === 'twardowski') this.moon.showTwardowski(true);
     }
     if (openCard) {
-      this.ui.showCard({ kicker: first ? 'Legend found' : 'Legend', title: s.name, paragraphs: s.found });
-      this.narrator.say(s.found.join(' '));
-    } else this.narrator.say(s.found.join(' '));
+      this.ui.showCard({ kicker: first ? tx().legendFound : tx().legendKicker, title: legend(s).name, paragraphs: legend(s).found });
+      this.narrator.say(legend(s).found.join(' '));
+    } else this.narrator.say(legend(s).found.join(' '));
     if (this.target?.kind === 'secret' && this.target.id === id) this.setTarget(null);
     this.checkComplete();
   }
@@ -430,7 +424,7 @@ export class ExploreGame implements UiHost {
       this.doneShown = true;
       setTimeout(() => {
         if (!this.ui.blocking) this.ui.open('done');
-        this.narrator.say('Congratulations! You have found every place and every legend in Kraków.');
+        this.narrator.say(tx().g.allDone);
       }, 6000);
     }
   }
@@ -449,12 +443,9 @@ export class ExploreGame implements UiHost {
       this.refreshBeacons();
     }
     this.audio.discover();
-    this.ui.toast(returning ? 'Welcome back' : 'Witaj w Krakowie', 'Main Market Square', 'Rynek Główny');
-    this.narrator.say(
-      returning
-        ? `Welcome back to the Main Market Square. You have visited ${this.progress.landmarks.length} of ${LANDMARKS.length} places.`
-        : `Welcome to Kraków! ${rynek.short} Walk with W or the arrow keys. Press F and the guide will walk you to the next place. Press V at any time to hear where you are, and H for help.`,
-    );
+    const g = tx().g;
+    this.ui.toast(returning ? g.welcomeBack : g.welcome, place(rynek).name, place(rynek).polish);
+    this.narrator.say(returning ? g.welcomeBackLine(this.progress.landmarks.length, LANDMARKS.length) : g.welcomeLine(place(rynek).short));
     this.pickNextTarget(false);
     this.grabMouse();
   }
@@ -484,17 +475,18 @@ export class ExploreGame implements UiHost {
   toggleBlindMode() {
     const on = !prefs.current.blindMode;
     prefs.setBlindMode(on);
-    if (on) this.input.exitLock();
-    this.narrator.speakNow(
-      on
-        ? 'Blind mode is on. I will describe everything, and guide you by sound. Arrow keys walk and turn. F walks you to the next place. V tells you where you are. H lists every key.'
-        : 'Blind mode is off.',
-    );
+    this.narrator.speakNow(on ? tx().g.blindOn : tx().g.blindOff);
   }
 
   /** the UI opened a screen: free the mouse so its buttons can be clicked */
   screenOpened() {
     this.input.exitLock();
+  }
+
+  /** display name in the current language ("a hidden legend" until a legend is found) */
+  private entryName(kind: Kind, id: string): string {
+    if (kind === 'landmark') return place(LANDMARKS.find((l) => l.id === id)!).name;
+    return this.found(id) ? legend(SECRETS.find((s) => s.id === id)!).name : tx().hiddenLegendLower;
   }
 
   private entry(kind: Kind, id: string): Landmark | Secret | undefined {
@@ -506,10 +498,10 @@ export class ExploreGame implements UiHost {
     if (!e) return;
     const stand = this.snapped(e.stand[0], e.stand[1]);
     const look = 'look' in e ? new THREE.Vector3(...e.look) : stand.clone().setY(stand.y + 1.5);
-    const name = kind === 'secret' && !this.found(id) ? 'a hidden legend' : e.name;
+    const name = this.entryName(kind, id);
     this.setTarget({ kind, id, name, stand, look });
     const d = this.describeRoute();
-    this.narrator.say(`Guiding you to ${name}. ${d}`, { interrupt: true });
+    this.narrator.say(tx().g.guiding(name, d), { interrupt: true });
   }
 
   walk(kind: Kind, id: string) {
@@ -529,8 +521,7 @@ export class ExploreGame implements UiHost {
       if (look) this.lookAt(look);
       this.path = null;
     });
-    const name = kind === 'secret' && !this.found(id) ? 'a hidden legend' : e.name;
-    this.narrator.say(`You are now at ${name}.`, { interrupt: true });
+    this.narrator.say(tx().g.nowAt(this.entryName(kind, id)), { interrupt: true });
   }
 
   toggleWalk() {
@@ -544,7 +535,7 @@ export class ExploreGame implements UiHost {
 
   stopGuide() {
     this.setTarget(null);
-    this.narrator.say('Guide off. Press G to start it again.', { interrupt: true });
+    this.narrator.say(tx().g.guideOff, { interrupt: true });
   }
 
   interact() {
@@ -553,16 +544,17 @@ export class ExploreGame implements UiHost {
       it.run();
       return;
     }
-    this.narrator.say('There is nothing to use right here. Press V to hear what is around you.', { interrupt: true });
+    this.narrator.say(tx().g.nothingHere, { interrupt: true });
   }
 
   describe() {
     const f = this.player.feet;
     const parts: string[] = [];
     const here = this.currentLandmark();
-    parts.push(here ? `You are at ${here.name}.` : `You are in ${this.areaName()}.`);
+    const g = tx().g;
+    parts.push(here ? g.youAreAt(place(here).name) : g.youAreIn(tx().areaIn[this.area()]));
     const heading = this.heading();
-    parts.push(`You are facing ${COMPASS_WORDS[Math.round(heading / 45) % 8]}.`);
+    parts.push(g.facing(compassWord(heading)));
     const near = LANDMARKS.filter((l) => l !== here)
       .map((l) => ({ l, d: dist2(f.x, f.z, l.at[0], l.at[1]) }))
       .filter((x) => x.d < 220)
@@ -570,15 +562,15 @@ export class ExploreGame implements UiHost {
       .slice(0, 3);
     if (near.length) {
       parts.push(
-        'Nearby: ' +
-          near.map(({ l, d }) => `${l.name}${this.visited(l.id) ? '' : ', not visited yet,'} ${roundDist(d)} metres ${this.relTo(l.at[0], l.at[1])}`).join('; ') +
+        g.nearby +
+          near.map(({ l, d }) => g.nearItem(place(l).name, this.visited(l.id) ? '' : g.notVisitedYet, dist(d), this.relTo(l.at[0], l.at[1]))).join('; ') +
           '.',
       );
     }
     const it = this.interactable();
-    if (it) parts.push(`Press E to ${it.label.toLowerCase()}.`);
-    if (this.target) parts.push(`The guide is taking you to ${this.target.name}. ${this.describeRoute()}`);
-    else parts.push('Press G to choose a place to go.');
+    if (it) parts.push(g.pressETo(it.label));
+    if (this.target) parts.push(g.guideTaking(this.target.name, this.describeRoute()));
+    else parts.push(g.pressG);
     this.narrator.say(parts.join(' '), { interrupt: true, ms: 16000 });
   }
 
@@ -601,10 +593,10 @@ export class ExploreGame implements UiHost {
       kind: 'landmark',
       id: l.id,
       num: i + 1,
-      name: l.name,
-      sub: `${l.polish} · say “${l.say}”`,
+      name: place(l).name,
+      sub: place(l).polish ? tx().sayIt(place(l).polish, place(l).say) : undefined,
       done: this.visited(l.id),
-      text: this.visited(l.id) ? l.short : 'Not visited yet.',
+      text: this.visited(l.id) ? place(l).short : tx().notVisited,
       x: l.at[0],
       z: l.at[1],
       target: this.target?.kind === 'landmark' && this.target.id === l.id,
@@ -613,9 +605,9 @@ export class ExploreGame implements UiHost {
       kind: 'secret',
       id: s.id,
       num: i + 1,
-      name: s.name,
+      name: legend(s).name,
       done: this.found(s.id),
-      text: this.found(s.id) ? s.found.join(' ') : s.hint,
+      text: this.found(s.id) ? legend(s).found.join(' ') : legend(s).hint,
       x: s.at[0],
       z: s.at[1],
       target: this.target?.kind === 'secret' && this.target.id === s.id,
@@ -650,12 +642,12 @@ export class ExploreGame implements UiHost {
       const s = SECRETS.find((x) => !this.found(x.id) && x.id !== 'twardowski');
       if (s) {
         if (announce) this.guide('secret', s.id);
-        else this.setTarget({ kind: 'secret', id: s.id, name: 'a hidden legend', stand: this.snapped(s.stand[0], s.stand[1]), look: this.snapped(s.stand[0], s.stand[1]) });
+        else this.setTarget({ kind: 'secret', id: s.id, name: tx().hiddenLegendLower, stand: this.snapped(s.stand[0], s.stand[1]), look: this.snapped(s.stand[0], s.stand[1]) });
       } else this.setTarget(null);
       return;
     }
     if (announce) this.guide('landmark', pick.id);
-    else this.setTarget({ kind: 'landmark', id: pick.id, name: pick.name, stand: this.snapped(pick.stand[0], pick.stand[1]), look: new THREE.Vector3(...pick.look) });
+    else this.setTarget({ kind: 'landmark', id: pick.id, name: place(pick).name, stand: this.snapped(pick.stand[0], pick.stand[1]), look: new THREE.Vector3(...pick.look) });
   }
 
   private startWalk() {
@@ -665,14 +657,14 @@ export class ExploreGame implements UiHost {
     this.player.autoRun = false;
     this.stuckCheck = { t: this.time, x: this.player.feet.x, z: this.player.feet.z, count: 0 };
     this.ensurePath(true);
-    this.narrator.say(`Walking you to ${this.target.name}. Press F or any movement key to stop.`, { interrupt: true });
+    this.narrator.say(tx().g.walking(this.target.name), { interrupt: true });
   }
 
   private stopWalk(announce: boolean) {
     if (!this.autoWalk) return;
     this.autoWalk = false;
     this.player.steer = null;
-    if (announce) this.narrator.say('Stopped walking.', { interrupt: true });
+    if (announce) this.narrator.say(tx().g.stopped, { interrupt: true });
   }
 
   private ensurePath(force = false) {
@@ -749,13 +741,14 @@ export class ExploreGame implements UiHost {
     const proj = this.trackPath();
     if (!this.path || !proj) {
       const t = this.target.stand;
-      return `It is ${roundDist(dist2(this.player.feet.x, this.player.feet.z, t.x, t.z))} metres ${this.relTo(t.x, t.z)}.`;
+      return tx().g.itIs(dist(dist2(this.player.feet.x, this.player.feet.z, t.x, t.z)), this.relTo(t.x, t.z));
     }
     const route = this.routeAhead(proj);
     const total = this.routeLength(route);
-    if (total < ARRIVE + 1) return 'You are there.';
+    const g = tx().g;
+    if (total < ARRIVE + 1) return g.there;
     const first = this.carrot(route);
-    let out = `Head ${this.relTo(first[0], first[2])}`;
+    let out = g.head(this.relTo(first[0], first[2]));
     // first real turn along the route
     let run = 0;
     for (let i = 1; i < route.length - 1; i++) {
@@ -768,11 +761,11 @@ export class ExploreGame implements UiHost {
       const turn = Math.atan2(Math.sin(h2 - h1), Math.cos(h2 - h1));
       if (Math.abs(turn) > 0.6 && run > 4) {
         // +x north / +z east: a positive turn (x towards z) is a right turn, seen from above
-        out += ` for ${roundDist(run)} metres, then turn ${turn > 0 ? 'right' : 'left'}`;
+        out += g.thenTurn(dist(run), turn > 0);
         break;
       }
     }
-    return `${out}. ${roundDist(total)} metres in all.`;
+    return `${out}.${g.inAll(dist(total))}`;
   }
 
   private updateGuide(dt: number, playing: boolean) {
@@ -804,9 +797,9 @@ export class ExploreGame implements UiHost {
       this.stopWalk(false);
       if (left < ARRIVE) {
         this.lookAt(t.look);
-        this.narrator.say(`You have arrived at ${t.name}.`, { interrupt: true });
+        this.narrator.say(tx().g.arrived(t.name), { interrupt: true });
         if (t.kind === 'landmark' && this.visited(t.id)) this.moveOnSoon();
-      } else this.narrator.say('I could not find a way there from here. Try “Go there now” on the map.', { interrupt: true });
+      } else this.narrator.say(tx().g.noWay, { interrupt: true });
       return;
     }
     const c = this.carrot(this.routeAhead(proj));
@@ -859,24 +852,20 @@ export class ExploreGame implements UiHost {
 
   private currentLandmark(): Landmark | null {
     const f = this.player.feet;
+    // inside several (St Mary's sits inside the Market Square): the smallest, most specific wins
     let best: Landmark | null = null;
-    let bestK = Infinity;
     for (const l of LANDMARKS) {
-      const k = dist2(f.x, f.z, l.at[0], l.at[1]) / l.radius;
-      if (k < 1 && k < bestK) {
-        bestK = k;
-        best = l;
-      }
+      if (dist2(f.x, f.z, l.at[0], l.at[1]) < l.radius && (!best || l.radius < best.radius)) best = l;
     }
     return best;
   }
 
-  private areaName(): string {
+  private area(): 'hill' | 'belowHill' | 'outside' | 'streets' {
     const f = this.player.feet;
-    if (f.y > 15) return 'on Wawel Hill';
-    if (f.x < -230) return 'below Wawel Hill';
-    if (f.x > 360) return 'outside the city walls';
-    return 'the streets of the Old Town';
+    if (f.y > 15) return 'hill';
+    if (f.x < -230) return 'belowHill';
+    if (f.x > 360) return 'outside';
+    return 'streets';
   }
 
   private lookAt(target: THREE.Vector3) {
@@ -898,23 +887,25 @@ export class ExploreGame implements UiHost {
     const f = this.player.feet;
     const den = this.dragon.root.position;
     if (this.carrying && dist2(f.x, f.z, den.x, den.z) < 12 && this.dragon.presence > 0.9) {
-      return { label: 'Give the sheep to the dragon', run: () => this.feedDragon() };
+      return { label: tx().g.feedDragon, run: () => this.feedDragon() };
     }
     for (const s of SECRETS) {
       if (!s.verb || !this.secretInRange(s.id)) continue;
       if (s.id === 'owca') {
         if (this.carrying || !this.sheep.visible) continue;
-        return { label: s.verb, run: () => this.pickUpSheep() };
+        return { label: legend(s).verb ?? s.verb, run: () => this.pickUpSheep() };
       }
-      return { label: s.verb, run: () => this.useSecret(s) };
+      return { label: legend(s).verb ?? s.verb, run: () => this.useSecret(s) };
     }
     const here = this.currentLandmark();
     if (here) {
       return {
-        label: `Learn about ${here.name}`,
+        label: tx().g.learnAbout(place(here).name),
+        info: true,
         run: () => {
-          this.ui.showCard({ kicker: 'Landmark', title: here.name, polish: here.polish, say: here.say, paragraphs: here.story, fact: here.fact });
-          this.narrator.say(`${here.name}. ${here.story.join(' ')} ${here.fact}`);
+          const pv = place(here);
+          this.ui.showCard({ kicker: tx().landmark, title: pv.name, polish: pv.polish, say: pv.say, paragraphs: pv.story, fact: pv.fact });
+          this.narrator.say(`${pv.name}. ${pv.story.join(' ')} ${pv.fact}`);
         },
       };
     }
@@ -925,7 +916,7 @@ export class ExploreGame implements UiHost {
     switch (s.id) {
       case 'dzwon':
         this.audio.bell({ x: this.bell.position.x, y: this.bell.position.y + 3, z: this.bell.position.z });
-        this.narrator.say('[A deep bell tolls: BONG…]', { soundOnly: true });
+        this.narrator.say(tx().g.bellSound, { soundOnly: true });
         this.bellSwing = 1;
         break;
       case 'kopernik':
@@ -934,7 +925,7 @@ export class ExploreGame implements UiHost {
         break;
       case 'lajkonik':
         this.audio.bonk(this.lajkonik.position);
-        this.narrator.say('[A soft “bonk” on the head, then hooves dancing]', { soundOnly: true });
+        this.narrator.say(tx().g.bonkSound, { soundOnly: true });
         this.lajkonik.userData.tap = 1;
         break;
       case 'obwarzanek':
@@ -942,7 +933,7 @@ export class ExploreGame implements UiHost {
         saveProgress(this.progress);
         if (this.found('obwarzanek')) {
           const n = this.progress.obwarzanki;
-          this.narrator.say(`You buy another obwarzanek. That makes ${n}. Smacznego, enjoy!`, { interrupt: true });
+          this.narrator.say(tx().g.anotherBagel(n), { interrupt: true });
           this.audio.click();
           return;
         }
@@ -956,7 +947,7 @@ export class ExploreGame implements UiHost {
     this.sheep.visible = false;
     this.ui.setCarrying(true);
     this.audio.click();
-    this.narrator.say('You pick up the shoemaker’s sheep. It smells strongly of sulfur! Take it to the Dragon’s Den, below Wawel Hill.', { interrupt: true });
+    this.narrator.say(tx().g.pickSheep, { interrupt: true });
     this.guide('landmark', 'smok');
   }
 
@@ -965,11 +956,11 @@ export class ExploreGame implements UiHost {
     this.ui.setCarrying(false);
     const p = this.dragon.root.position;
     this.audio.dragonBurst({ x: p.x, y: p.y + 3, z: p.z });
-    this.narrator.say('[The dragon gulps… slurps the river… swells…]', { soundOnly: true, ms: 3000 });
+    this.narrator.say(tx().g.gulp, { soundOnly: true, ms: 3000 });
     setTimeout(() => {
       this.dragon.puff();
       this.dragonGone = 30;
-      this.narrator.say('[BANG! A cloud of smoke]', { soundOnly: true, ms: 3000 });
+      this.narrator.say(tx().g.bang, { soundOnly: true, ms: 3000 });
       this.findSecret('owca', true);
     }, 2400);
     this.sheepBack = 35;
@@ -983,7 +974,7 @@ export class ExploreGame implements UiHost {
     this.hejnalEnds = this.time + len;
     const f = this.player.feet;
     if (dist2(f.x, f.z, tower.x, tower.z) < 260) {
-      this.narrator.say('[♪ From the tall tower of St Mary’s, a trumpeter plays the hejnał…]', { soundOnly: true, ms: Math.min(9000, len * 1000) });
+      this.narrator.say(tx().g.hejnalStart, { soundOnly: true, ms: Math.min(9000, len * 1000) });
     }
   }
 
@@ -1095,7 +1086,8 @@ export class ExploreGame implements UiHost {
   private sayHeading(full: boolean, yaw = this.player.yaw) {
     const f = this.player.feet;
     const heading = bearingOf(-Math.sin(yaw), -Math.cos(yaw));
-    let text = `Facing ${COMPASS_WORDS[Math.round(heading / 45) % 8]}.`;
+    const g = tx().g;
+    let text = g.facingShort(compassWord(heading));
     let best: { l: Landmark; d: number } | null = null;
     for (const l of LANDMARKS) {
       const dx = l.at[0] - f.x;
@@ -1105,10 +1097,10 @@ export class ExploreGame implements UiHost {
       const rel = Math.atan2(Math.cos(yaw) * dx - Math.sin(yaw) * dz, -Math.sin(yaw) * dx - Math.cos(yaw) * dz);
       if (Math.abs(rel) < (25 * Math.PI) / 180 && (!best || d < best.d)) best = { l, d };
     }
-    if (best) text += ` Ahead: ${best.l.name}, ${roundDist(best.d)} metres.`;
-    else if (full) text += ' No landmark straight ahead.';
+    if (best) text += g.ahead(place(best.l).name, dist(best.d));
+    else if (full) text += g.noneAhead;
     const wall = this.wallAhead(yaw, 12);
-    if (wall !== null && wall < 4) text += ` A wall ${roundDist(wall)} metres in front of you.`;
+    if (wall !== null && wall < 4) text += g.wallAhead(dist(wall));
     this.narrator.say(text, { interrupt: true, ms: 2500 });
   }
 
@@ -1160,7 +1152,7 @@ export class ExploreGame implements UiHost {
       if (this.blockedFor > 0.25 && this.time - this.bumpAt > 1.2) {
         this.bumpAt = this.time;
         this.audio.bump();
-        this.narrator.say('[bump]', { soundOnly: true, ms: 1000 });
+        this.narrator.say(tx().g.bump, { soundOnly: true, ms: 1000 });
       }
     } else this.blockedFor = 0;
 
@@ -1170,13 +1162,13 @@ export class ExploreGame implements UiHost {
       const here = this.currentLandmark()?.id ?? null;
       if (here !== this.lastPlace) {
         // a first visit is announced by the discovery itself
-        if (here && this.visited(here) && this.lastPlace !== null) this.narrator.say(`Now at ${LANDMARKS.find((l) => l.id === here)!.name}.`);
+        if (here && this.visited(here) && this.lastPlace !== null) this.narrator.say(tx().g.nowAtPlace(place(LANDMARKS.find((l) => l.id === here)!).name));
         this.lastPlace = here;
       }
       const it = this.interactable();
-      const label = it && !it.label.startsWith('Learn about') ? it.label : null;
+      const label = it && !it.info ? it.label : null;
       if (label !== this.lastPrompt) {
-        if (label) this.narrator.say(`Something here. Press E to ${label.toLowerCase()}.`);
+        if (label) this.narrator.say(tx().g.somethingHere(label));
         this.lastPrompt = label;
       }
     }
@@ -1202,8 +1194,7 @@ export class ExploreGame implements UiHost {
       const wp = proj.seg + k;
       if (Math.abs(turn) > 0.6 && wp !== this.coachedTurn) {
         this.coachedTurn = wp;
-        const side = turn > 0 ? 'right' : 'left';
-        this.narrator.say(run < 3 ? `Turn ${side} now.` : `In ${roundDist(run)} metres, turn ${side}.`, { interrupt: true, ms: 2500 });
+        this.narrator.say(run < 3 ? tx().g.turnNow(turn > 0) : tx().g.turnIn(dist(run), turn > 0), { interrupt: true, ms: 2500 });
         return;
       }
     }
@@ -1217,7 +1208,7 @@ export class ExploreGame implements UiHost {
     if (this.offRouteFor > 1.5 && this.time - this.coachNudgeAt > 6) {
       this.coachNudgeAt = this.time;
       this.offRouteFor = 0;
-      this.narrator.say(`The way to ${t.name} is ${relativeWords(rel).split(',')[0]}.`, { interrupt: true, ms: 2500 });
+      this.narrator.say(tx().g.wayIs(t.name, relativeWords(rel, false)), { interrupt: true, ms: 2500 });
     }
   }
 
@@ -1231,7 +1222,7 @@ export class ExploreGame implements UiHost {
     if (!this.pigeons.airborne && dist2(f.x, f.z, this.pigeonCenter.x, this.pigeonCenter.z) < 3.4) {
       this.pigeons.scatter(f);
       this.audio.flutter(this.pigeonCenter);
-      this.narrator.say('[Wings clatter as the pigeons take off]', { soundOnly: true, ms: 2500 });
+      this.narrator.say(tx().g.pigeons, { soundOnly: true, ms: 2500 });
       if (!this.found('golebie')) this.findSecret('golebie', false);
     }
     if (this.time > this.cooAt) {
@@ -1250,7 +1241,7 @@ export class ExploreGame implements UiHost {
     if (this.hejnalEnds && this.time >= this.hejnalEnds) {
       this.hejnalEnds = 0;
       const close = dist2(f.x, f.z, mar.at[0], mar.at[1]) < mar.radius;
-      if (dist2(f.x, f.z, mar.at[0], mar.at[1]) < 260) this.narrator.say('[♪ …and the tune breaks off, mid-note]', { soundOnly: true, ms: 4000 });
+      if (dist2(f.x, f.z, mar.at[0], mar.at[1]) < 260) this.narrator.say(tx().g.hejnalEnd, { soundOnly: true, ms: 4000 });
       if (close && !this.found('hejnal')) this.findSecret('hejnal', false);
     }
 
@@ -1265,7 +1256,7 @@ export class ExploreGame implements UiHost {
       this.dragonNext = this.time + 12 + Math.random() * 8;
       this.dragon.breathe();
       this.audio.dragonFire({ x: den.x + 4, y: den.y + 5, z: den.z });
-      if (dd < 45) this.narrator.say('[The dragon roars and breathes fire!]', { soundOnly: true, ms: 2500 });
+      if (dd < 45) this.narrator.say(tx().g.dragonFire, { soundOnly: true, ms: 2500 });
     }
     if (this.sheepBack > 0) {
       this.sheepBack -= dt;
@@ -1319,12 +1310,12 @@ export class ExploreGame implements UiHost {
     const ui = this.ui;
     const f = this.player.feet;
     const here = this.currentLandmark();
-    ui.setWhere(here ? here.name : this.areaName().replace(/^(on|the|below|outside) /, (m) => (m === 'the ' ? '' : m)).replace(/^./, (c) => c.toUpperCase()));
+    ui.setWhere(here ? place(here).name : tx().area[this.area()]);
     ui.setProgress(this.progress.landmarks.length, LANDMARKS.length, this.progress.secrets.length, SECRETS.length);
     const it = this.interactable();
     ui.setPrompt(it ? it.label : null);
     const p = prefs.current;
-    ui.setHint(!p.dragLook && !this.touch && !this.input.locked ? 'Click the view once, then just move the mouse to look · Esc frees it' : null);
+    ui.setHint(!p.dragLook && !this.touch && !this.input.locked ? tx().mouseHint : null);
 
     const t = this.target;
     if (t) {
@@ -1332,7 +1323,7 @@ export class ExploreGame implements UiHost {
       const route = proj ? this.routeAhead(proj) : null;
       const left = route ? this.routeLength(route) : dist2(f.x, f.z, t.stand.x, t.stand.z);
       const c = route ? this.carrot(route) : [t.stand.x, 0, t.stand.z];
-      const words = left < ARRIVE + 1 ? 'You are here' : `${roundDist(left)} m · ${this.relTo(c[0], c[2]).split(',')[0]}`;
+      const words = left < ARRIVE + 1 ? tx().youAreHere : `${roundDist(left)} m · ${this.relTo(c[0], c[2]).split(',')[0]}`;
       ui.setGuide({ name: t.name, direction: words, walking: this.autoWalk });
     } else ui.setGuide(null);
 
@@ -1358,7 +1349,7 @@ export class ExploreGame implements UiHost {
         labels.push({
           x: (p.x * 0.5 + 0.5) * w,
           y: (-p.y * 0.5 + 0.5) * hgt,
-          name: l.name,
+          name: place(l).name,
           dist: `${roundDist(d)} m`,
           target: t?.kind === 'landmark' && t.id === l.id,
           done: this.visited(l.id),

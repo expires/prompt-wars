@@ -175,8 +175,8 @@ html.kx-hc .kx-sheet { border-width: 2px; }
 }
 .kx-toggle small { font-weight: 400; color: var(--kx-dim); }
 .kx-toggle[aria-pressed='true'] { border-color: var(--kx-blue); background: rgba(143, 227, 255, 0.12); }
-.kx-toggle[aria-pressed='true']::after { content: 'On'; font-size: 0.75em; color: var(--kx-blue); }
-.kx-toggle[aria-pressed='false']::after { content: 'Off'; font-size: 0.75em; color: var(--kx-dim); }
+.kx-toggle[aria-pressed='true']::after { content: var(--kx-on, 'On'); font-size: 0.75em; color: var(--kx-blue); }
+.kx-toggle[aria-pressed='false']::after { content: var(--kx-off, 'Off'); font-size: 0.75em; color: var(--kx-dim); }
 
 .kx-settings { display: grid; gap: 10px; }
 .kx-setting { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--kx-line); }

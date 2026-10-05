@@ -6,8 +6,11 @@
 export type WalkSpeed = 'slow' | 'normal' | 'brisk';
 export type TextScale = 100 | 125 | 150;
 export type SpeechRate = 0.8 | 1 | 1.25;
+export type Lang = 'pl' | 'en';
 
 export interface Prefs {
+  /** interface, stories and narrator language */
+  lang: Lang;
   /** read discoveries, stories and directions aloud (speech synthesis) */
   narration: boolean;
   speechRate: SpeechRate;
@@ -55,6 +58,7 @@ export interface Prefs {
 }
 
 export const DEFAULT_PREFS: Prefs = {
+  lang: 'pl',
   narration: false,
   speechRate: 1,
   captions: true,
@@ -83,6 +87,7 @@ export const BLIND_MODE_PARTS = ['narration', 'soundBeacon', 'autoTurn', 'snapTu
 export const WALK_MULT: Record<WalkSpeed, number> = { slow: 0.6, normal: 1, brisk: 1.35 };
 
 const ENUMS: Partial<Record<keyof Prefs, readonly unknown[]>> = {
+  lang: ['pl', 'en'],
   speechRate: [0.8, 1, 1.25],
   textScale: [100, 125, 150],
   walkSpeed: ['slow', 'normal', 'brisk'],
